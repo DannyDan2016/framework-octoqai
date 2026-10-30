@@ -54,3 +54,13 @@ def test_unknown_expectation_kind_rejected(write_yaml):
 def test_missing_file_is_config_error(tmp_path):
     with pytest.raises(ConfigError, match="not found"):
         load_experiment(tmp_path / "missing.yaml")
+
+
+def test_invalid_regex_rejected_at_load(write_yaml):
+    with pytest.raises(ConfigError, match="regex"):
+        load_experiment(write_yaml(expect=[{"contains": "(unclosed"}]))
+
+
+def test_format_only_accepts_json(write_yaml):
+    with pytest.raises(ConfigError, match="format"):
+        load_experiment(write_yaml(expect=[{"format": "xml"}]))

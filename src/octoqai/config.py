@@ -56,6 +56,25 @@ class Expectation(_Model):
                 raw = raw.pop("value")
         return {"kind": kind, "value": raw, "hard": hard}
 
+    @model_validator(mode="after")
+    def _check_value(self) -> Expectation:
+        if self.kind in ("tool_called", "no_tool_called"):
+            if not isinstance(self.value, list) or not all(isinstance(v, str) for v in self.value):
+                raise ValueError(f"{self.kind} expects a list of tool names")
+        elif self.kind == "format":
+            if self.value != "json":
+                raise ValueError(f"format only supports 'json', got {self.value!r}")
+        elif self.kind in ("contains", "not_contains"):
+            if not isinstance(self.value, str):
+                raise ValueError(f"{self.kind} expects a regex string")
+            try:
+                re.compile(self.value)
+            except re.error as exc:
+                raise ValueError(f"invalid regex {self.value!r} in {self.kind}: {exc}") from exc
+        elif isinstance(self.value, bool) or not isinstance(self.value, int | float):
+            raise ValueError(f"{self.kind} expects a number")
+        return self
+
 
 class Turn(_Model):
     """One user message and the expectations on the agent reply."""
