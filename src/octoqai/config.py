@@ -146,12 +146,41 @@ class Experiment(_Model):
         case_ids = [c.id for c in self.cases]
         if len(set(case_ids)) != len(case_ids):
             raise ValueError("case ids must be unique")
+        for variant in self.variants:
+            for path in _variant_paths(self.agent.request):
+                if not _has_path(variant.params, path):
+                    raise ValueError(
+                        f"variant {variant.name!r} does not define params.{path} "
+                        f"used by the request template"
+                    )
         return self
 
     @property
     def baseline(self) -> Variant:
         """The baseline variant, or the only variant."""
         return next((v for v in self.variants if v.baseline), self.variants[0])
+
+
+_VARIANT_REF = re.compile(r"\{\{\s*variant\.([\w.]+)\s*\}\}")
+
+
+def _variant_paths(template: Any) -> set[str]:
+    if isinstance(template, dict):
+        return set().union(*(_variant_paths(v) for v in template.values()))
+    if isinstance(template, list):
+        return set().union(*(_variant_paths(v) for v in template))
+    if isinstance(template, str):
+        return set(_VARIANT_REF.findall(template))
+    return set()
+
+
+def _has_path(params: dict[str, Any], path: str) -> bool:
+    value: Any = params
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return False
+        value = value[part]
+    return True
 
 
 def _expand_env(text: str) -> str:

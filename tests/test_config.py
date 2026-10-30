@@ -64,3 +64,14 @@ def test_invalid_regex_rejected_at_load(write_yaml):
 def test_format_only_accepts_json(write_yaml):
     with pytest.raises(ConfigError, match="format"):
         load_experiment(write_yaml(expect=[{"format": "xml"}]))
+
+
+def test_variant_missing_template_param_rejected_at_load(write_yaml):
+    path = write_yaml(variants=[{"name": "base", "params": {}}])
+    text = path.read_text(encoding="utf-8").replace(
+        "message: '{{ message }}'",
+        "message: '{{ message }}'\n    temperature: '{{ variant.temperature }}'",
+    )
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ConfigError, match="base.*temperature"):
+        load_experiment(path)
