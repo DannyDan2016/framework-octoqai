@@ -116,3 +116,36 @@ def test_invalid_jsonpath_is_config_error(agent_cfg):
     )
     with pytest.raises(ConfigError, match="JSONPath"):
         HttpAgentAdapter(bad)
+
+
+def test_tool_call_objects_are_not_evaluable_instead_of_stringified(agent_cfg):
+    cfg = agent_cfg.model_copy(
+        update={"response": agent_cfg.response.model_copy(update={"tool_calls": "$.tool_calls[*]"})}
+    )
+    t = mock(
+        lambda q: httpx.Response(200, json={"answer": "x", "tool_calls": [{"name": "borrar"}]})
+    )
+    assert HttpAgentAdapter(cfg, transport=t).send(CTX).tool_calls is None
+
+
+def test_null_tool_calls_is_none(agent_cfg):
+    cfg = agent_cfg.model_copy(
+        update={"response": agent_cfg.response.model_copy(update={"tool_calls": "$.tool_calls"})}
+    )
+    t = mock(lambda q: httpx.Response(200, json={"answer": "x", "tool_calls": None}))
+    assert HttpAgentAdapter(cfg, transport=t).send(CTX).tool_calls is None
+
+
+def test_non_finite_tokens_become_none(agent_cfg):
+    t = mock(
+        lambda q: httpx.Response(
+            200, content=b'{"answer": "x", "usage": {"total_tokens": Infinity}}'
+        )
+    )
+    r = HttpAgentAdapter(agent_cfg, transport=t).send(CTX)
+    assert r.error is None and r.tokens is None
+
+
+def test_null_answer_is_error(agent_cfg):
+    t = mock(lambda q: httpx.Response(200, json={"answer": None}))
+    assert "null" in HttpAgentAdapter(agent_cfg, transport=t).send(CTX).error

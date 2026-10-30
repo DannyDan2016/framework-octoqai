@@ -60,6 +60,12 @@ def _run(experiment: Path, out: Path, transport: httpx.BaseTransport | None) -> 
     verdict = decide(run)
     report = out / "report.json"
     write_json(run, verdict, report)
+    if all(trial.agent_error for trial in run.trials):
+        first = next(turn.reply.error for turn in run.trials[0].turns if turn.reply.error)
+        print(
+            f"Error: agent unreachable in every trial ({first}). Report: {report}", file=sys.stderr
+        )
+        return EXIT_ERROR
     _print_summary(verdict)
     print(f"Report: {report}")
     return EXIT_CODES[verdict.status]

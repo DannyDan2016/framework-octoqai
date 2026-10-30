@@ -86,8 +86,9 @@ def test_cli_agent_down_does_not_crash(tmp_path, out, capsys):
     code = main(
         ["run", str(_exp_file(tmp_path)), "--out", str(out)], transport=httpx.MockTransport(down)
     )
-    assert code == 1
-    assert "Traceback" not in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert code == 3 and "unreachable" in err and "Traceback" not in err
+    assert (out / "report.json").is_file()
 
 
 def test_cli_unexpected_error_exit_3_without_traceback(tmp_path, out, capsys, monkeypatch):

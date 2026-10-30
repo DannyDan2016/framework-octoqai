@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -89,12 +90,21 @@ class HttpAgentAdapter:
             return self._failure(
                 start, f"answer path {self._cfg.response.answer!r} not found", latency_ms, payload
             )
-        if not isinstance(answer, str):
-            answer = json.dumps(answer, ensure_ascii=False)
+        if answer is None:
+            return self._failure(start, "agent answer is null", latency_ms, payload)
+        try:
+            if not isinstance(answer, str):
+                answer = json.dumps(answer, ensure_ascii=False)
+            tool_calls = self._tools(payload)
+            tokens = self._token_count(payload)
+        except (TypeError, ValueError, OverflowError) as exc:
+            return self._failure(
+                start, f"cannot map agent response: {type(exc).__name__}", latency_ms, payload
+            )
         return AgentReply(
             answer=answer,
-            tool_calls=self._tools(payload),
-            tokens=self._token_count(payload),
+            tool_calls=tool_calls,
+            tokens=tokens,
             latency_ms=latency_ms,
             error=None,
             raw=payload,
@@ -123,12 +133,14 @@ class HttpAgentAdapter:
         if not matches:
             container = self._container_of(self._cfg.response.tool_calls, payload)
             return [] if isinstance(container, list) and not container else None
-        values: list[str] = []
+        values: list[Any] = []
         for match in matches:
             if isinstance(match.value, list):
-                values.extend(str(v) for v in match.value)
+                values.extend(match.value)
             else:
-                values.append(str(match.value))
+                values.append(match.value)
+        if not all(isinstance(value, str) for value in values):
+            return None
         return values
 
     @staticmethod
@@ -142,5 +154,7 @@ class HttpAgentAdapter:
             return None
         value = self._first(self._tokens, payload)
         if isinstance(value, bool) or not isinstance(value, int | float):
+            return None
+        if not math.isfinite(value) or value < 0:
             return None
         return int(value)

@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    ValidationError,
+    model_validator,
+)
 
 ExpectationKind = Literal[
     "tool_called",
@@ -36,7 +44,7 @@ class Expectation(_Model):
 
     kind: ExpectationKind
     value: Any
-    hard: bool = False
+    hard: StrictBool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -46,14 +54,13 @@ class Expectation(_Model):
         if len(data) != 1:
             raise ValueError(f"expectation must have exactly one key, got {sorted(data)}")
         kind, raw = next(iter(data.items()))
-        hard = False
+        hard: Any = False
         if isinstance(raw, dict):
-            raw = dict(raw)
-            hard = bool(raw.pop("hard", False))
-            if "pattern" in raw:
-                raw = raw.pop("pattern")
-            elif "value" in raw:
-                raw = raw.pop("value")
+            unknown = sorted(set(raw) - {"pattern", "value", "hard"})
+            if unknown:
+                raise ValueError(f"unknown keys in {kind}: {unknown}")
+            hard = raw.get("hard", False)
+            raw = raw.get("pattern", raw.get("value"))
         return {"kind": kind, "value": raw, "hard": hard}
 
     @model_validator(mode="after")
@@ -146,6 +153,16 @@ class Experiment(_Model):
         case_ids = [c.id for c in self.cases]
         if len(set(case_ids)) != len(case_ids):
             raise ValueError("case ids must be unique")
+        for case in self.cases:
+            if not any(turn.expect for turn in case.turns):
+                raise ValueError(f"case {case.id!r} has no expectation: it would always pass")
+        for label, value in [("agent.request", self.agent.request)] + [
+            (f"variant {v.name!r} params", v.params) for v in self.variants
+        ]:
+            try:
+                json.dumps(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{label} must be JSON serializable: {exc}") from exc
         for variant in self.variants:
             for path in _variant_paths(self.agent.request):
                 if not _has_path(variant.params, path):

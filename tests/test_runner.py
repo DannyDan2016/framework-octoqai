@@ -140,3 +140,15 @@ def test_timestamps_are_iso_utc(recorder):
     exp = experiment(variants=[{"name": "base", "params": {"temperature": 0}}])
     run = run_experiment(exp, adapter_for(exp, recorder))
     assert run.started_at.endswith("+00:00") and run.finished_at >= run.started_at
+
+
+def test_agent_error_is_not_a_hard_violation():
+    cases = [
+        {
+            "id": "leak",
+            "turns": [{"user": "x", "expect": [{"not_contains": {"pattern": "z", "hard": True}}]}],
+        }
+    ]
+    exp = experiment(variants=[{"name": "base", "params": {"temperature": 0}}], cases=cases)
+    trial = run_experiment(exp, adapter_for(exp, Recorder(status=500))).trials[0]
+    assert trial.outcome == "fail" and not trial.hard_violation and trial.agent_error

@@ -31,7 +31,10 @@ def make_run(plan, threshold=0.8, baseline=None, hard_in=None, not_eval_in=None)
             "variants": [{"name": n, "baseline": n == baseline} for n in names],
             "trials": len(next(iter(plan.values()))[0]),
             "thresholds": {"pass_rate": threshold},
-            "cases": [{"id": f"c{i}", "turns": [{"user": "u"}]} for i in range(n_cases)],
+            "cases": [
+                {"id": f"c{i}", "turns": [{"user": "u", "expect": [{"contains": "."}]}]}
+                for i in range(n_cases)
+            ],
         }
     )
     trials = []
@@ -98,3 +101,13 @@ def test_metrics_aggregated():
 
 def test_exit_codes():
     assert EXIT_CODES == {"go": 0, "no-go": 1, "insufficient": 2}
+
+
+def test_one_case_many_trials_is_insufficient():
+    v = decide(make_run({"base": all_pass(1, 30)}))
+    assert v.status == "insufficient" and v.variants[0].n_cases == 1
+
+
+def test_comparison_with_few_cases_is_never_significant():
+    v = decide(make_run({"base": rate(2, 5, 0.0), "cand": all_pass(2, 5)}, baseline="base"))
+    assert not v.comparisons[0].significant and v.recommended == "base"

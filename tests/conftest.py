@@ -18,7 +18,7 @@ def base_experiment(**overrides):
         "cases": [
             {
                 "id": "c1",
-                "turns": [{"user": "Hola", "expect": overrides.pop("expect", [])}],
+                "turns": [{"user": "Hola", "expect": overrides.pop("expect", [{"contains": "."}])}],
             }
         ],
     }

@@ -75,3 +75,27 @@ def test_variant_missing_template_param_rejected_at_load(write_yaml):
     path.write_text(text, encoding="utf-8")
     with pytest.raises(ConfigError, match="base.*temperature"):
         load_experiment(path)
+
+
+def test_case_without_expectations_rejected(write_yaml):
+    with pytest.raises(ConfigError, match="c1.*expectation"):
+        load_experiment(write_yaml(expect=[]))
+
+
+def test_typo_in_shorthand_key_rejected(write_yaml):
+    with pytest.raises(ConfigError, match="hrad"):
+        load_experiment(write_yaml(expect=[{"contains": {"pattern": "x", "hrad": True}}]))
+
+
+def test_hard_must_be_a_real_boolean(write_yaml):
+    with pytest.raises(ConfigError, match="hard"):
+        load_experiment(write_yaml(expect=[{"contains": {"pattern": "x", "hard": "maybe"}}]))
+
+
+def test_non_json_serializable_param_rejected(write_yaml):
+    import datetime
+
+    with pytest.raises(ConfigError, match="JSON"):
+        load_experiment(
+            write_yaml(variants=[{"name": "base", "params": {"d": datetime.date(2026, 1, 1)}}])
+        )

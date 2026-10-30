@@ -6,12 +6,12 @@ import math
 import random
 
 
-def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
+def wilson_interval(successes: float, n: int, z: float = 1.96) -> tuple[float, float]:
     """Wilson score interval for a proportion.
 
     Args:
-        successes: Number of successful trials.
-        n: Number of trials.
+        successes: Number of successes; may be fractional when trials are averaged per case.
+        n: Number of independent units, i.e. cases.
         z: Normal quantile; 1.96 gives a 95% interval.
 
     Returns:

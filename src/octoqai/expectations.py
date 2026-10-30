@@ -19,6 +19,7 @@ class CheckResult:
     passed: bool | None
     hard: bool
     detail: str
+    agent_error: bool = False
 
 
 _Outcome = tuple[bool | None, str]
@@ -90,6 +91,6 @@ def evaluate(exp: Expectation, reply: AgentReply) -> CheckResult:
         The check result; a reply with an error fails every check.
     """
     if reply.error is not None:
-        return CheckResult(exp.kind, False, exp.hard, f"agent error: {reply.error}")
+        return CheckResult(exp.kind, False, exp.hard, f"agent error: {reply.error}", True)
     passed, detail = _CHECKS[exp.kind](exp.value, reply)
     return CheckResult(exp.kind, passed, exp.hard, detail)

@@ -48,8 +48,13 @@ class TrialResult:
 
     @property
     def hard_violation(self) -> bool:
-        """Whether a hard expectation failed in this trial."""
-        return any(c.hard and c.passed is False for c in self._checks)
+        """Whether a hard expectation failed on a real agent answer."""
+        return any(c.hard and c.passed is False and not c.agent_error for c in self._checks)
+
+    @property
+    def agent_error(self) -> bool:
+        """Whether a turn failed because the agent could not be reached or mapped."""
+        return any(turn.reply.error for turn in self.turns)
 
     @property
     def tokens(self) -> int | None:

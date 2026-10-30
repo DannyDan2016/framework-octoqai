@@ -13,6 +13,8 @@ Status = Literal["go", "no-go", "insufficient"]
 
 EXIT_CODES: dict[str, int] = {"go": 0, "no-go": 1, "insufficient": 2}
 
+MIN_CASES_FOR_COMPARISON = 5
+
 
 @dataclass
 class VariantSummary:
@@ -20,6 +22,7 @@ class VariantSummary:
 
     name: str
     baseline: bool
+    n_cases: int
     n_evaluable: int
     n_not_evaluable: int
     pass_rate: float
@@ -66,7 +69,9 @@ def _summarize(name: str, baseline: bool, trials: list[TrialResult], threshold: 
     evaluable = [t for t in trials if t.outcome != "not_evaluable"]
     passes = sum(t.outcome == "pass" for t in evaluable)
     n_not_evaluable = len(trials) - len(evaluable)
-    lo, hi = wilson_interval(passes, len(evaluable))
+    n_cases = len(_by_case(evaluable))
+    pass_rate = passes / len(evaluable) if evaluable else 0.0
+    lo, hi = wilson_interval(pass_rate * n_cases, n_cases)
     cases = _by_case(trials)
     case_outcomes = [[t.outcome == "pass" for t in group] for group in cases.values()]
     hard = sum(t.hard_violation for t in trials)
@@ -93,9 +98,10 @@ def _summarize(name: str, baseline: bool, trials: list[TrialResult], threshold: 
     return VariantSummary(
         name=name,
         baseline=baseline,
+        n_cases=n_cases,
         n_evaluable=len(evaluable),
         n_not_evaluable=n_not_evaluable,
-        pass_rate=passes / len(evaluable) if evaluable else 0.0,
+        pass_rate=pass_rate,
         ci95=(lo, hi),
         pass_at_k=sum(map(pass_at_k, case_outcomes)) / len(case_outcomes),
         pass_hat_k=sum(map(pass_hat_k, case_outcomes)) / len(case_outcomes),
@@ -143,11 +149,17 @@ def decide(run: RunResult) -> Verdict:
         diff, lo, hi = paired_bootstrap_diff(
             _case_rates(by_variant[variant.name], case_ids), base_rates
         )
-        comparisons.append(Comparison(variant.name, baseline.name, diff, (lo, hi), lo > 0))
+        significant = lo > 0 and len(case_ids) >= MIN_CASES_FOR_COMPARISON
+        comparisons.append(Comparison(variant.name, baseline.name, diff, (lo, hi), significant))
     winners = [c for c in comparisons if c.significant and summaries[c.variant].status != "no-go"]
     recommended = max(winners, key=lambda c: c.diff).variant if winners else baseline.name
     chosen = summaries[recommended]
     reasons = [f"{recommended}: {reason}" for reason in chosen.reasons]
-    if comparisons and not winners:
+    if comparisons and len(case_ids) < MIN_CASES_FOR_COMPARISON:
+        reasons.append(
+            f"at least {MIN_CASES_FOR_COMPARISON} cases are needed to compare variants, "
+            f"got {len(case_ids)}"
+        )
+    elif comparisons and not winners:
         reasons.append("no candidate is significantly better than the baseline")
     return Verdict(chosen.status, recommended, list(summaries.values()), comparisons, reasons)
