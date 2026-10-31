@@ -5,9 +5,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-import octoqai
+import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+import octoqai
+from support.paths import REPO_ROOT as ROOT
+
+pytestmark = pytest.mark.quality
 
 
 def _subpackages() -> list[str]:

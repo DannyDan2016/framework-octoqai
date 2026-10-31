@@ -1,8 +1,11 @@
 import io
 import tokenize
-from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "src"
+import pytest
+
+from support.paths import SRC
+
+pytestmark = pytest.mark.quality
 
 
 def test_source_has_no_comments():

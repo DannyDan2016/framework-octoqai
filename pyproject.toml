@@ -34,6 +34,17 @@ packages = ["src/octoqai"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = "--strict-markers -ra --import-mode=importlib"
+markers = [
+    "unit: fast tests of one module in isolation",
+    "integration: tests that wire several packages together",
+    "e2e: tests against a real local agent process",
+    "quality: style, hygiene, architecture and layout checks",
+    "smoke: one to three happy-path tests per package",
+    "regression: the full behavioural suite",
+    "security: secrets, hygiene and headers",
+]
 
 [tool.ruff]
 target-version = "py312"
@@ -42,6 +53,9 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "D", "C90", "PLR"]
 ignore = ["D100", "D104", "D105", "D107"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["octoqai", "support"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 8
@@ -55,7 +69,7 @@ convention = "google"
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["src"]
+files = ["src", "tests/support"]
 
 [tool.importlinter]
 root_package = "octoqai"

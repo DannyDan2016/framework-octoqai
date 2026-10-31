@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
+from support.paths import REPO_ROOT as ROOT
+
+pytestmark = [pytest.mark.quality, pytest.mark.security]
+
 
 CREDENTIALS = {
     "private key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),

@@ -2,7 +2,10 @@ import pytest
 
 from octoqai.stats import paired_bootstrap_diff, pass_at_k, pass_hat_k, wilson_interval
 
+pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
+
+@pytest.mark.smoke
 def test_wilson_known_value():
     lo, hi = wilson_interval(8, 10)
     assert lo == pytest.approx(0.4902, abs=1e-3) and hi == pytest.approx(0.9433, abs=1e-3)

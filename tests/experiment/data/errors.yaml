@@ -1,0 +1,37 @@
+- id: two-baselines
+  overrides:
+    variants:
+      - {name: a, baseline: true}
+      - {name: b, baseline: true}
+  fragments: [baseline]
+
+- id: several-variants-without-baseline
+  overrides:
+    variants:
+      - {name: a}
+      - {name: b}
+  fragments: [baseline]
+
+- id: unknown-expectation-kind
+  expect: [{teleport: 1}]
+  fragments: [teleport]
+
+- id: invalid-regex
+  expect: [{contains: "(unclosed"}]
+  fragments: [regex]
+
+- id: format-only-json
+  expect: [{format: xml}]
+  fragments: [format]
+
+- id: case-without-expectations
+  expect: []
+  fragments: ["c1.*expectation"]
+
+- id: typo-in-shorthand-key
+  expect: [{contains: {pattern: x, hrad: true}}]
+  fragments: [hrad]
+
+- id: hard-must-be-boolean
+  expect: [{contains: {pattern: x, hard: maybe}}]
+  fragments: [hard]

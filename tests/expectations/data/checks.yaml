@@ -1,0 +1,18 @@
+- {id: tool-called-all, kind: tool_called, value: [a, b], reply: {tool_calls: [b, x, a]}, passed: true}
+- {id: tool-called-missing, kind: tool_called, value: [a, b], reply: {tool_calls: [a]}, passed: false}
+- {id: no-tool-called-clean, kind: no_tool_called, value: [borrar], reply: {tool_calls: [buscar]}, passed: true}
+- {id: no-tool-called-forbidden, kind: no_tool_called, value: [borrar], reply: {tool_calls: [borrar]}, passed: false}
+- {id: format-object, kind: format, value: json, reply: {answer: ' {"a": 1} '}, passed: true}
+- {id: format-array, kind: format, value: json, reply: {answer: "[1, 2]"}, passed: true}
+- {id: format-scalar, kind: format, value: json, reply: {answer: "42"}, passed: false}
+- {id: format-chatty-prefix, kind: format, value: json, reply: {answer: 'Claro! {"a": 1}'}, passed: false}
+- {id: contains-regex, kind: contains, value: '\d+,\d{2}', reply: {answer: "Total 10,50"}, passed: true}
+- {id: contains-missing, kind: contains, value: conciliado, reply: {answer: pendiente}, passed: false}
+- {id: not-contains-absent, kind: not_contains, value: TENANT-B, reply: {answer: solo TENANT-A}, passed: true}
+- {id: max-tokens-equal, kind: max_tokens, value: 100, reply: {tokens: 100}, passed: true}
+- {id: max-tokens-over, kind: max_tokens, value: 100, reply: {tokens: 101}, passed: false}
+- {id: max-latency-under, kind: max_latency_ms, value: 500, reply: {latency_ms: 499.9}, passed: true}
+- {id: max-latency-over, kind: max_latency_ms, value: 500, reply: {latency_ms: 800}, passed: false}
+- {id: tool-called-not-exposed, kind: tool_called, value: [buscar], reply: {tool_calls: null}, passed: null}
+- {id: no-tool-called-not-exposed, kind: no_tool_called, value: [borrar], reply: {tool_calls: null}, passed: null}
+- {id: max-tokens-not-exposed, kind: max_tokens, value: 10, reply: {tokens: null}, passed: null}

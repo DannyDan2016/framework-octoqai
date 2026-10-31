@@ -1,8 +1,13 @@
+import pytest
+
 from octoqai.agents import AgentReply
 from octoqai.expectations import CheckResult
 from octoqai.experiment import Experiment
 from octoqai.running import RunResult, TrialResult, TurnResult
 from octoqai.verdict import EXIT_CODES, decide
+from support.builders import ExperimentBuilder, turn
+
+pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
 
 def all_pass(n_cases, k):
@@ -24,19 +29,13 @@ def _trial(variant, case_id, index, outcome, hard=False):
 def make_run(plan, threshold=0.8, baseline=None, hard_in=None, not_eval_in=None):
     names = list(plan)
     n_cases = len(next(iter(plan.values())))
-    exp = Experiment.model_validate(
-        {
-            "name": "v",
-            "agent": {"url": "http://a", "request": {}, "response": {"answer": "$.a"}},
-            "variants": [{"name": n, "baseline": n == baseline} for n in names],
-            "trials": len(next(iter(plan.values()))[0]),
-            "thresholds": {"pass_rate": threshold},
-            "cases": [
-                {"id": f"c{i}", "turns": [{"user": "u", "expect": [{"contains": "."}]}]}
-                for i in range(n_cases)
-            ],
-        }
-    )
+    builder = ExperimentBuilder().agent(url="http://a", request={}, response={"answer": "$.a"})
+    for name in names:
+        builder.variant(name, baseline=name == baseline)
+    for i in range(n_cases):
+        builder.case(f"c{i}", turn("u", {"contains": "."}))
+    builder.trials(len(next(iter(plan.values()))[0])).threshold(threshold)
+    exp = Experiment.model_validate(builder.build())
     trials = []
     for name, cases in plan.items():
         for ci, outcomes in enumerate(cases):
@@ -48,12 +47,14 @@ def make_run(plan, threshold=0.8, baseline=None, hard_in=None, not_eval_in=None)
     return RunResult(exp, trials, "2026-10-30T00:00:00+00:00", "2026-10-30T00:01:00+00:00")
 
 
+@pytest.mark.smoke
 def test_clear_pass_is_go():
     v = decide(make_run({"base": all_pass(30, 5)}))
     assert v.status == "go" and v.recommended == "base"
     assert v.variants[0].ci95[0] >= 0.8 and v.variants[0].pass_hat_k == 1.0
 
 
+@pytest.mark.smoke
 def test_hard_violation_is_no_go_even_if_rate_high():
     v = decide(make_run({"base": all_pass(30, 5)}, hard_in=("base", 0)))
     assert v.status == "no-go" and v.variants[0].hard_violations == 1

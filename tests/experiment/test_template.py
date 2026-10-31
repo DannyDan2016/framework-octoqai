@@ -3,6 +3,8 @@ import pytest
 from octoqai.errors import ConfigError
 from octoqai.experiment import render
 
+pytestmark = [pytest.mark.unit, pytest.mark.regression]
+
 CTX = {
     "message": "Hola ñandú",
     "conversation_id": "c1",
@@ -12,6 +14,7 @@ CTX = {
 }
 
 
+@pytest.mark.smoke
 def test_whole_placeholder_preserves_type_including_zero():
     assert render({"t": "{{ variant.temperature }}"}, CTX) == {"t": 0}
 
