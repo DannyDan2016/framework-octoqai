@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import json
+import queue
+import re
+import subprocess
+import sys
+import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +18,7 @@ import pytest
 from octoqai.cli import main
 from support.agents import FakeAgent, FakeJsonAgent
 from support.builders import ExperimentBuilder
+from support.paths import TOY_SSE_AGENT
 
 
 @dataclass
@@ -79,3 +85,52 @@ def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., 
 def datadir(request: pytest.FixtureRequest) -> Path:
     """The ``data`` folder next to the requesting test module."""
     return Path(request.path).parent / "data"
+
+
+def _first_line(process: subprocess.Popen[str]) -> str:
+    """Read the first stdout line of ``process`` in a thread, bounded by a queue timeout."""
+    stdout = process.stdout
+    assert stdout is not None
+    lines: queue.Queue[str] = queue.Queue()
+    threading.Thread(target=lambda: lines.put(stdout.readline()), daemon=True).start()
+    try:
+        return lines.get(timeout=10).strip()
+    except queue.Empty:
+        return ""
+
+
+def _stop(process: subprocess.Popen[str]) -> str:
+    """Terminate ``process``, killing it if it ignores the request, and return its stderr."""
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+    assert process.stderr is not None
+    stderr = process.stderr.read()
+    process.stderr.close()
+    assert process.stdout is not None
+    process.stdout.close()
+    return stderr
+
+
+@pytest.fixture
+def toy_sse_agent_url() -> Iterator[str]:
+    """URL of the toy SSE agent on 127.0.0.1; fails fast if it never announces its port."""
+    process = subprocess.Popen(
+        [sys.executable, str(TOY_SSE_AGENT), "--port", "0"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        line = _first_line(process)
+        match = re.fullmatch(r"PORT (\d+)", line)
+        if match is None:
+            stderr = _stop(process)
+            pytest.fail(f"toy SSE agent did not announce its port: {line!r}; stderr: {stderr}")
+        yield f"http://127.0.0.1:{match.group(1)}/chat/stream"
+    finally:
+        if process.poll() is None:
+            _stop(process)

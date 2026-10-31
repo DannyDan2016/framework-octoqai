@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 TESTS = REPO_ROOT / "tests"
 EXAMPLES = REPO_ROOT / "examples"
+TOY_SSE_AGENT = REPO_ROOT / "tests" / "e2e" / "toy_sse_agent.py"
 
 
 def data_file(test_file: str, name: str) -> Path:

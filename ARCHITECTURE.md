@@ -86,6 +86,11 @@ tests/
   `cuts_after`, `wrong_content_type`), never an ad hoc `httpx.MockTransport` inside a test. Time
   comes from `FakeClock`, so deadlines and backoff never sleep for real; simulated agents fix
   `jitter` to 0 (change it with `fake.jitter`).
+- **End-to-end:** `tests/e2e/` starts `toy_sse_agent.py` (standard library only, `127.0.0.1` only)
+  through the `toy_sse_agent_url` fixture. The fixture waits for the `PORT <n>` line the agent prints
+  (a signal, never a sleep) and fails at once with the agent's stderr if it does not arrive. To try
+  it by hand: `python tests/e2e/toy_sse_agent.py --port 8000`, then
+  `octoqai run examples/streaming/experiment.yaml`.
 - **Experiments:** build them with `ExperimentBuilder` and `turn(...)`, or the `experiment` fixture.
 - **CLI:** use the `run_cli` fixture; it returns the exit code, captured output and report.
 - Tests are written first and seen failing before the implementation.
