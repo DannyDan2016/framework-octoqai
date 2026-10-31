@@ -69,6 +69,12 @@ def _max_latency_ms(value: float, reply: AgentReply) -> _Outcome:
     return reply.latency_ms <= value, f"{reply.latency_ms:.0f} ms (max {value})"
 
 
+def _max_ttft_ms(value: float, reply: AgentReply) -> _Outcome:
+    if reply.ttft_ms is None:
+        return None, "agent is not streaming"
+    return reply.ttft_ms <= value, f"{reply.ttft_ms:.0f} ms to first fragment (max {value})"
+
+
 _CHECKS: dict[str, Callable[..., _Outcome]] = {
     "tool_called": _tool_called,
     "no_tool_called": _no_tool_called,
@@ -77,6 +83,7 @@ _CHECKS: dict[str, Callable[..., _Outcome]] = {
     "not_contains": _not_contains,
     "max_tokens": _max_tokens,
     "max_latency_ms": _max_latency_ms,
+    "max_ttft_ms": _max_ttft_ms,
 }
 
 

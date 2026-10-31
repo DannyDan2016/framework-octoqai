@@ -17,6 +17,8 @@ RESPONSE_MAP = {
     "tokens": "$.usage.total_tokens",
 }
 
+SSE_RESPONSE_MAP = {"tool_calls": "$.tools[*]", "tokens": "$.usage.total"}
+
 _Handler = Callable[[httpx.Request], httpx.Response]
 
 

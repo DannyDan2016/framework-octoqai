@@ -58,6 +58,8 @@ class HttpAgentAdapter:
             transport: Optional httpx transport, used to test without a network.
         """
         self._cfg = cfg
+        if cfg.response.answer is None:
+            raise ConfigError("agent.response.answer is required for JSON agents")
         self._answer = _compile(cfg.response.answer)
         self._tool_calls = _compile_optional(cfg.response.tool_calls)
         self._tokens = _compile_optional(cfg.response.tokens)

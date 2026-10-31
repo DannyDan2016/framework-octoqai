@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import (
@@ -26,6 +27,7 @@ ExpectationKind = Literal[
     "not_contains",
     "max_tokens",
     "max_latency_ms",
+    "max_ttft_ms",
 ]
 
 
@@ -99,6 +101,7 @@ _VALUE_CHECKS: dict[str, Callable[[str, Any], None]] = {
     "not_contains": _regex,
     "max_tokens": _number,
     "max_latency_ms": _number,
+    "max_ttft_ms": _number,
 }
 
 
@@ -128,9 +131,43 @@ class Case(_Model):
 class ResponseMap(_Model):
     """JSONPath expressions that locate data in the agent response."""
 
-    answer: str
+    answer: str | None = None
     tool_calls: str | None = None
     tokens: str | None = None
+
+
+class StreamConfig(_Model):
+    """How to read an agent that answers with server-sent events."""
+
+    delta: str
+    event: str | None = None
+    done: str = "[DONE]"
+
+
+class WaitPolicy(_Model):
+    """Per-phase time limits; each one defaults to the total."""
+
+    connect_s: float | None = Field(default=None, gt=0)
+    first_fragment_s: float | None = Field(default=None, gt=0)
+    idle_s: float | None = Field(default=None, gt=0)
+    total_s: float | None = Field(default=None, gt=0)
+
+
+class RetryPolicy(_Model):
+    """Retries for failures that happen before the agent starts answering."""
+
+    retries: int = Field(default=0, ge=0, le=5)
+    backoff_s: float = Field(default=0.5, ge=0, le=30)
+
+
+@dataclass(frozen=True)
+class EffectiveWait:
+    """Time limits after applying defaults."""
+
+    connect_s: float
+    first_fragment_s: float
+    idle_s: float
+    total_s: float
 
 
 class AgentConfig(_Model):
@@ -142,6 +179,41 @@ class AgentConfig(_Model):
     request: Any
     response: ResponseMap
     timeout_s: float = Field(default=60, gt=0)
+    stream: StreamConfig | None = None
+    wait: WaitPolicy = Field(default_factory=WaitPolicy)
+    retry: RetryPolicy = Field(default_factory=RetryPolicy)
+
+    def effective_wait(self) -> EffectiveWait:
+        """Resolve the limits: phases default to ``total_s``, which defaults to ``timeout_s``."""
+        total = self.wait.total_s or self.timeout_s
+        return EffectiveWait(
+            connect_s=self.wait.connect_s or total,
+            first_fragment_s=self.wait.first_fragment_s or total,
+            idle_s=self.wait.idle_s or total,
+            total_s=total,
+        )
+
+    @model_validator(mode="after")
+    def _answer_matches_transport(self) -> AgentConfig:
+        if self.stream is None and self.response.answer is None:
+            raise ValueError("agent.response.answer is required unless agent.stream is set")
+        if self.stream is not None and self.response.answer is not None:
+            raise ValueError(
+                "agent.response.answer is not used with agent.stream: "
+                "the answer is the joined stream.delta fragments"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _waits_fit_total(self) -> AgentConfig:
+        wait = self.effective_wait()
+        for name in ("connect_s", "first_fragment_s", "idle_s"):
+            value = getattr(wait, name)
+            if value > wait.total_s:
+                raise ValueError(
+                    f"wait.{name} ({value:g}s) cannot exceed total_s ({wait.total_s:g}s)"
+                )
+        return self
 
 
 class Variant(_Model):

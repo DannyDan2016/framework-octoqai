@@ -53,3 +53,47 @@
   overrides: {zzz: 1}
   fragments: [zzz]
   absent: [did you mean]
+
+- id: json-agent-without-answer
+  overrides: {agent: {response: {answer: null}}}
+  fragments: ["agent.response.answer is required unless agent.stream is set"]
+
+- id: stream-with-answer
+  overrides: {agent: {stream: {delta: $.delta}}}
+  fragments: ["agent.response.answer is not used with agent.stream"]
+
+- id: wait-over-total
+  overrides: {agent: {wait: {idle_s: 90, total_s: 60}}}
+  fragments: ["idle_s .*cannot exceed total_s"]
+
+- id: wait-over-default-timeout
+  overrides: {agent: {timeout_s: 10, wait: {first_fragment_s: 30}}}
+  fragments: ["first_fragment_s .*cannot exceed total_s"]
+
+- id: wait-must-be-positive
+  overrides: {agent: {wait: {connect_s: 0}}}
+  fragments: ["agent.wait.connect_s"]
+
+- id: too-many-retries
+  overrides: {agent: {retry: {retries: 9}}}
+  fragments: ["agent.retry.retries"]
+
+- id: typo-in-wait-key
+  overrides: {agent: {wait: {idle_sec: 5}}}
+  fragments: ["agent.wait.idle_sec", "did you mean 'idle_s'"]
+
+- id: typo-in-retry-key
+  overrides: {agent: {retry: {retires: 2}}}
+  fragments: ["did you mean 'retries'"]
+
+- id: typo-in-stream-key
+  overrides: {agent: {stream: {delt: $.delta}, response: {answer: null}}}
+  fragments: ["did you mean 'delta'"]
+
+- id: typo-in-max-ttft
+  expect: [{max_ttf_ms: 100}]
+  fragments: ["did you mean 'max_ttft_ms'"]
+
+- id: max-ttft-needs-number
+  expect: [{max_ttft_ms: fast}]
+  fragments: ["max_ttft_ms expects a number"]

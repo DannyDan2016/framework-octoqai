@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from support.agents import SSE_RESPONSE_MAP
+
 DEFAULT_URL = "http://agent.local/chat"
 
 
@@ -62,6 +64,15 @@ class ExperimentBuilder:
     def agent(self, **settings: Any) -> ExperimentBuilder:
         """Replace agent settings such as ``url``, ``headers``, ``request`` or ``response``."""
         self._agent.update(settings)
+        return self
+
+    def streaming(self, delta: str = "$.delta", event: str | None = None) -> ExperimentBuilder:
+        """Make the agent stream over SSE; the answer is the joined ``delta`` values."""
+        stream: dict[str, Any] = {"delta": delta}
+        if event is not None:
+            stream["event"] = event
+        self._agent["stream"] = stream
+        self._agent["response"] = dict(SSE_RESPONSE_MAP)
         return self
 
     def variant(self, name: str, baseline: bool = False, **params: Any) -> ExperimentBuilder:

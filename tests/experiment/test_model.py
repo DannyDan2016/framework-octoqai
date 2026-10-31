@@ -3,7 +3,7 @@ import datetime
 import pytest
 from pydantic import ValidationError
 
-from octoqai.experiment import Experiment
+from octoqai.experiment import EffectiveWait, Experiment
 from support.assertions import assert_config_error
 from support.builders import turn
 
@@ -56,3 +56,30 @@ def test_select_keeps_cases_with_any_tag(tagged):
 
 def test_select_without_matches_is_config_error(tagged):
     assert_config_error(lambda: tagged.select(["nightly"]), "no case matches tags", "nightly")
+
+
+@pytest.mark.smoke
+def test_stream_makes_answer_optional(experiment):
+    agent = Experiment.model_validate(experiment.streaming().build()).agent
+    assert (agent.stream.delta, agent.stream.event, agent.stream.done) == (
+        "$.delta",
+        None,
+        "[DONE]",
+    )
+    assert agent.response.answer is None
+
+
+def test_wait_defaults_to_timeout(experiment):
+    agent = Experiment.model_validate(experiment.agent(timeout_s=30).build()).agent
+    assert agent.effective_wait() == EffectiveWait(30, 30, 30, 30)
+
+
+def test_wait_fields_override_and_default_to_total(experiment):
+    experiment.agent(timeout_s=30, wait={"connect_s": 2, "idle_s": 5, "total_s": 20})
+    wait = Experiment.model_validate(experiment.build()).agent.effective_wait()
+    assert wait == EffectiveWait(connect_s=2, first_fragment_s=20, idle_s=5, total_s=20)
+
+
+def test_retry_defaults_to_no_retry(experiment):
+    retry = Experiment.model_validate(experiment.build()).agent.retry
+    assert (retry.retries, retry.backoff_s) == (0, 0.5)

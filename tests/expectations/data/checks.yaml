@@ -16,3 +16,6 @@
 - {id: tool-called-not-exposed, kind: tool_called, value: [buscar], reply: {tool_calls: null}, passed: null}
 - {id: no-tool-called-not-exposed, kind: no_tool_called, value: [borrar], reply: {tool_calls: null}, passed: null}
 - {id: max-tokens-not-exposed, kind: max_tokens, value: 10, reply: {tokens: null}, passed: null}
+- {id: max-ttft-under, kind: max_ttft_ms, value: 100, reply: {ttft_ms: 50}, passed: true}
+- {id: max-ttft-over, kind: max_ttft_ms, value: 100, reply: {ttft_ms: 150}, passed: false}
+- {id: max-ttft-not-streaming, kind: max_ttft_ms, value: 100, reply: {ttft_ms: null}, passed: null}

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
@@ -16,6 +16,10 @@ class AgentReply:
     latency_ms: float
     error: str | None
     raw: Any = None
+    ttft_ms: float | None = None
+    fragments: list[str] = field(default_factory=list)
+    body: str | None = None
+    retries: list[str] = field(default_factory=list)
 
 
 class AgentPort(Protocol):

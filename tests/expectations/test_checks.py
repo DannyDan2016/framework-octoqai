@@ -12,13 +12,14 @@ def E(kind, value, hard=False):
     return Expectation(kind=kind, value=value, hard=hard)
 
 
-def reply(answer="ok", tool_calls=(), tokens=10, latency_ms=100.0, error=None):
+def reply(answer="ok", tool_calls=(), tokens=10, latency_ms=100.0, error=None, **extra):
     return AgentReply(
         answer=answer,
         tool_calls=None if tool_calls is None else list(tool_calls),
         tokens=tokens,
         latency_ms=latency_ms,
         error=error,
+        **extra,
     )
 
 

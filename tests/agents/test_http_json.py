@@ -1,6 +1,6 @@
 import pytest
 
-from octoqai.agents import HttpAgentAdapter
+from octoqai.agents import AgentReply, HttpAgentAdapter
 from octoqai.errors import ConfigError
 from octoqai.experiment import AgentConfig
 from support.agents import RESPONSE_MAP
@@ -30,6 +30,16 @@ def agent_cfg():
 
 def _with_response(cfg, **paths):
     return cfg.model_copy(update={"response": cfg.response.model_copy(update=paths)})
+
+
+def test_reply_defaults_carry_no_stream_data():
+    r = AgentReply("ok", None, None, 1.0, None)
+    assert (r.ttft_ms, r.fragments, r.body, r.retries) == (None, [], None, [])
+
+
+def test_json_adapter_requires_answer_path(agent_cfg):
+    with pytest.raises(ConfigError, match="answer"):
+        HttpAgentAdapter(_with_response(agent_cfg, answer=None))
 
 
 @pytest.mark.smoke
