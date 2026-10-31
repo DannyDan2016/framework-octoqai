@@ -103,6 +103,18 @@
   fragments: ["canary canary-1 is shorter than 4 characters"]
   absent: [zq9]
 
+- id: canary-label-contains-another-canary-value
+  overrides: {security: {canaries: [{value: zq9-secret, label: zq9-secret}]}}
+  fragments: ["canary label #1 contains a canary value"]
+  absent: [zq9-secret]
+
+- id: canary-label-contains-other-canary-value
+  overrides:
+    security:
+      canaries: [{value: alpha-4242}, {value: beta-7777, label: "x alpha-4242 x"}]
+  fragments: ["canary label #2 contains a canary value"]
+  absent: [alpha-4242]
+
 - id: invalid-allow-regex
   overrides: {security: {allow: ["(unclosed"]}}
   fragments: ["security.allow"]

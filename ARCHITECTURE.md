@@ -128,7 +128,8 @@ pytest -m security -q         secrets, hygiene and headers
 
 1. Create `reports/<format>.py` and export its writer.
 2. Always pass the content through the redactor (`Redactor.for_report`), which runs every
-   detector whatever `security.detectors` says and masks the union of overlapping findings.
+   detector whatever `security.detectors` says, ignores `security.allow` (both only decide what
+   counts as a leak, never what the report may show) and masks the union of overlapping findings.
    `redact_tree` redacts values, not dict keys; no report key is controlled by the agent, so
    a new key must never be built from agent output.
 3. Never include headers or environment values.

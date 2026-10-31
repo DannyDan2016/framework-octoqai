@@ -232,3 +232,14 @@ def test_streaming_example_runs_against_a_fake_agent(run_cli):
     result = run_cli("run", example, agent=FakeSseAgent().streams("Extracto conciliado."))
     assert result.code != 3, result.err
     assert all(v["leaks"] == 0 for v in result.report()["variants"])
+
+
+@pytest.mark.security
+def test_unreachable_error_never_prints_canary(experiment, tmp_path, run_cli, fake_agent):
+    canary = "TEN_B_0042"
+    experiment.agent(response={"answer": f"$.{canary}"}).security(canaries=[{"value": canary}])
+    path = str(experiment.case("c1", turn("Hola", {"contains": "."})).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent.answers("x"))
+    assert_exit(result.code, 3)
+    assert "unreachable" in result.err
+    assert_not_in_outputs(canary, result.out, result.err, result.report_text())

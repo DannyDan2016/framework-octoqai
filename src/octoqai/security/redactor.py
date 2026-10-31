@@ -43,16 +43,17 @@ class Redactor:
 
     @classmethod
     def for_report(cls, security: SecurityConfig, env_values: Sequence[str]) -> Redactor:
-        """Create the report redactor, which runs every detector whatever ``detectors`` says.
+        """Create the report redactor: every detector runs and ``allow`` is ignored.
 
         Args:
-            security: Canaries and allow patterns of the experiment.
+            security: Canaries of the experiment; its detectors and allow patterns only decide
+                what counts as a leak, so they are ignored here.
             env_values: Values taken from the environment that must never be written.
 
         Returns:
             A redactor that masks canaries, secrets, environment values and personal data.
         """
-        every = security.model_copy(update={"detectors": ["secrets", "pii"]})
+        every = security.model_copy(update={"detectors": ["secrets", "pii"], "allow": []})
         return cls(Detector(every, env_values=env_values))
 
     def redact(self, text: str) -> str:

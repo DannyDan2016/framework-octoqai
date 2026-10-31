@@ -50,5 +50,18 @@ def test_merged_span_uses_the_highest_priority_kind():
 
 def test_always_runs_every_detector_regardless_of_config():
     security = SecurityConfig.model_validate({"detectors": []})
-    report_redactor = Redactor.for_report(security, [])
-    assert report_redactor.redact(f"mail {samples.EMAIL}") == "mail [pii:email]"
+    key = samples.SECRET_SAMPLES["llm api key"]
+    result = Redactor.for_report(security, []).redact(f"mail {samples.EMAIL} clave {key}")
+    assert result == "mail [pii:email] clave [secret:llm api key]"
+
+
+def test_report_redactor_ignores_allow_patterns():
+    security = SecurityConfig.model_validate({"allow": [".*"]})
+    key = samples.SECRET_SAMPLES["llm api key"]
+    text = f"{samples.EMAIL} {samples.DATABASE_URL} {key}"
+    result = Redactor.for_report(security, []).redact(text)
+    assert samples.EMAIL not in result and "hunter2" not in result and key not in result
+
+
+def test_touching_spans_are_not_merged():
+    assert redactor(["abcd", "efgh"]).redact("abcdefgh") == "[redacted][redacted]"

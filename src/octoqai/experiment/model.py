@@ -245,6 +245,11 @@ class SecurityConfig(_Model):
                 raise ValueError(
                     f"canary {canary.label} is shorter than {MIN_CANARY_LENGTH} characters"
                 )
+        values = [canary.value.casefold() for canary in self.canaries]
+        for number, canary in enumerate(self.canaries, 1):
+            label = canary.label.casefold()
+            if any(value in label for value in values):
+                raise ValueError(f"canary label #{number} contains a canary value")
         for number, pattern in enumerate(self.allow, 1):
             try:
                 re.compile(pattern)

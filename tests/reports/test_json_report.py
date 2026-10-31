@@ -93,8 +93,44 @@ def test_report_counts_fragments_and_lists_masked_leaks():
     assert "TEN-B-0042" not in str(report)
 
 
+def _secure_run(answer, security, response=None):
+    builder = ExperimentBuilder().variant("base").trials(1).security(**security)
+    if response:
+        builder.agent(response=response)
+    exp = Experiment.model_validate(builder.case("c1", turn("Hola", {"contains": "."})).build())
+    run = run_experiment(exp, FakeJsonAgent().answers(answer).adapter(exp.agent))
+    return run, decide(run)
+
+
 @pytest.mark.security
-def test_report_masks_pii_even_when_detectors_are_disabled():
-    run, verdict = _run(f"ñ {samples.EMAIL}")
-    run.experiment.security.detectors = []
-    assert samples.EMAIL not in str(build_report(run, verdict))
+def test_report_masks_pii_and_secrets_even_when_detectors_are_disabled(tmp_path):
+    key = samples.SECRET_SAMPLES["llm api key"]
+    run, verdict = _secure_run(f"ñ {samples.EMAIL} {key}.", {"detectors": []})
+    write_json(run, verdict, tmp_path / "r.json")
+    text = (tmp_path / "r.json").read_text(encoding="utf-8")
+    assert samples.EMAIL not in text and key not in text
+    assert "[pii:email]" in text and "[secret:llm api key]" in text
+
+
+@pytest.mark.security
+def test_report_masks_allowed_values_that_are_not_leaks(tmp_path):
+    key = samples.SECRET_SAMPLES["llm api key"]
+    answer = f"ñ {samples.EMAIL} {samples.DATABASE_URL} {key}."
+    run, verdict = _secure_run(answer, {"allow": [".*"]})
+    write_json(run, verdict, tmp_path / "r.json")
+    text = (tmp_path / "r.json").read_text(encoding="utf-8")
+    assert samples.EMAIL not in text and "hunter2" not in text and key not in text
+    assert json.loads(text)["trials"][0]["leaks"] == 0
+
+
+@pytest.mark.security
+def test_report_masks_canary_in_error_and_check_messages(tmp_path):
+    canary = "TEN_B_0042"
+    security = {"canaries": [{"value": canary}]}
+    run, verdict = _secure_run("x", security, response={"answer": f"$.{canary}"})
+    write_json(run, verdict, tmp_path / "r.json")
+    data = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
+    turn_data = data["trials"][0]["turns"][0]
+    assert canary not in str(data)
+    assert "[canary:canary-1]" in turn_data["error"]
+    assert "[canary:canary-1]" in turn_data["checks"][0]["detail"]

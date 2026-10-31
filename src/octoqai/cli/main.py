@@ -14,6 +14,7 @@ from octoqai.errors import ConfigError
 from octoqai.experiment import load_experiment
 from octoqai.reports import write_json
 from octoqai.running import RunResult, run_experiment
+from octoqai.security import Redactor
 from octoqai.verdict import EXIT_CODES, Verdict, decide
 
 EXIT_ERROR = 3
@@ -83,9 +84,9 @@ def _run(
     write_json(run, verdict, report)
     if _unreachable(run):
         first = next(turn.reply.error for turn in run.trials[0].turns if turn.reply.error)
-        print(
-            f"Error: agent unreachable in every trial ({first}). Report: {report}", file=sys.stderr
-        )
+        redactor = Redactor.for_report(exp.security, exp.redacted_values)
+        message = redactor.redact(f"Error: agent unreachable in every trial ({first}).")
+        print(f"{message} Report: {report}", file=sys.stderr)
         return EXIT_ERROR
     _print_summary(verdict)
     print(f"Report: {report}")

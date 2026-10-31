@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal
 
 from octoqai.experiment import SecurityConfig
@@ -13,7 +14,9 @@ from octoqai.security import _patterns
 FindingKind = Literal["canary", "secret", "env", "pii"]
 
 MIN_ENV_VALUE_LENGTH = 4
-PRIORITY: dict[FindingKind, int] = {"canary": 0, "secret": 1, "env": 2, "pii": 3}
+PRIORITY: Mapping[FindingKind, int] = MappingProxyType(
+    {"canary": 0, "secret": 1, "env": 2, "pii": 3}
+)
 _MASK_THRESHOLD = 12
 
 
