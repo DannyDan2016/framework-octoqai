@@ -49,7 +49,6 @@ class _Stream:
 @dataclass
 class _Block:
     lines: list[str] = field(default_factory=list)
-    breached: bool = False
 
     def add(self, raw: str) -> None:
         if raw and not raw.startswith(":"):
@@ -57,7 +56,6 @@ class _Block:
 
     def reset(self) -> None:
         self.lines.clear()
-        self.breached = False
 
 
 class SseAgentAdapter:
@@ -159,30 +157,22 @@ class SseAgentAdapter:
     def _watched(self, lines: Iterable[str], state: _Stream) -> Iterator[str]:
         block = _Block()
         for raw in lines:
-            block.add(raw)
-            self._guard(raw, block, state)
-            if not raw:
+            text = raw.removesuffix("\r")
+            block.add(text)
+            self._guard(block, state)
+            if not text:
                 block.reset()
             yield raw
-        error = self._check_deadlines(self._clock(), state)
-        if error and not self._events(block):
-            raise ReplyError(error)
+        self._guard(block, state)
 
-    def _guard(self, raw: str, block: _Block, state: _Stream) -> None:
+    def _guard(self, block: _Block, state: _Stream) -> None:
         now = self._clock()
-        if not block.lines:
-            error = self._check_deadlines(now, state)
-            if error:
-                raise ReplyError(error)
+        error = self._check_deadlines(now, state)
+        if error is None:
             return
-        total = self._total_error(now, state)
-        if not raw or total is None:
-            return
-        if block.breached:
-            for event in self._events(block):
-                self._record(event, now, state)
-            raise ReplyError(total)
-        block.breached = True
+        for event in self._events(block):
+            self._record(event, now, state)
+        raise ReplyError(error)
 
     def _events(self, block: _Block) -> list[SseEvent]:
         events = parse_sse([*block.lines, ""])
@@ -204,14 +194,10 @@ class SseAgentAdapter:
         raise ReplyError(error)
 
     def _on_event(self, event: SseEvent, state: _Stream) -> bool:
-        now = self._clock()
-        error = self._check_deadlines(now, state)
-        done = event.data == self._stream.done
-        if not done:
-            self._record(event, now, state)
-        if error:
-            raise ReplyError(error)
-        return done
+        if event.data == self._stream.done:
+            return True
+        self._record(event, self._clock(), state)
+        return False
 
     def _record(self, event: SseEvent, now: float, state: _Stream) -> None:
         state.fragments.append(event.data)

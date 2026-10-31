@@ -94,19 +94,19 @@ def test_timeout_mid_stream_keeps_partial_fragments_and_answer(sse):
 
 def test_first_fragment_deadline(sse):
     r = send(sse.streams("Hola", first_s=40), wait={"first_fragment_s": 30})
-    assert r.error == "no stream fragment within 30s" and len(r.fragments) == 1
+    assert r.error == "no stream fragment within 30s" and r.fragments == []
 
 
 def test_idle_deadline_between_fragments(sse):
     r = send(sse.streams("Ho", "la", gap_s=20), wait={"idle_s": 5})
     assert r.error == "stream idle for more than 5s"
-    assert len(r.fragments) == 2 and r.answer == "Hola"
+    assert len(r.fragments) == 1 and r.answer == "Ho"
 
 
 def test_total_deadline_keeps_received_fragments_and_stops_reading(sse):
     sse.streams("a", "b", "c", "d", first_s=4, gap_s=4)
     r = send(sse, wait={"idle_s": 5, "total_s": 10})
-    assert r.error == "stream exceeded 10s" and len(r.fragments) == 3
+    assert r.error == "stream exceeded 10s" and len(r.fragments) == 2
     assert sse.clock.now == 12
 
 
@@ -169,17 +169,25 @@ def test_content_type_is_case_insensitive(sse):
 
 
 def test_unterminated_event_is_capped_by_total_and_keeps_its_data(sse):
-    sse.script(*[(1.0, "data: a\n")] * 10)
+    sse.script((3.0, sse_event("token", {"delta": "x"})), *[(1.0, "data: a\n")] * 10)
     r = send(sse, wait={"total_s": 5})
     assert r.error == "stream exceeded 5s"
-    assert len(r.fragments) == 1 and r.fragments[0].startswith("a\na")
-    assert sse.clock.now == 7
+    assert len(r.fragments) == 2 and r.fragments[1].startswith("a\na")
+    assert sse.clock.now == 6
 
 
 def test_deadline_breached_in_a_dataless_block_is_reported_at_end_of_stream(sse):
     sse.script((10.0, "event: ping\n\n"))
     r = send(sse, wait={"total_s": 5})
     assert r.error == "no stream fragment within 5s" and r.fragments == []
+
+
+@pytest.mark.parametrize("field", ["event: ping", "id: 1", "retry: 5"])
+def test_dataless_blocks_cannot_outlive_the_total_deadline(sse, field):
+    sse.script(*[(1.0, f"{field}\n\n")] * 200)
+    r = send(sse, wait={"total_s": 5})
+    assert r.error == "no stream fragment within 5s"
+    assert sse.clock.now <= 6
 
 
 def test_adapter_for_picks_the_transport_from_the_config():
