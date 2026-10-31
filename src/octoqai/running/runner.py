@@ -86,7 +86,9 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _run_trial(agent: AgentPort, variant: Variant, case: Case, index: int) -> TrialResult:
+def _run_trial(
+    agent: AgentPort, exp: Experiment, variant: Variant, case: Case, index: int
+) -> TrialResult:
     conversation_id = str(uuid.uuid4())
     history: list[dict[str, str]] = []
     turns: list[TurnResult] = []
@@ -98,6 +100,8 @@ def _run_trial(agent: AgentPort, variant: Variant, case: Case, index: int) -> Tr
                 "turn_index": turn_index,
                 "history": [dict(item) for item in history],
                 "variant": dict(variant.params),
+                "data": exp.data_values,
+                "env": exp.environment,
             }
         )
         turns.append(TurnResult(turn.user, reply, [evaluate(e, reply) for e in turn.expect]))
@@ -120,7 +124,7 @@ def run_experiment(exp: Experiment, agent: AgentPort) -> RunResult:
     """
     started_at = _now()
     trials = [
-        _run_trial(agent, variant, case, index)
+        _run_trial(agent, exp, variant, case, index)
         for variant in exp.variants
         for case in exp.cases
         for index in range(exp.trials)

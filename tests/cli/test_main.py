@@ -122,3 +122,35 @@ def test_wrong_env_is_config_error_exit_3(extra, run_cli, monkeypatch):
     result = run_cli("run", str(EXAMPLES / "multienv" / "experiment.yaml"), *extra)
     assert_exit(result.code, 3)
     assert "dev, qa" in result.err
+
+
+@pytest.mark.smoke
+def test_cli_tags_filter_runs_only_smoke_cases(experiment, tmp_path, run_cli, fake_agent):
+    experiment.trials(2)
+    experiment.case("c1", turn("a", {"contains": "."}), tags=["smoke"])
+    experiment.case("c2", turn("b", {"contains": "."}), tags=["regression"])
+    experiment.case("c3", turn("c", {"contains": "."}), tags=["smoke", "pagos"])
+    path = str(experiment.write(tmp_path))
+    result = run_cli("run", path, "--tags", "smoke, pagos", agent=fake_agent.answers("ok."))
+    assert result.code != 3, result.err
+    report = result.report()
+    assert report["tags"] == ["smoke", "pagos"]
+    assert {t["case_id"] for t in report["trials"]} == {"c1", "c3"}
+    assert len(report["trials"]) == 2 * 2
+
+
+def test_cli_tags_without_matches_exit_3(experiment, tmp_path, run_cli):
+    path = str(experiment.case("c1", turn("a", {"contains": "."}), tags=["smoke"]).write(tmp_path))
+    result = run_cli("run", path, "--tags", "nightly")
+    assert_exit(result.code, 3)
+    assert "no case matches tags" in result.err
+
+
+def test_multienv_example_smoke_suite_renders_qa_data(run_cli, fake_agent, monkeypatch):
+    monkeypatch.setenv("AGENT_URL", "http://127.0.0.1:8000/chat")
+    monkeypatch.setenv("AGENT_TOKEN", "example-token")
+    example = str(EXAMPLES / "multienv" / "experiment.yaml")
+    result = run_cli("run", example, "--env", "qa", "--tags", "smoke", agent=fake_agent)
+    assert result.code != 3, result.err
+    assert {t["case_id"] for t in result.report()["trials"]} == {"conciliar-extracto"}
+    assert "ES-QA-0001" in fake_agent.requests[0]["message"]

@@ -105,3 +105,13 @@ def test_timestamps_are_iso_utc(agent):
 def test_agent_error_is_not_a_hard_violation(fake_agent):
     trial = run(experiment(hard_case("z")), fake_agent.fails(500)).trials[0]
     assert trial.outcome == "fail" and not trial.hard_violation and trial.agent_error
+
+
+def test_request_template_sees_data(fake_agent):
+    builder = ExperimentBuilder().agent(
+        request={"message": "{{ message }}", "account": "{{ data.cuenta }}", "env": "{{ env }}"}
+    )
+    exp = Experiment.model_validate(builder.build())
+    exp = exp.model_copy(update={"data_values": {"cuenta": "ES-0002"}, "environment": "qa"})
+    run(exp, fake_agent)
+    assert fake_agent.requests[0] == {"message": "Hola", "account": "ES-0002", "env": "qa"}

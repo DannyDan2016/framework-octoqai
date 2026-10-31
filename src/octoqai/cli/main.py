@@ -31,7 +31,14 @@ def _parser() -> argparse.ArgumentParser:
         "--out", type=Path, default=Path("octoqai-out"), help="output directory for reports"
     )
     run.add_argument("--env", help="environment to run in, e.g. dev or qa")
+    run.add_argument(
+        "--tags", type=_tag_list, default=[], help="comma separated tags; runs cases with any"
+    )
     return parser
+
+
+def _tag_list(text: str) -> list[str]:
+    return [tag.strip() for tag in text.split(",") if tag.strip()]
 
 
 def _print_summary(verdict: Verdict) -> None:
@@ -52,10 +59,11 @@ def _print_summary(verdict: Verdict) -> None:
     print(f"VERDICT: {verdict.status} (recommended: {verdict.recommended})")
 
 
-def _run(
-    experiment: Path, out: Path, env: str | None, transport: httpx.BaseTransport | None
-) -> int:
-    exp = load_experiment(experiment, env=env)
+def _run(args: argparse.Namespace, transport: httpx.BaseTransport | None) -> int:
+    exp = load_experiment(args.experiment, env=args.env)
+    if args.tags:
+        exp = exp.select(args.tags)
+    out: Path = args.out
     adapter = HttpAgentAdapter(exp.agent, transport=transport)
     try:
         run = run_experiment(exp, adapter)
@@ -94,7 +102,7 @@ def main(argv: list[str], transport: httpx.BaseTransport | None = None) -> int:
         parser.print_usage(sys.stderr)
         return EXIT_ERROR
     try:
-        return _run(args.experiment, args.out, args.env, transport)
+        return _run(args, transport)
     except ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
     except Exception as exc:

@@ -1,5 +1,7 @@
 import pytest
 
+from octoqai.agents import AgentReply
+from octoqai.expectations import evaluate
 from octoqai.experiment import load_experiment
 from support.assertions import assert_config_error
 from support.builders import turn, write_data_set, write_env_file
@@ -121,3 +123,49 @@ def test_url_expanded_from_env_file(experiment, tmp_path):
     assert load_experiment(path, env="qa", process_env={}).agent.url == (
         "http://qa.agent.local/chat"
     )
+
+
+@pytest.fixture
+def with_data(experiment, tmp_path):
+    def _write(*turns, values=None):
+        write_data_set(tmp_path, "dev", values or DEV)
+        write_data_set(tmp_path, "qa", values or QA)
+        return experiment.environments("dev", "qa").case("c1", *turns).write(tmp_path)
+
+    return _write
+
+
+def test_user_message_renders_data(with_data):
+    path = with_data(
+        turn("Concilia la cuenta {{ data.cliente.cuenta }} en {{ env }}", {"contains": "."})
+    )
+    exp = load_experiment(path, env="qa", process_env={})
+    assert exp.cases[0].turns[0].user == "Concilia la cuenta ES-0002 en qa"
+
+
+def test_unknown_data_placeholder_fails_at_load(with_data):
+    path = with_data(turn("ok", {"contains": "."}), turn("{{ data.nope }}", {"contains": "."}))
+    assert_config_error(
+        lambda: load_experiment(path, env="dev", process_env={}),
+        r"cases\[c1\]\.turns\[1\]",
+        "data.nope",
+    )
+
+
+@pytest.mark.security
+def test_contains_inserts_data_escaped(with_data):
+    path = with_data(
+        turn("x", {"contains": "ref {{ data.ref }}"}, {"not_contains": "{{ data.ref }}9"}),
+        values={"ref": "(01)"},
+    )
+    contains, not_contains = (
+        load_experiment(path, env="dev", process_env={}).cases[0].turns[0].expect
+    )
+    reply = AgentReply("la ref (01) existe", None, None, 1.0, None)
+    assert evaluate(contains, reply).passed is True
+    assert evaluate(not_contains, reply).passed is True
+
+
+def test_invalid_tag_rejected(experiment, tmp_path):
+    path = experiment.case("c1", turn("x", {"contains": "."}), tags=["Smoke Test"]).write(tmp_path)
+    assert_config_error(lambda: load_experiment(path, process_env={}), "invalid tag")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any, Literal
 
 from pydantic import (
@@ -12,8 +12,11 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
+    field_validator,
     model_validator,
 )
+
+from octoqai.errors import ConfigError
 
 ExpectationKind = Literal[
     "tool_called",
@@ -27,6 +30,7 @@ ExpectationKind = Literal[
 
 
 ENV_NAME = re.compile(r"[A-Za-z0-9_-]+")
+TAG = re.compile(r"[a-z][a-z0-9-]*")
 
 
 class _Model(BaseModel):
@@ -110,6 +114,15 @@ class Case(_Model):
 
     id: str
     turns: list[Turn] = Field(min_length=1)
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("tags")
+    @classmethod
+    def _check_tags(cls, tags: list[str]) -> list[str]:
+        invalid = [tag for tag in tags if not TAG.fullmatch(tag)]
+        if invalid:
+            raise ValueError(f"invalid tag {invalid[0]!r}: use lowercase letters, digits and '-'")
+        return tags
 
 
 class ResponseMap(_Model):
@@ -158,12 +171,31 @@ class Experiment(_Model):
     data: str | None = None
     data_values: dict[str, Any] = Field(default_factory=dict)
     environment: str | None = None
+    selected_tags: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_variants(self) -> Experiment:
         for check in _EXPERIMENT_CHECKS:
             check(self)
         return self
+
+    def select(self, tags: Iterable[str]) -> Experiment:
+        """Return a copy with only the cases that carry at least one of ``tags``.
+
+        Args:
+            tags: Tags to keep.
+
+        Returns:
+            The filtered experiment, with ``selected_tags`` set.
+
+        Raises:
+            ConfigError: If no case carries any of the tags.
+        """
+        wanted = list(dict.fromkeys(tags))
+        cases = [case for case in self.cases if set(case.tags) & set(wanted)]
+        if not cases:
+            raise ConfigError(f"no case matches tags: {', '.join(wanted)}")
+        return self.model_copy(update={"cases": cases, "selected_tags": wanted})
 
     @property
     def baseline(self) -> Variant:

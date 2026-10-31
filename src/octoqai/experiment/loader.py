@@ -16,11 +16,13 @@ from pydantic_core import ErrorDetails
 from octoqai.errors import ConfigError
 from octoqai.experiment.datasets import load_data_set
 from octoqai.experiment.envfiles import resolve_env
-from octoqai.experiment.model import ENV_NAME, Experiment
+from octoqai.experiment.model import ENV_NAME, Case, Expectation, Experiment, Turn
+from octoqai.experiment.template import render_text
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _QUOTED = re.compile(r"'([^']+)'")
-_RESERVED = ("data_values", "environment")
+_PATTERN_KINDS = ("contains", "not_contains")
+_RESERVED = ("data_values", "environment", "selected_tags")
 
 
 def load_experiment(
@@ -53,7 +55,40 @@ def load_experiment(
         values = _expand_values(
             load_data_set(path.parent, exp.data, exp.environments, env), variables
         )
+    exp = _render_cases(exp, _template_context(values, env))
     return exp.model_copy(update={"data_values": values, "environment": env})
+
+
+def _template_context(values: dict[str, Any], env: str | None) -> dict[str, Any]:
+    context: dict[str, Any] = {"data": values}
+    if env is not None:
+        context["env"] = env
+    return context
+
+
+def _render_cases(exp: Experiment, context: dict[str, Any]) -> Experiment:
+    return exp.model_copy(update={"cases": [_render_case(case, context) for case in exp.cases]})
+
+
+def _render_case(case: Case, context: dict[str, Any]) -> Case:
+    turns: list[Turn] = []
+    for index, turn in enumerate(case.turns):
+        try:
+            turns.append(_render_turn(turn, context))
+        except ConfigError as exc:
+            raise ConfigError(f"cases[{case.id}].turns[{index}]: {exc}") from None
+    return case.model_copy(update={"turns": turns})
+
+
+def _render_turn(turn: Turn, context: dict[str, Any]) -> Turn:
+    expect = [_render_expectation(item, context) for item in turn.expect]
+    return turn.model_copy(update={"user": render_text(turn.user, context), "expect": expect})
+
+
+def _render_expectation(item: Expectation, context: dict[str, Any]) -> Expectation:
+    if item.kind not in _PATTERN_KINDS:
+        return item
+    return item.model_copy(update={"value": render_text(item.value, context, escape=re.escape)})
 
 
 def _read_experiment(path: Path) -> dict[str, Any]:

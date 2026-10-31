@@ -1,7 +1,9 @@
+import re
+
 import pytest
 
 from octoqai.errors import ConfigError
-from octoqai.experiment import render
+from octoqai.experiment import render, render_text
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
@@ -43,3 +45,13 @@ def test_template_is_not_mutated():
     template = {"m": ["{{ message }}"]}
     render(template, CTX)
     assert template == {"m": ["{{ message }}"]}
+
+
+def test_render_text_escapes_inserted_values_only():
+    text = render_text("ref {{ data.ref }}.", {"data": {"ref": "(01)"}}, escape=re.escape)
+    assert text == r"ref \(01\)."
+
+
+def test_render_text_unknown_variable_raises():
+    with pytest.raises(ConfigError, match="data.x"):
+        render_text("{{ data.x }}", {"data": {}})

@@ -13,7 +13,7 @@ from octoqai.experiment.model import (
     Turn,
     Variant,
 )
-from octoqai.experiment.template import render
+from octoqai.experiment.template import render, render_text
 
 __all__ = [
     "AgentConfig",
@@ -27,5 +27,6 @@ __all__ = [
     "Variant",
     "load_experiment",
     "render",
+    "render_text",
     "resolve_env",
 ]

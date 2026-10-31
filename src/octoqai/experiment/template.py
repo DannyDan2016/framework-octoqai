@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from octoqai.errors import ConfigError
@@ -18,6 +19,30 @@ def _lookup(expr: str, context: dict[str, Any]) -> Any:
         if value is _MISSING:
             raise ConfigError(f"unknown template variable: {expr}")
     return value
+
+
+def render_text(
+    text: str, context: dict[str, Any], escape: Callable[[str], str] | None = None
+) -> str:
+    """Interpolate every ``{{ path }}`` placeholder of a text as a string.
+
+    Args:
+        text: Text containing placeholders, e.g. a user message or a regex pattern.
+        context: Values available to the placeholders.
+        escape: Optional function applied to each inserted value, e.g. ``re.escape``.
+
+    Returns:
+        The text with every placeholder replaced.
+
+    Raises:
+        ConfigError: If a placeholder references an unknown variable.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        value = str(_lookup(match.group(1), context))
+        return escape(value) if escape else value
+
+    return _PLACEHOLDER.sub(replace, text)
 
 
 def render(template: Any, context: dict[str, Any]) -> Any:

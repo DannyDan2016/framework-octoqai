@@ -59,6 +59,7 @@ def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
             "variants": [v.model_dump() for v in exp.variants],
         },
         "environment": exp.environment,
+        "tags": exp.selected_tags,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
         "verdict": {
