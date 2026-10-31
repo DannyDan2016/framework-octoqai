@@ -26,6 +26,9 @@ ExpectationKind = Literal[
 ]
 
 
+ENV_NAME = re.compile(r"[A-Za-z0-9_-]+")
+
+
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -151,6 +154,10 @@ class Experiment(_Model):
     trials: int = Field(default=5, ge=1)
     thresholds: Thresholds
     cases: list[Case] = Field(min_length=1)
+    environments: list[str] | None = Field(default=None, min_length=1)
+    data: str | None = None
+    data_values: dict[str, Any] = Field(default_factory=dict)
+    environment: str | None = None
 
     @model_validator(mode="after")
     def _check_variants(self) -> Experiment:
@@ -208,8 +215,18 @@ def _variants_cover_template(exp: Experiment) -> None:
                 )
 
 
+def _valid_environments(exp: Experiment) -> None:
+    names = exp.environments or []
+    if len(set(names)) != len(names):
+        raise ValueError("environment names must be unique")
+    invalid = [name for name in names if not ENV_NAME.fullmatch(name)]
+    if invalid:
+        raise ValueError(f"environment names may only use letters, digits, '-' and '_': {invalid}")
+
+
 _EXPERIMENT_CHECKS: tuple[Callable[[Experiment], None], ...] = (
     _unique_names,
+    _valid_environments,
     _one_baseline,
     _cases_have_expectations,
     _json_serializable,

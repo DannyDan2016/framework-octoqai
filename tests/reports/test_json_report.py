@@ -50,6 +50,7 @@ def test_report_structure(tmp_path):
         turn_data
     )
     assert "headers" not in data["experiment"]
+    assert data["environment"] is None
 
 
 def test_report_creates_parent_directories(tmp_path):

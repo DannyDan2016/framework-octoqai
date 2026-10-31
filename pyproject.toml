@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0.3,<7",
     "httpx>=0.28,<1",
     "jsonpath-ng>=1.15,<2",
+    "python-dotenv>=1.2,<2",
 ]
 
 [project.optional-dependencies]

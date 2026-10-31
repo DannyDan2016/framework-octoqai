@@ -1,0 +1,19 @@
+- id: missing-key
+  dev: {cliente: {nombre: Ana, cuenta: ES-0001}, limite: 100}
+  qa: {cliente: {nombre: Luis}, limite: 200}
+  fragments: ["missing data.cliente.cuenta in qa"]
+
+- id: extra-key
+  dev: {cliente: {nombre: Ana}, limite: 100}
+  qa: {cliente: {nombre: Luis}, limite: 200, x: 1}
+  fragments: ["extra data.x in qa"]
+
+- id: different-type
+  dev: {cliente: {nombre: Ana}, limite: 100}
+  qa: {cliente: {nombre: Luis}, limite: "200"}
+  fragments: ["data.limite is int in dev but str in qa"]
+
+- id: mapping-replaced-by-scalar
+  dev: {cliente: {nombre: Ana}, limite: 100}
+  qa: {cliente: Luis, limite: 200}
+  fragments: ["data.cliente is mapping in dev but str in qa"]

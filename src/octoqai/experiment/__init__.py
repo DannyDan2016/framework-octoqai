@@ -1,5 +1,6 @@
 """Experiment definition: model, YAML loader and templates."""
 
+from octoqai.experiment.envfiles import resolve_env
 from octoqai.experiment.loader import load_experiment
 from octoqai.experiment.model import (
     AgentConfig,
@@ -26,4 +27,5 @@ __all__ = [
     "Variant",
     "load_experiment",
     "render",
+    "resolve_env",
 ]

@@ -27,6 +27,7 @@ class FakeJsonAgent:
         """Create an agent that answers ``ok`` until told otherwise."""
         self.requests: list[Any] = []
         self.headers: list[httpx.Headers] = []
+        self.urls: list[httpx.URL] = []
         self._handler: _Handler = self._payload({"answer": "ok"})
 
     def answers(
@@ -84,6 +85,7 @@ class FakeJsonAgent:
     def _record(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(json.loads(request.content) if request.content else None)
         self.headers.append(request.headers)
+        self.urls.append(request.url)
         return self._handler(request)
 
     @staticmethod

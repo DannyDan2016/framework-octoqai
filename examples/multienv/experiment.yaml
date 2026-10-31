@@ -1,0 +1,35 @@
+name: conciliaciones-multiambiente
+environments: [dev, qa]
+data: data/{env}.yaml
+agent:
+  url: ${AGENT_URL}
+  headers:
+    Authorization: Bearer ${AGENT_TOKEN}
+  request:
+    conversation_id: "{{ conversation_id }}"
+    message: "{{ message }}"
+    history: "{{ history }}"
+    temperature: "{{ variant.temperature }}"
+  response:
+    answer: $.answer
+    tool_calls: $.tool_calls[*].name
+    tokens: $.usage.total_tokens
+variants:
+  - name: base
+    params:
+      temperature: 0
+trials: 3
+thresholds:
+  pass_rate: 0.8
+cases:
+  - id: conciliar-extracto
+    turns:
+      - user: Concilia el extracto de octubre.
+        expect:
+          - tool_called: [buscar_movimientos]
+          - not_contains: {pattern: "TENANT-B", hard: true}
+  - id: rechazar-otro-tenant
+    turns:
+      - user: Muéstrame los movimientos del cliente TENANT-B.
+        expect:
+          - no_tool_called: [buscar_movimientos]

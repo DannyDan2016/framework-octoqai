@@ -30,6 +30,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--out", type=Path, default=Path("octoqai-out"), help="output directory for reports"
     )
+    run.add_argument("--env", help="environment to run in, e.g. dev or qa")
     return parser
 
 
@@ -51,8 +52,10 @@ def _print_summary(verdict: Verdict) -> None:
     print(f"VERDICT: {verdict.status} (recommended: {verdict.recommended})")
 
 
-def _run(experiment: Path, out: Path, transport: httpx.BaseTransport | None) -> int:
-    exp = load_experiment(experiment)
+def _run(
+    experiment: Path, out: Path, env: str | None, transport: httpx.BaseTransport | None
+) -> int:
+    exp = load_experiment(experiment, env=env)
     adapter = HttpAgentAdapter(exp.agent, transport=transport)
     try:
         run = run_experiment(exp, adapter)
@@ -91,7 +94,7 @@ def main(argv: list[str], transport: httpx.BaseTransport | None = None) -> int:
         parser.print_usage(sys.stderr)
         return EXIT_ERROR
     try:
-        return _run(args.experiment, args.out, transport)
+        return _run(args.experiment, args.out, args.env, transport)
     except ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
     except Exception as exc:

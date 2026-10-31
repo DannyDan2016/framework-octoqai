@@ -10,7 +10,7 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | Package | Responsibility | May depend on |
 |---|---|---|
 | `errors.py` | `ConfigError` and other errors shared by every package | nothing |
-| `experiment/` | Pydantic model, YAML loader, `${VAR}` expansion and `{{ }}` templates | `errors` |
+| `experiment/` | Pydantic model, YAML loader, `${VAR}` expansion from `.env` files (`envfiles.py`), per-environment data sets (`datasets.py`) and `{{ }}` templates | `errors` |
 | `stats/` | Pure estimators: Wilson interval, paired bootstrap, pass@k | `errors` |
 | `agents/` | `port.py` (`AgentPort`, `AgentReply`) and adapters such as `http_json.py` | `experiment`, `errors` |
 | `expectations/` | Registry of deterministic checks applied to an agent reply | `agents.port`, `experiment` |

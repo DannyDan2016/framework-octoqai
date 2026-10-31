@@ -2,7 +2,7 @@ import pytest
 
 from octoqai.experiment import load_experiment
 from support.assertions import assert_config_error
-from support.builders import turn
+from support.builders import turn, write_data_set, write_env_file
 from support.paths import cases
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
@@ -38,4 +38,86 @@ def test_invalid_experiment_is_config_error(row, experiment, tmp_path):
     path = experiment.merge(row.get("overrides", {})).write(tmp_path)
     assert_config_error(
         lambda: load_experiment(path), *row["fragments"], absent=row.get("absent", ())
+    )
+
+
+DEV = {"cliente": {"nombre": "Ana", "cuenta": "ES-0001"}, "limite": 100}
+QA = {"cliente": {"nombre": "Luis", "cuenta": "ES-0002"}, "limite": 250}
+
+
+@pytest.fixture
+def multienv(experiment, tmp_path):
+    write_data_set(tmp_path, "dev", DEV)
+    write_data_set(tmp_path, "qa", QA)
+    return experiment.environments("dev", "qa").write(tmp_path)
+
+
+def test_env_required_when_environments_declared(multienv):
+    assert_config_error(lambda: load_experiment(multienv, process_env={}), "--env", "dev, qa")
+
+
+def test_unknown_env_rejected(multienv):
+    assert_config_error(
+        lambda: load_experiment(multienv, env="prod", process_env={}), "prod", "dev, qa"
+    )
+
+
+@pytest.mark.parametrize("row", cases(__file__, "shapes"))
+def test_data_sets_must_share_shape(row, experiment, tmp_path):
+    write_data_set(tmp_path, "dev", row["dev"])
+    write_data_set(tmp_path, "qa", row["qa"])
+    path = experiment.environments("dev", "qa").write(tmp_path)
+    assert_config_error(lambda: load_experiment(path, env="dev", process_env={}), *row["fragments"])
+
+
+@pytest.mark.security
+def test_shape_errors_never_show_values(experiment, tmp_path):
+    write_data_set(tmp_path, "dev", {"cuenta": "ES-SECRETO-1", "limite": 100})
+    write_data_set(tmp_path, "qa", {"cuenta": 42, "limite": "ES-SECRETO-2"})
+    path = experiment.environments("dev", "qa").write(tmp_path)
+    assert_config_error(
+        lambda: load_experiment(path, env="qa", process_env={}),
+        "data.cuenta",
+        absent=["ES-SECRETO-1", "ES-SECRETO-2", "42", "100"],
+    )
+
+
+def test_missing_data_set_for_any_environment_is_rejected(experiment, tmp_path):
+    write_data_set(tmp_path, "dev", DEV)
+    path = experiment.environments("dev", "qa").write(tmp_path)
+    assert_config_error(lambda: load_experiment(path, env="dev", process_env={}), "qa", "data")
+
+
+@pytest.mark.smoke
+def test_data_values_loaded_for_selected_env(multienv):
+    exp = load_experiment(multienv, env="qa", process_env={})
+    assert exp.environment == "qa" and exp.data_values == QA
+
+
+def test_data_values_expand_env_vars_only_for_selected_env(experiment, tmp_path):
+    write_data_set(tmp_path, "dev", {"token": "${DEV_ONLY}"})
+    write_data_set(tmp_path, "qa", {"token": "${QA_ONLY}"})
+    path = experiment.environments("dev", "qa").write(tmp_path)
+    exp = load_experiment(path, env="qa", process_env={"QA_ONLY": "q"})
+    assert exp.data_values == {"token": "q"}
+
+
+def test_data_without_environments_uses_path_as_is(experiment, tmp_path):
+    write_data_set(tmp_path, "shared", {"limite": 1})
+    path = experiment.merge({"data": "data/shared.yaml"}).write(tmp_path)
+    assert load_experiment(path, process_env={}).data_values == {"limite": 1}
+
+
+def test_reserved_fields_cannot_be_set_in_yaml(experiment, tmp_path):
+    path = experiment.merge({"data_values": {"x": 1}}).write(tmp_path)
+    assert_config_error(lambda: load_experiment(path, process_env={}), "data_values")
+
+
+@pytest.mark.security
+def test_url_expanded_from_env_file(experiment, tmp_path):
+    write_env_file(tmp_path, ".env", AGENT_URL="http://base.agent.local/chat")
+    write_env_file(tmp_path, ".env.qa", AGENT_URL="http://qa.agent.local/chat")
+    path = experiment.agent(url="${AGENT_URL}").write(tmp_path)
+    assert load_experiment(path, env="qa", process_env={}).agent.url == (
+        "http://qa.agent.local/chat"
     )

@@ -58,6 +58,7 @@ def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
             "thresholds": exp.thresholds.model_dump(),
             "variants": [v.model_dump() for v in exp.variants],
         },
+        "environment": exp.environment,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
         "verdict": {

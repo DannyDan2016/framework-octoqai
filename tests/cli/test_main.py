@@ -3,7 +3,8 @@ import importlib
 import pytest
 
 from support.assertions import assert_exit, assert_not_in_outputs
-from support.builders import turn
+from support.builders import turn, write_env_file
+from support.paths import EXAMPLES
 
 pytestmark = [pytest.mark.integration, pytest.mark.regression]
 
@@ -88,3 +89,36 @@ def test_secret_never_printed(thirty_cases, run_cli, fake_agent, monkeypatch):
     path = thirty_cases(headers={"Authorization": "Bearer ${AGENT_TOKEN}"})
     result = run_cli("run", path, agent=fake_agent.answers("conciliado"))
     assert_not_in_outputs("s3cret", result.out, result.err, result.report_text())
+
+
+@pytest.mark.security
+def test_run_with_env_uses_env_file_and_reports_environment(
+    experiment, tmp_path, run_cli, fake_agent, monkeypatch
+):
+    monkeypatch.delenv("AGENT_URL", raising=False)
+    write_env_file(tmp_path, ".env.qa", AGENT_URL="http://qa.agent.local/chat")
+    path = experiment.agent(url="${AGENT_URL}").write(tmp_path)
+    result = run_cli("run", str(path), "--env", "qa", agent=fake_agent.answers("ok."))
+    assert result.code != 3, result.err
+    assert str(fake_agent.urls[0]) == "http://qa.agent.local/chat"
+    assert result.report()["environment"] == "qa"
+    assert_not_in_outputs("qa.agent.local", result.out, result.err, result.report_text())
+
+
+@pytest.mark.parametrize("env", ["dev", "qa"])
+def test_multienv_example_is_valid_for_every_env(env, run_cli, fake_agent, monkeypatch):
+    monkeypatch.setenv("AGENT_URL", "http://127.0.0.1:8000/chat")
+    monkeypatch.setenv("AGENT_TOKEN", "example-token")
+    example = EXAMPLES / "multienv" / "experiment.yaml"
+    result = run_cli("run", str(example), "--env", env, agent=fake_agent.answers("ok"))
+    assert result.code != 3, result.err
+    assert result.report()["environment"] == env
+
+
+@pytest.mark.parametrize("extra", [(), ("--env", "prod")], ids=["missing", "undeclared"])
+def test_wrong_env_is_config_error_exit_3(extra, run_cli, monkeypatch):
+    monkeypatch.setenv("AGENT_URL", "http://127.0.0.1:8000/chat")
+    monkeypatch.setenv("AGENT_TOKEN", "example-token")
+    result = run_cli("run", str(EXAMPLES / "multienv" / "experiment.yaml"), *extra)
+    assert_exit(result.code, 3)
+    assert "dev, qa" in result.err

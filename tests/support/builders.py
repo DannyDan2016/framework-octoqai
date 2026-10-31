@@ -17,6 +17,21 @@ def turn(user: str, *expect: dict[str, Any]) -> dict[str, Any]:
     return {"user": user, "expect": list(expect)}
 
 
+def write_env_file(directory: Path, name: str, **values: str) -> Path:
+    """Write a dotenv file such as ``.env`` or ``.env.qa`` into ``directory``."""
+    path = Path(directory) / name
+    path.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
+    return path
+
+
+def write_data_set(directory: Path, env: str, values: dict[str, Any]) -> Path:
+    """Write ``data/<env>.yaml`` into ``directory``."""
+    path = Path(directory) / "data" / f"{env}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(values, allow_unicode=True), encoding="utf-8")
+    return path
+
+
 def _deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in overrides.items():
@@ -73,6 +88,13 @@ class ExperimentBuilder:
         """Set the pass rate required for a go decision."""
         self._threshold = pass_rate
         return self
+
+    def environments(self, *names: str, data: str | None = "data/{env}.yaml") -> ExperimentBuilder:
+        """Declare the environments and, optionally, the per-environment data set path."""
+        overrides: dict[str, Any] = {"environments": list(names)}
+        if data is not None:
+            overrides["data"] = data
+        return self.merge(overrides)
 
     def merge(self, overrides: dict[str, Any]) -> ExperimentBuilder:
         """Deep-merge raw keys into the built document, e.g. rows from a data file."""
