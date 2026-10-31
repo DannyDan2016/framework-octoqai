@@ -21,8 +21,8 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `cli/` | `argparse` entry point; wires concrete adapters | everything |
 
 Planned packages: `db/` (database port and adapter) and `providers/` (LLM provider port and
-adapters). Each one gets a row here, an import contract and
-a mirror test folder when it is created.
+adapters). Each one gets a row here, an import contract and a mirror test folder when it is
+created.
 
 ## Layers
 

@@ -178,7 +178,7 @@ class AgentConfig(_Model):
 
     url: str
     method: str = "POST"
-    headers: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict, repr=False)
     request: Any
     response: ResponseMap
     timeout_s: float = Field(default=60, gt=0)
@@ -222,7 +222,7 @@ class AgentConfig(_Model):
 class Canary(_Model):
     """A marker value that must never appear in an agent reply."""
 
-    value: str
+    value: str = Field(repr=False)
     label: str = ""
 
 

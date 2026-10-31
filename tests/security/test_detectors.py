@@ -1,9 +1,10 @@
 import re
+import time
 
 import pytest
 
 from octoqai.experiment import SecurityConfig
-from octoqai.security import Detector, mask
+from octoqai.security import Detector, Finding, mask
 from support import samples
 from support.paths import cases
 
@@ -99,3 +100,42 @@ def test_overlap_priority_is_secret_then_env_then_pii():
     assert found(f"a {samples.EMAIL}", env_values=[samples.EMAIL]) == [("env", "env")]
     secret = samples.SECRET_SAMPLES["llm api key"]
     assert found(f"a {secret}", env_values=[secret]) == [("secret", "llm api key")]
+
+
+def test_card_followed_by_extra_digits_is_still_found():
+    assert found(f"tarjeta {samples.CARD_WITH_TRAILING_DIGITS}") == [("pii", "card")]
+
+
+def test_bearer_scheme_is_case_insensitive():
+    assert ("secret", "bearer token") in found(samples.LOWERCASE_BEARER)
+
+
+def test_candidates_keep_overlapping_findings_for_redaction():
+    detector = Detector(SecurityConfig(), env_values=[samples.DATABASE_URL])
+    text = f"url {samples.DATABASE_URL} fin"
+    kinds = {(f.kind, f.value) for f in detector.candidates(text)}
+    assert ("secret", samples.DATABASE_URL[: samples.DATABASE_URL.index("@") + 1]) in kinds
+    assert ("env", samples.DATABASE_URL) in kinds
+    assert [f.kind for f in detector.find(text)] == ["secret"]
+
+
+def test_candidates_respect_allow_but_not_for_canaries():
+    settings = SecurityConfig.model_validate(
+        {"canaries": [{"value": samples.SUPPORT_EMAIL}], "allow": [".*"]}
+    )
+    found_kinds = [f.kind for f in Detector(settings).candidates(f"a {samples.SUPPORT_EMAIL}")]
+    assert found_kinds == ["canary"]
+
+
+def test_repr_never_shows_sensitive_values():
+    config = SecurityConfig.model_validate({"canaries": [{"value": "TEN-B-0042"}]})
+    finding = Finding("pii", "email", samples.EMAIL, 0, len(samples.EMAIL))
+    assert "TEN-B-0042" not in repr(config)
+    assert samples.EMAIL not in repr(finding)
+
+
+def test_long_alphanumeric_text_is_scanned_in_linear_time():
+    text = ("a1b2c3d4e5" * 20) * 1000
+    started = time.perf_counter()
+    Detector(SecurityConfig()).find(text)
+    assert time.perf_counter() - started < 2

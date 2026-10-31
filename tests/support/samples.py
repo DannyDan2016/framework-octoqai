@@ -21,3 +21,6 @@ CARD = "4111 1111 " + "1111 1111"
 CARD_BAD_LUHN = "4111 1111 " + "1111 1112"
 IBAN = "GB82 WEST " + "1234 5698 7654 32"
 IBAN_BAD_CHECKSUM = "GB82 WEST " + "1234 5698 7654 33"
+CARD_WITH_TRAILING_DIGITS = CARD + " 22"
+LOWERCASE_BEARER = "Authorization: bearer " + "t" * 24
+DATABASE_URL = "postgres://admin:hunter2" + "@db.internal/prod"

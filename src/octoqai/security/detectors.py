@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from octoqai.experiment import SecurityConfig
@@ -13,7 +13,7 @@ from octoqai.security import _patterns
 FindingKind = Literal["canary", "secret", "env", "pii"]
 
 MIN_ENV_VALUE_LENGTH = 4
-_PRIORITY: dict[str, int] = {"canary": 0, "secret": 1, "env": 2, "pii": 3}
+_PRIORITY: dict[FindingKind, int] = {"canary": 0, "secret": 1, "env": 2, "pii": 3}
 _MASK_THRESHOLD = 12
 
 
@@ -23,7 +23,7 @@ class Finding:
 
     kind: FindingKind
     label: str
-    value: str
+    value: str = field(repr=False)
     start: int
     end: int
 
@@ -56,6 +56,10 @@ class Detector:
         self._security = security
         self._env_values = [v for v in env_values if len(v) >= MIN_ENV_VALUE_LENGTH]
         self._allow = [re.compile(pattern) for pattern in security.allow]
+        self._canary_patterns = [
+            (canary.label, re.compile(re.escape(canary.value), re.IGNORECASE))
+            for canary in security.canaries
+        ]
 
     def find(self, text: str) -> list[Finding]:
         """Return the non-overlapping findings in ``text``, ordered by position.
@@ -67,19 +71,30 @@ class Detector:
             Findings where canaries beat secrets, secrets beat environment values and these
             beat personal data when they overlap.
         """
-        candidates = [
+        return _without_overlaps(self.candidates(text))
+
+    def candidates(self, text: str) -> list[Finding]:
+        """Return every finding in ``text``, overlapping ones included.
+
+        Args:
+            text: The text to scan.
+
+        Returns:
+            Canaries, secrets, environment values and personal data that survive the allow
+            patterns, unpruned and in detection order; the redactor masks their union.
+        """
+        found = [
             *self._canaries(text),
             *self._secrets(text),
             *self._env(text),
             *self._pii(text),
         ]
-        return _without_overlaps([c for c in candidates if not self._allowed(c)])
+        return [item for item in found if not self._allowed(item)]
 
     def _canaries(self, text: str) -> Iterator[Finding]:
-        for canary in self._security.canaries:
-            pattern = re.compile(re.escape(canary.value), re.IGNORECASE)
+        for label, pattern in self._canary_patterns:
             for match in pattern.finditer(text):
-                yield _finding("canary", canary.label, match.group(), match.start())
+                yield _finding("canary", label, match.group(), match.start())
 
     def _secrets(self, text: str) -> Iterator[Finding]:
         if "secrets" not in self._security.detectors:
@@ -113,9 +128,9 @@ def _finding(kind: FindingKind, label: str, value: str, start: int) -> Finding:
 
 def _cards(text: str) -> Iterator[Finding]:
     for match in _patterns.CARD_CANDIDATE.finditer(text):
-        digits = re.sub(r"\D", "", match.group())
-        if len(set(digits)) > 1 and _patterns.luhn_valid(digits):
-            yield _finding("pii", "card", match.group(), match.start())
+        span = _patterns.card_span(match.group())
+        if span is not None:
+            yield _finding("pii", "card", match.group()[:span], match.start())
 
 
 def _ibans(text: str) -> Iterator[Finding]:

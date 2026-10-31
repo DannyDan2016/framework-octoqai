@@ -96,3 +96,8 @@ def test_canary_labels_default_to_position(experiment):
     )
     canaries = Experiment.model_validate(experiment.build()).security.canaries
     assert [c.label for c in canaries] == ["canary-1", "mine"]
+
+
+def test_agent_headers_are_hidden_from_repr(experiment):
+    experiment.agent(headers={"Authorization": "Bearer zzz-visible-check"})
+    assert "zzz-visible-check" not in repr(Experiment.model_validate(experiment.build()).agent)

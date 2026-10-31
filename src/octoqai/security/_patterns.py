@@ -12,16 +12,19 @@ SECRET_PATTERNS: dict[str, re.Pattern[str]] = {
     "llm api key": re.compile(r"\bsk-(ant-|proj-)?[A-Za-z0-9_-]{20,}"),
     "google api key": re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),
     "jwt": re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\."),
-    "url with credentials": re.compile(r"[a-z][a-z0-9+.-]*://[^\s/:@\"']+:[^\s/@\"']+@"),
-    "bearer token": re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{20,}"),
+    "url with credentials": re.compile(
+        r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://[^\s/:@\"']+:[^\s/@\"']+@"
+    ),
+    "bearer token": re.compile(r"(?i:Bearer)\s+[A-Za-z0-9._~+/=-]{20,}"),
     "credential assignment": re.compile(r"(?i)\b(password|passwd|pwd|secret)\s*[:=]\s*\S{6,}"),
 }
 
-EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+EMAIL = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 CARD_CANDIDATE = re.compile(r"\b\d(?:[ -]?\d){12,18}\b")
 IBAN_CANDIDATE = re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b")
 
 MIN_IBAN_LENGTH = 15
+MIN_CARD_DIGITS = 13
 _IBAN_MODULUS = 97
 
 
@@ -32,6 +35,16 @@ def luhn_valid(digits: str) -> bool:
         digit = int(char) * (2 if position % 2 else 1)
         total += sum(divmod(digit, 10))
     return total % 10 == 0
+
+
+def card_span(candidate: str) -> int | None:
+    """Return the length of the longest prefix that is a card number, or ``None``."""
+    ends = [i + 1 for i, char in enumerate(candidate) if char.isdigit()]
+    for end in reversed(ends[MIN_CARD_DIGITS - 1 :]):
+        digits = re.sub(r"\D", "", candidate[:end])
+        if len(set(digits)) > 1 and luhn_valid(digits):
+            return end
+    return None
 
 
 def iban_valid(text: str) -> bool:
