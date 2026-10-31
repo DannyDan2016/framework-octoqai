@@ -168,6 +168,20 @@ def test_content_type_is_case_insensitive(sse):
     assert (r.answer, r.error) == ("ok", None)
 
 
+def test_unterminated_event_is_capped_by_total_and_keeps_its_data(sse):
+    sse.script(*[(1.0, "data: a\n")] * 10)
+    r = send(sse, wait={"total_s": 5})
+    assert r.error == "stream exceeded 5s"
+    assert len(r.fragments) == 1 and r.fragments[0].startswith("a\na")
+    assert sse.clock.now == 7
+
+
+def test_deadline_breached_in_a_dataless_block_is_reported_at_end_of_stream(sse):
+    sse.script((10.0, "event: ping\n\n"))
+    r = send(sse, wait={"total_s": 5})
+    assert r.error == "no stream fragment within 5s" and r.fragments == []
+
+
 def test_adapter_for_picks_the_transport_from_the_config():
     sse_adapter = adapter_for(stream_cfg())
     json_adapter = adapter_for(Experiment.model_validate(ExperimentBuilder().build()).agent)

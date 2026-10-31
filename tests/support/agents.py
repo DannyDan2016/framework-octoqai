@@ -8,7 +8,7 @@ from typing import Any, Self
 
 import httpx
 
-from octoqai.agents import AdapterKwargs, HttpAgentAdapter, SseAgentAdapter
+from octoqai.agents import AdapterKwargs, AgentPort, HttpAgentAdapter, SseAgentAdapter
 from octoqai.experiment import AgentConfig
 
 RESPONSE_MAP = {
@@ -67,6 +67,7 @@ class FakeAgent:
         self.timeouts: list[Any] = []
         self.clock = FakeClock()
         self.jitter: Callable[[], float] = lambda: 0.0
+        self._adapters: list[AgentPort] = []
         self._refusals = 0
         self._refusal: type[httpx.TransportError] = httpx.ConnectError
         self._handler: _Handler = lambda request: httpx.Response(500)
@@ -103,6 +104,11 @@ class FakeAgent:
     def transport(self) -> httpx.MockTransport:
         """Return a transport that records each request and applies the behaviour."""
         return httpx.MockTransport(self._record)
+
+    def close(self) -> None:
+        """Close every adapter created through this fake agent."""
+        for adapter in self._adapters:
+            adapter.close()
 
     def adapter_kwargs(self) -> AdapterKwargs:
         """Clock, sleep and jitter that make an adapter use this agent's fake time."""
@@ -148,7 +154,9 @@ class FakeJsonAgent(FakeAgent):
 
     def adapter(self, cfg: AgentConfig) -> HttpAgentAdapter:
         """Return a real HTTP adapter wired to this fake agent, its clock and a fixed jitter."""
-        return HttpAgentAdapter(cfg, transport=self.transport(), **self.adapter_kwargs())
+        adapter = HttpAgentAdapter(cfg, transport=self.transport(), **self.adapter_kwargs())
+        self._adapters.append(adapter)
+        return adapter
 
 
 def sse_event(name: str, payload: Any) -> str:
@@ -225,7 +233,9 @@ class FakeSseAgent(FakeAgent):
 
     def adapter(self, cfg: AgentConfig) -> SseAgentAdapter:
         """Return a real SSE adapter wired to this fake agent, its clock and a fixed jitter."""
-        return SseAgentAdapter(cfg, transport=self.transport(), **self.adapter_kwargs())
+        adapter = SseAgentAdapter(cfg, transport=self.transport(), **self.adapter_kwargs())
+        self._adapters.append(adapter)
+        return adapter
 
     def _use(
         self, frames: list[_Frame], cut: bool = False, content_type: str = EVENT_STREAM

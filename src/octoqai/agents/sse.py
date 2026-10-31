@@ -46,6 +46,20 @@ class _Stream:
     body: str | None = None
 
 
+@dataclass
+class _Block:
+    lines: list[str] = field(default_factory=list)
+    breached: bool = False
+
+    def add(self, raw: str) -> None:
+        if raw and not raw.startswith(":"):
+            self.lines.append(raw)
+
+    def reset(self) -> None:
+        self.lines.clear()
+        self.breached = False
+
+
 class SseAgentAdapter:
     """Send rendered requests to an agent that answers with server-sent events."""
 
@@ -143,14 +157,36 @@ class SseAgentAdapter:
             raise transport_failure(exc) from exc
 
     def _watched(self, lines: Iterable[str], state: _Stream) -> Iterator[str]:
-        pending = False
+        block = _Block()
         for raw in lines:
-            pending = pending or (bool(raw) and not raw.startswith(":"))
-            error = self._check_deadlines(self._clock(), state)
-            if error and not pending:
-                raise ReplyError(error)
-            pending = pending and bool(raw)
+            block.add(raw)
+            self._guard(raw, block, state)
+            if not raw:
+                block.reset()
             yield raw
+        error = self._check_deadlines(self._clock(), state)
+        if error and not self._events(block):
+            raise ReplyError(error)
+
+    def _guard(self, raw: str, block: _Block, state: _Stream) -> None:
+        now = self._clock()
+        if not block.lines:
+            error = self._check_deadlines(now, state)
+            if error:
+                raise ReplyError(error)
+            return
+        total = self._total_error(now, state)
+        if not raw or total is None:
+            return
+        if block.breached:
+            for event in self._events(block):
+                self._record(event, now, state)
+            raise ReplyError(total)
+        block.breached = True
+
+    def _events(self, block: _Block) -> list[SseEvent]:
+        events = parse_sse([*block.lines, ""])
+        return [event for event in events if event.data != self._stream.done]
 
     def _check_response(self, response: httpx.Response, state: _Stream) -> None:
         content_type = response.headers.get("content-type", "")
@@ -172,13 +208,16 @@ class SseAgentAdapter:
         error = self._check_deadlines(now, state)
         done = event.data == self._stream.done
         if not done:
-            state.fragments.append(event.data)
-            state.first_at = now if state.first_at is None else state.first_at
-            state.last_at = now
-            self._extract(event, state)
+            self._record(event, now, state)
         if error:
             raise ReplyError(error)
         return done
+
+    def _record(self, event: SseEvent, now: float, state: _Stream) -> None:
+        state.fragments.append(event.data)
+        state.first_at = now if state.first_at is None else state.first_at
+        state.last_at = now
+        self._extract(event, state)
 
     def _extract(self, event: SseEvent, state: _Stream) -> None:
         try:
@@ -201,8 +240,11 @@ class SseAgentAdapter:
             return self._no_fragment(wait.first_fragment_s)
         if state.last_at is not None and now - state.last_at > wait.idle_s:
             return f"stream idle for more than {wait.idle_s:g}s"
-        if now - state.start > wait.total_s:
-            return f"stream exceeded {wait.total_s:g}s"
+        return self._total_error(now, state)
+
+    def _total_error(self, now: float, state: _Stream) -> str | None:
+        if now - state.start > self._wait.total_s:
+            return f"stream exceeded {self._wait.total_s:g}s"
         return None
 
     @staticmethod

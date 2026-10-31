@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,9 +43,11 @@ def experiment() -> ExperimentBuilder:
 
 
 @pytest.fixture
-def fake_agent() -> FakeJsonAgent:
-    """A simulated HTTP JSON agent."""
-    return FakeJsonAgent()
+def fake_agent() -> Iterator[FakeJsonAgent]:
+    """A simulated HTTP JSON agent; its adapters are closed after the test."""
+    agent = FakeJsonAgent()
+    yield agent
+    agent.close()
 
 
 @pytest.fixture
