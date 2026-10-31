@@ -65,7 +65,9 @@ def _by_case(trials: list[TrialResult]) -> dict[str, list[TrialResult]]:
     return grouped
 
 
-def _summarize(name: str, baseline: bool, trials: list[TrialResult], threshold: float):
+def _summarize(
+    name: str, baseline: bool, trials: list[TrialResult], threshold: float
+) -> VariantSummary:
     evaluable = [t for t in trials if t.outcome != "not_evaluable"]
     passes = sum(t.outcome == "pass" for t in evaluable)
     n_not_evaluable = len(trials) - len(evaluable)

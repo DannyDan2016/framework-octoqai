@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -65,22 +66,43 @@ class Expectation(_Model):
 
     @model_validator(mode="after")
     def _check_value(self) -> Expectation:
-        if self.kind in ("tool_called", "no_tool_called"):
-            if not isinstance(self.value, list) or not all(isinstance(v, str) for v in self.value):
-                raise ValueError(f"{self.kind} expects a list of tool names")
-        elif self.kind == "format":
-            if self.value != "json":
-                raise ValueError(f"format only supports 'json', got {self.value!r}")
-        elif self.kind in ("contains", "not_contains"):
-            if not isinstance(self.value, str):
-                raise ValueError(f"{self.kind} expects a regex string")
-            try:
-                re.compile(self.value)
-            except re.error as exc:
-                raise ValueError(f"invalid regex {self.value!r} in {self.kind}: {exc}") from exc
-        elif isinstance(self.value, bool) or not isinstance(self.value, int | float):
-            raise ValueError(f"{self.kind} expects a number")
+        _VALUE_CHECKS[self.kind](self.kind, self.value)
         return self
+
+
+def _tool_names(kind: str, value: Any) -> None:
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ValueError(f"{kind} expects a list of tool names")
+
+
+def _json_format(kind: str, value: Any) -> None:
+    if value != "json":
+        raise ValueError(f"format only supports 'json', got {value!r}")
+
+
+def _regex(kind: str, value: Any) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{kind} expects a regex string")
+    try:
+        re.compile(value)
+    except re.error as exc:
+        raise ValueError(f"invalid regex {value!r} in {kind}: {exc}") from exc
+
+
+def _number(kind: str, value: Any) -> None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{kind} expects a number")
+
+
+_VALUE_CHECKS: dict[str, Callable[[str, Any], None]] = {
+    "tool_called": _tool_names,
+    "no_tool_called": _tool_names,
+    "format": _json_format,
+    "contains": _regex,
+    "not_contains": _regex,
+    "max_tokens": _number,
+    "max_latency_ms": _number,
+}
 
 
 class Turn(_Model):
@@ -142,34 +164,8 @@ class Experiment(_Model):
 
     @model_validator(mode="after")
     def _check_variants(self) -> Experiment:
-        names = [v.name for v in self.variants]
-        if len(set(names)) != len(names):
-            raise ValueError("variant names must be unique")
-        baselines = sum(v.baseline for v in self.variants)
-        if baselines > 1:
-            raise ValueError("only one variant can be the baseline")
-        if len(self.variants) > 1 and baselines == 0:
-            raise ValueError("experiments with several variants need exactly one baseline")
-        case_ids = [c.id for c in self.cases]
-        if len(set(case_ids)) != len(case_ids):
-            raise ValueError("case ids must be unique")
-        for case in self.cases:
-            if not any(turn.expect for turn in case.turns):
-                raise ValueError(f"case {case.id!r} has no expectation: it would always pass")
-        for label, value in [("agent.request", self.agent.request)] + [
-            (f"variant {v.name!r} params", v.params) for v in self.variants
-        ]:
-            try:
-                json.dumps(value)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"{label} must be JSON serializable: {exc}") from exc
-        for variant in self.variants:
-            for path in _variant_paths(self.agent.request):
-                if not _has_path(variant.params, path):
-                    raise ValueError(
-                        f"variant {variant.name!r} does not define params.{path} "
-                        f"used by the request template"
-                    )
+        for check in _EXPERIMENT_CHECKS:
+            check(self)
         return self
 
     @property
@@ -177,6 +173,58 @@ class Experiment(_Model):
         """The baseline variant, or the only variant."""
         return next((v for v in self.variants if v.baseline), self.variants[0])
 
+
+def _unique_names(exp: Experiment) -> None:
+    names = [v.name for v in exp.variants]
+    if len(set(names)) != len(names):
+        raise ValueError("variant names must be unique")
+    case_ids = [c.id for c in exp.cases]
+    if len(set(case_ids)) != len(case_ids):
+        raise ValueError("case ids must be unique")
+
+
+def _one_baseline(exp: Experiment) -> None:
+    baselines = sum(v.baseline for v in exp.variants)
+    if baselines > 1:
+        raise ValueError("only one variant can be the baseline")
+    if len(exp.variants) > 1 and baselines == 0:
+        raise ValueError("experiments with several variants need exactly one baseline")
+
+
+def _cases_have_expectations(exp: Experiment) -> None:
+    for case in exp.cases:
+        if not any(turn.expect for turn in case.turns):
+            raise ValueError(f"case {case.id!r} has no expectation: it would always pass")
+
+
+def _json_serializable(exp: Experiment) -> None:
+    labelled: list[tuple[str, Any]] = [("agent.request", exp.agent.request)]
+    labelled += [(f"variant {v.name!r} params", v.params) for v in exp.variants]
+    for label, value in labelled:
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} must be JSON serializable: {exc}") from exc
+
+
+def _variants_cover_template(exp: Experiment) -> None:
+    paths = _variant_paths(exp.agent.request)
+    for variant in exp.variants:
+        for path in sorted(paths):
+            if not _has_path(variant.params, path):
+                raise ValueError(
+                    f"variant {variant.name!r} does not define params.{path} "
+                    f"used by the request template"
+                )
+
+
+_EXPERIMENT_CHECKS: tuple[Callable[[Experiment], None], ...] = (
+    _unique_names,
+    _one_baseline,
+    _cases_have_expectations,
+    _json_serializable,
+    _variants_cover_template,
+)
 
 _VARIANT_REF = re.compile(r"\{\{\s*variant\.([\w.]+)\s*\}\}")
 

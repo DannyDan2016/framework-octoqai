@@ -9,11 +9,14 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from jsonpath_ng import parse as parse_jsonpath
 from jsonpath_ng.exceptions import JSONPathError
+from jsonpath_ng.jsonpath import JSONPath
+from jsonpath_ng.parser import parse as parse_jsonpath
 
 from octoqai.config import AgentConfig, ConfigError
 from octoqai.template import render
+
+HTTP_ERROR_MIN = 400
 
 _MISSING = object()
 
@@ -30,13 +33,30 @@ class AgentReply:
     raw: Any = None
 
 
-def _compile(expr: str | None):
-    if expr is None:
-        return None
+class _ReplyError(Exception):
+    def __init__(self, error: str, raw: Any = None) -> None:
+        super().__init__(error)
+        self.error = error
+        self.raw = raw
+
+
+def _compile(expr: str) -> JSONPath:
     try:
         return parse_jsonpath(expr)
     except JSONPathError as exc:
         raise ConfigError(f"invalid JSONPath {expr!r}: {exc}") from exc
+
+
+def _compile_optional(expr: str | None) -> JSONPath | None:
+    return None if expr is None else _compile(expr)
+
+
+def _elapsed_ms(start: float) -> float:
+    return (time.perf_counter() - start) * 1000
+
+
+def _failure(exc: _ReplyError, latency_ms: float) -> AgentReply:
+    return AgentReply(None, None, None, latency_ms, exc.error, exc.raw)
 
 
 class HttpAgentAdapter:
@@ -51,8 +71,8 @@ class HttpAgentAdapter:
         """
         self._cfg = cfg
         self._answer = _compile(cfg.response.answer)
-        self._tool_calls = _compile(cfg.response.tool_calls)
-        self._tokens = _compile(cfg.response.tokens)
+        self._tool_calls = _compile_optional(cfg.response.tool_calls)
+        self._tokens = _compile_optional(cfg.response.tokens)
         self._client = httpx.Client(transport=transport, timeout=cfg.timeout_s)
 
     def send(self, context: dict[str, Any]) -> AgentReply:
@@ -69,40 +89,54 @@ class HttpAgentAdapter:
         body = render(self._cfg.request, context)
         start = time.perf_counter()
         try:
-            response = self._client.request(
+            response = self._post(body)
+        except _ReplyError as exc:
+            return _failure(exc, _elapsed_ms(start))
+        latency_ms = _elapsed_ms(start)
+        try:
+            return self._map_payload(self._decode(response), latency_ms)
+        except _ReplyError as exc:
+            return _failure(exc, latency_ms)
+
+    def close(self) -> None:
+        """Release the underlying HTTP connections."""
+        self._client.close()
+
+    def _post(self, body: Any) -> httpx.Response:
+        try:
+            return self._client.request(
                 self._cfg.method, self._cfg.url, json=body, headers=self._cfg.headers
             )
-        except httpx.TimeoutException:
-            return self._failure(start, f"timeout after {self._cfg.timeout_s}s")
+        except httpx.TimeoutException as exc:
+            raise _ReplyError(f"timeout after {self._cfg.timeout_s}s") from exc
         except httpx.ConnectError as exc:
-            return self._failure(start, f"cannot connect to agent: {type(exc).__name__}")
+            raise _ReplyError(f"cannot connect to agent: {type(exc).__name__}") from exc
         except httpx.HTTPError as exc:
-            return self._failure(start, f"transport error: {type(exc).__name__}")
-        latency_ms = (time.perf_counter() - start) * 1000
-        if response.status_code >= 400:
-            return self._failure(start, f"agent returned HTTP {response.status_code}", latency_ms)
+            raise _ReplyError(f"transport error: {type(exc).__name__}") from exc
+
+    @staticmethod
+    def _decode(response: httpx.Response) -> Any:
+        if response.status_code >= HTTP_ERROR_MIN:
+            raise _ReplyError(f"agent returned HTTP {response.status_code}")
         try:
-            payload = response.json()
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return self._failure(start, "agent response is not valid JSON", latency_ms)
+            return response.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise _ReplyError("agent response is not valid JSON") from exc
+
+    def _map_payload(self, payload: Any, latency_ms: float) -> AgentReply:
         answer = self._first(self._answer, payload)
         if answer is _MISSING:
-            return self._failure(
-                start, f"answer path {self._cfg.response.answer!r} not found", latency_ms, payload
-            )
+            raise _ReplyError(f"answer path {self._cfg.response.answer!r} not found", payload)
         if answer is None:
-            return self._failure(start, "agent answer is null", latency_ms, payload)
+            raise _ReplyError("agent answer is null", payload)
         try:
-            if not isinstance(answer, str):
-                answer = json.dumps(answer, ensure_ascii=False)
+            text = answer if isinstance(answer, str) else json.dumps(answer, ensure_ascii=False)
             tool_calls = self._tools(payload)
             tokens = self._token_count(payload)
         except (TypeError, ValueError, OverflowError) as exc:
-            return self._failure(
-                start, f"cannot map agent response: {type(exc).__name__}", latency_ms, payload
-            )
+            raise _ReplyError(f"cannot map agent response: {type(exc).__name__}", payload) from exc
         return AgentReply(
-            answer=answer,
+            answer=text,
             tool_calls=tool_calls,
             tokens=tokens,
             latency_ms=latency_ms,
@@ -110,28 +144,18 @@ class HttpAgentAdapter:
             raw=payload,
         )
 
-    def close(self) -> None:
-        """Release the underlying HTTP connections."""
-        self._client.close()
-
-    def _failure(
-        self, start: float, error: str, latency_ms: float | None = None, raw: Any = None
-    ) -> AgentReply:
-        if latency_ms is None:
-            latency_ms = (time.perf_counter() - start) * 1000
-        return AgentReply(None, None, None, latency_ms, error, raw)
-
     @staticmethod
-    def _first(path, payload: Any) -> Any:
+    def _first(path: JSONPath, payload: Any) -> Any:
         matches = path.find(payload)
         return matches[0].value if matches else _MISSING
 
     def _tools(self, payload: Any) -> list[str] | None:
-        if self._tool_calls is None:
+        expr = self._cfg.response.tool_calls
+        if self._tool_calls is None or expr is None:
             return None
         matches = self._tool_calls.find(payload)
         if not matches:
-            container = self._container_of(self._cfg.response.tool_calls, payload)
+            container = self._container_of(expr, payload)
             return [] if isinstance(container, list) and not container else None
         values: list[Any] = []
         for match in matches:

@@ -59,8 +59,12 @@ class TrialResult:
     @property
     def tokens(self) -> int | None:
         """Total tokens used, or ``None`` if any turn did not report usage."""
-        counts = [turn.reply.tokens for turn in self.turns]
-        return None if any(c is None for c in counts) else sum(counts)
+        total = 0
+        for turn in self.turns:
+            if turn.reply.tokens is None:
+                return None
+            total += turn.reply.tokens
+        return total
 
     @property
     def latency_ms(self) -> float:

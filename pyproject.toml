@@ -21,6 +21,8 @@ dependencies = [
 dev = [
     "pytest>=9.2,<10",
     "ruff>=0.17.3,<0.18",
+    "mypy>=2.4,<3",
+    "types-PyYAML>=6.0,<7",
 ]
 
 [project.scripts]
@@ -37,11 +39,19 @@ target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM", "D"]
+select = ["E", "F", "I", "B", "UP", "SIM", "D", "C90", "PLR"]
 ignore = ["D100", "D104", "D105", "D107"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 8
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["D"]
+"tests/**" = ["D", "PLR2004"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["src"]
