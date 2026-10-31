@@ -31,6 +31,9 @@ ExpectationKind = Literal[
 ]
 
 
+DetectorName = Literal["secrets", "pii"]
+MIN_CANARY_LENGTH = 4
+
 ENV_NAME = re.compile(r"[A-Za-z0-9_-]+")
 TAG = re.compile(r"[a-z][a-z0-9-]*")
 
@@ -216,6 +219,40 @@ class AgentConfig(_Model):
         return self
 
 
+class Canary(_Model):
+    """A marker value that must never appear in an agent reply."""
+
+    value: str
+    label: str = ""
+
+
+def _default_detectors() -> list[DetectorName]:
+    return ["secrets", "pii"]
+
+
+class SecurityConfig(_Model):
+    """What counts as a leak of confidential data."""
+
+    canaries: list[Canary] = Field(default_factory=list)
+    detectors: list[DetectorName] = Field(default_factory=_default_detectors)
+    allow: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_security(self) -> SecurityConfig:
+        for number, canary in enumerate(self.canaries, 1):
+            canary.label = canary.label or f"canary-{number}"
+            if len(canary.value) < MIN_CANARY_LENGTH:
+                raise ValueError(
+                    f"canary {canary.label} is shorter than {MIN_CANARY_LENGTH} characters"
+                )
+        for number, pattern in enumerate(self.allow, 1):
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"invalid security.allow pattern #{number}: {exc}") from exc
+        return self
+
+
 class Variant(_Model):
     """A configuration of the agent sent with every request."""
 
@@ -239,6 +276,7 @@ class Experiment(_Model):
     trials: int = Field(default=5, ge=1)
     thresholds: Thresholds
     cases: list[Case] = Field(min_length=1)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
     environments: list[str] | None = Field(default=None, min_length=1)
     data: str | None = None
     data_values: dict[str, Any] = Field(default_factory=dict)

@@ -97,3 +97,20 @@
 - id: max-ttft-needs-number
   expect: [{max_ttft_ms: fast}]
   fragments: ["max_ttft_ms expects a number"]
+
+- id: canary-too-short
+  overrides: {security: {canaries: [{value: zq9}]}}
+  fragments: ["canary canary-1 is shorter than 4 characters"]
+  absent: [zq9]
+
+- id: invalid-allow-regex
+  overrides: {security: {allow: ["(unclosed"]}}
+  fragments: ["security.allow"]
+
+- id: typo-in-security-key
+  overrides: {security: {canaris: []}}
+  fragments: ["did you mean 'canaries'"]
+
+- id: unknown-detector
+  overrides: {security: {detectors: [secretz]}}
+  fragments: ["did you mean 'secrets'"]

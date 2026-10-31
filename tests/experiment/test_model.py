@@ -83,3 +83,16 @@ def test_wait_fields_override_and_default_to_total(experiment):
 def test_retry_defaults_to_no_retry(experiment):
     retry = Experiment.model_validate(experiment.build()).agent.retry
     assert (retry.retries, retry.backoff_s) == (0, 0.5)
+
+
+def test_security_defaults_enable_all_detectors(experiment):
+    security = Experiment.model_validate(experiment.build()).security
+    assert (security.canaries, security.detectors, security.allow) == ([], ["secrets", "pii"], [])
+
+
+def test_canary_labels_default_to_position(experiment):
+    experiment.security(
+        canaries=[{"value": "TEN-B-0042"}, {"value": "CANARY-7f3a9c2e", "label": "mine"}]
+    )
+    canaries = Experiment.model_validate(experiment.build()).security.canaries
+    assert [c.label for c in canaries] == ["canary-1", "mine"]

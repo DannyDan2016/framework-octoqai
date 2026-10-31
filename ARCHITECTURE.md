@@ -14,13 +14,14 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `stats/` | Pure estimators: Wilson interval, paired bootstrap, pass@k | `errors` |
 | `agents/` | `port.py` (`AgentPort`, `AgentReply`), `sse_events.py` (SSE parser), adapters such as `http_json.py` and `sse.py`, and `factory.py` (`adapter_for` picks the adapter from the config) | `experiment`, `errors` |
 | `expectations/` | Registry of deterministic checks applied to an agent reply | `agents.port`, `experiment` |
+| `security/` | Detectors for canaries, secrets and personal data, leak scanning and the single report redactor | `agents.port`, `experiment`, `errors` |
 | `running/` | Serial runner; knows only `AgentPort`, never a concrete adapter | lower layers |
 | `verdict/` | Go/no-go decision, hard gates and A/B recommendation | `running`, `stats` |
 | `reports/` | Report writers (JSON today) | `verdict`, `running` |
 | `cli/` | `argparse` entry point; wires concrete adapters | everything |
 
-Planned packages: `security/` (detectors, leak checks, redactor), `db/` (database port and adapter)
-and `providers/` (LLM provider port and adapters). Each one gets a row here, an import contract and
+Planned packages: `db/` (database port and adapter) and `providers/` (LLM provider port and
+adapters). Each one gets a row here, an import contract and
 a mirror test folder when it is created.
 
 ## Layers
@@ -31,7 +32,7 @@ From top to bottom; a package may import only from packages below it:
 2. `octoqai.reports`
 3. `octoqai.verdict`
 4. `octoqai.running`
-5. `octoqai.expectations`
+5. `octoqai.expectations` and `octoqai.security` (independent of each other)
 6. `octoqai.agents`
 7. `octoqai.stats` and `octoqai.experiment` (independent of each other)
 8. `octoqai.errors`
@@ -39,7 +40,7 @@ From top to bottom; a package may import only from packages below it:
 Additional contracts in `[tool.importlinter]`:
 
 - `httpx` is imported only inside `octoqai.agents` and `octoqai.cli`.
-- The core (`running`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse` or `octoqai.agents.factory`; it imports `octoqai.agents.port`.
+- The core (`running`, `security`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse` or `octoqai.agents.factory`; it imports `octoqai.agents.port`.
 - `octoqai.stats` is pure: it imports nothing from Octoqai except `errors`.
 
 ## Ports and adapters
@@ -63,7 +64,7 @@ directly (`octoqai.agents.port`) to keep the runner away from concrete adapters.
 ```
 tests/
   conftest.py        only: pytest_plugins = ["support.fixtures"]
-  support/           test kit: builders.py, agents.py, assertions.py, paths.py, fixtures.py
+  support/           test kit: builders.py, agents.py, assertions.py, paths.py, samples.py, fixtures.py
   <package>/         test_<topic>.py and data/<name>.yaml with the tabular cases of that package
   quality/           style, hygiene, architecture and layout checks
   e2e/               real agent process on 127.0.0.1
@@ -118,9 +119,9 @@ pytest -m security -q         secrets, hygiene and headers
 
 ### Add a detector
 
-1. Add the pattern in `security/` and export it.
-2. Build a positive and a negative sample by concatenation in `tests/support/`.
-3. Add known false positives, if any, to `tests/security/data/`.
+1. Add the pattern in `security/_patterns.py` and wire it in `security/detectors.py`.
+2. Build a positive and a negative sample by concatenation in `tests/support/samples.py`.
+3. Add known false positives, if any, to `tests/security/data/false_positives.yaml`.
 4. Mark the tests `security`.
 
 ### Add a report format

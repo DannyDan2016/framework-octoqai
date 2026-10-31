@@ -107,6 +107,10 @@ class ExperimentBuilder:
             overrides["data"] = data
         return self.merge(overrides)
 
+    def security(self, **settings: Any) -> ExperimentBuilder:
+        """Set ``security`` settings such as ``canaries``, ``detectors`` or ``allow``."""
+        return self.merge({"security": settings})
+
     def merge(self, overrides: dict[str, Any]) -> ExperimentBuilder:
         """Deep-merge raw keys into the built document, e.g. rows from a data file."""
         self._overrides = _deep_merge(self._overrides, overrides)

@@ -1,0 +1,23 @@
+"""Secret and personal data samples, built by concatenation so hygiene checks stay green."""
+
+from __future__ import annotations
+
+SECRET_SAMPLES: dict[str, str] = {
+    "private key": "-----BEGIN RSA " + "PRIVATE KEY-----",
+    "aws access key": "AKIA" + "Q" * 16,
+    "github token": "ghp_" + "a1" * 18,
+    "slack token": "xoxb-" + "1234567890-abc",
+    "llm api key": "sk-ant-" + "x" * 30,
+    "google api key": "AIza" + "B" * 35,
+    "jwt": "eyJ" + "h" * 12 + ".eyJ" + "p" * 12 + ".sig",
+    "url with credentials": "postgres://admin:hunter2" + "@db.internal/x",
+    "bearer token": "Bearer " + "t" * 24,
+    "credential assignment": "password" + "=hunter22",
+}
+SPLIT_SECRET = ("sk-ant-", "x" * 30)
+EMAIL = "ana" + "@" + "tenant-b.example"
+SUPPORT_EMAIL = "soporte" + "@" + "banco.example"
+CARD = "4111 1111 " + "1111 1111"
+CARD_BAD_LUHN = "4111 1111 " + "1111 1112"
+IBAN = "GB82 WEST " + "1234 5698 7654 32"
+IBAN_BAD_CHECKSUM = "GB82 WEST " + "1234 5698 7654 33"

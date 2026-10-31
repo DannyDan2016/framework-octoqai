@@ -1,0 +1,6 @@
+- {id: european-amount, text: "Saldo 1.234.567,89 EUR"}
+- {id: amount-with-spaces, text: "Total 1 234 567,89"}
+- {id: reference-11-digits, text: "ref 12345678901"}
+- {id: all-zero-digits, text: "0000000000000000"}
+- {id: iso-timestamp, text: "2026-10-30T12:00:00+00:00"}
+- {id: account-alias, text: "cuenta ES-QA-0001 del tenant A"}

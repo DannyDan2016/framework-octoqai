@@ -196,3 +196,26 @@ def test_unsupported_placeholder_fails_at_load(item, with_data):
         r"cases\[c1\]\.turns\[0\]",
         "placeholder",
     )
+
+
+@pytest.mark.security
+def test_canary_value_expands_env_and_is_marked_for_redaction(experiment, tmp_path):
+    path = experiment.security(canaries=[{"value": "${CANARY_KEY}"}]).write(tmp_path)
+    exp = load_experiment(path, process_env={"CANARY_KEY": "tenant-b-secret-01"})
+    assert exp.security.canaries[0].value == "tenant-b-secret-01"
+    assert "tenant-b-secret-01" in exp.redacted_values
+
+
+def test_missing_canary_env_names_variable(experiment, tmp_path):
+    path = experiment.security(canaries=[{"value": "${CANARY_KEY}"}]).write(tmp_path)
+    assert_config_error(lambda: load_experiment(path, process_env={}), "CANARY_KEY")
+
+
+@pytest.mark.security
+def test_short_env_canary_rejected_without_echoing_value(experiment, tmp_path):
+    path = experiment.security(canaries=[{"value": "${CANARY_KEY}"}]).write(tmp_path)
+    assert_config_error(
+        lambda: load_experiment(path, process_env={"CANARY_KEY": "zq9"}),
+        "shorter than 4",
+        absent=["zq9"],
+    )

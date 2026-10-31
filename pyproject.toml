@@ -84,7 +84,7 @@ layers = [
     "octoqai.reports",
     "octoqai.verdict",
     "octoqai.running",
-    "octoqai.expectations",
+    "octoqai.expectations | octoqai.security",
     "octoqai.agents",
     "octoqai.stats | octoqai.experiment",
     "octoqai.errors",
@@ -98,6 +98,7 @@ source_modules = [
     "octoqai.experiment",
     "octoqai.stats",
     "octoqai.expectations",
+    "octoqai.security",
     "octoqai.running",
     "octoqai.verdict",
     "octoqai.reports",
@@ -109,6 +110,7 @@ name = "The core only knows the agent port"
 type = "forbidden"
 source_modules = [
     "octoqai.running",
+    "octoqai.security",
     "octoqai.expectations",
     "octoqai.verdict",
     "octoqai.reports",
@@ -127,6 +129,7 @@ forbidden_modules = [
     "octoqai.experiment",
     "octoqai.agents",
     "octoqai.expectations",
+    "octoqai.security",
     "octoqai.running",
     "octoqai.verdict",
     "octoqai.reports",

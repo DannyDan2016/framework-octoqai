@@ -51,6 +51,7 @@ def load_experiment(
         resolve_env(path.parent, env, os.environ if process_env is None else process_env)
     )
     _expand_agent(data, variables)
+    _expand_security(data, variables)
     exp = _validate(data)
     values: dict[str, Any] = {}
     if exp.data is not None:
@@ -150,6 +151,16 @@ def _expand_agent(data: dict[str, Any], variables: _Variables) -> None:
         agent["headers"] = {
             key: variables.expand(str(value)) for key, value in agent["headers"].items()
         }
+
+
+def _expand_security(data: dict[str, Any], variables: _Variables) -> None:
+    security = data.get("security")
+    canaries = security.get("canaries") if isinstance(security, dict) else None
+    if not isinstance(canaries, list):
+        return
+    for canary in canaries:
+        if isinstance(canary, dict) and isinstance(canary.get("value"), str):
+            canary["value"] = variables.expand(canary["value"])
 
 
 def _expand_values(value: Any, variables: _Variables) -> Any:
