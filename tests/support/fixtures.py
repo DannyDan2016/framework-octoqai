@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from octoqai.cli import main
-from support.agents import FakeJsonAgent
+from support.agents import FakeAgent, FakeJsonAgent
 from support.builders import ExperimentBuilder
 
 
@@ -58,7 +58,7 @@ def out_dir(tmp_path: Path) -> Path:
 def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., CliRun]:
     """Run the CLI in process; ``run`` commands write their reports to ``out_dir``."""
 
-    def _run(*args: str, agent: FakeJsonAgent | None = None) -> CliRun:
+    def _run(*args: str, agent: FakeAgent | None = None) -> CliRun:
         argv = list(args)
         if argv[:1] == ["run"]:
             argv += ["--out", str(out_dir)]

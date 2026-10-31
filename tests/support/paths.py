@@ -10,6 +10,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
+TESTS = REPO_ROOT / "tests"
 EXAMPLES = REPO_ROOT / "examples"
 
 

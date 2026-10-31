@@ -2,7 +2,7 @@ import pytest
 
 from octoqai.agents import AgentReply, HttpAgentAdapter
 from octoqai.errors import ConfigError
-from octoqai.experiment import AgentConfig
+from octoqai.experiment import AgentConfig, RetryPolicy, WaitPolicy
 from support.agents import RESPONSE_MAP
 from support.builders import DEFAULT_URL
 
@@ -68,24 +68,6 @@ def test_empty_tool_calls_list_is_empty_not_none(agent_cfg, fake_agent):
     assert fake_agent.adapter(agent_cfg).send(CTX).tool_calls == []
 
 
-def test_http_500_becomes_error_reply(agent_cfg, fake_agent):
-    r = fake_agent.fails(500, "boom").adapter(agent_cfg).send(CTX)
-    assert r.answer is None and "500" in r.error
-
-
-def test_non_json_body_becomes_error_reply(agent_cfg, fake_agent):
-    fake_agent.returns(b"<html>")
-    assert "JSON" in fake_agent.adapter(agent_cfg).send(CTX).error
-
-
-def test_timeout_becomes_error_reply(agent_cfg, fake_agent):
-    assert "timeout" in fake_agent.times_out().adapter(agent_cfg).send(CTX).error.lower()
-
-
-def test_connection_refused_becomes_error_reply(agent_cfg, fake_agent):
-    assert "connect" in fake_agent.refuses().adapter(agent_cfg).send(CTX).error.lower()
-
-
 def test_missing_answer_path_is_error(agent_cfg, fake_agent):
     fake_agent.replies({"other": 1})
     assert "answer" in fake_agent.adapter(agent_cfg).send(CTX).error
@@ -122,3 +104,82 @@ def test_non_finite_tokens_become_none(agent_cfg, fake_agent):
 def test_null_answer_is_error(agent_cfg, fake_agent):
     fake_agent.replies({"answer": None})
     assert "null" in fake_agent.adapter(agent_cfg).send(CTX).error
+
+
+def _with(cfg, **update):
+    return cfg.model_copy(update=update)
+
+
+def test_json_reply_keeps_body_for_scanning(agent_cfg, fake_agent):
+    fake_agent.replies({"answer": "ok", "debug": "traza"})
+    assert '"debug"' in fake_agent.adapter(agent_cfg).send(CTX).body
+
+
+def test_http_error_keeps_body(agent_cfg, fake_agent):
+    r = fake_agent.fails(500, "boom").adapter(agent_cfg).send(CTX)
+    assert (r.answer, r.error, r.body) == (None, "agent returned HTTP 500", "boom")
+
+
+def test_non_json_body_is_kept(agent_cfg, fake_agent):
+    r = fake_agent.returns(b"<html>").adapter(agent_cfg).send(CTX)
+    assert (r.error, r.body) == ("agent response is not valid JSON", "<html>")
+
+
+@pytest.mark.smoke
+def test_retries_connection_failures_and_records_each(agent_cfg, fake_agent):
+    cfg = _with(agent_cfg, retry=RetryPolicy(retries=2, backoff_s=0.5))
+    r = fake_agent.answers("ok").refuses_first(2).adapter(cfg).send(CTX)
+    assert (r.answer, r.error) == ("ok", None)
+    assert r.retries == ["cannot connect to agent: ConnectError"] * 2
+    assert fake_agent.sleeps == [0.5, 1.0]
+    assert len(fake_agent.requests) == 3
+
+
+def test_backoff_jitter_shortens_each_wait_by_up_to_a_quarter(agent_cfg, fake_agent):
+    fake_agent.jitter = lambda: 1.0
+    cfg = _with(agent_cfg, retry=RetryPolicy(retries=2, backoff_s=0.5))
+    fake_agent.answers("ok").refuses_first(2).adapter(cfg).send(CTX)
+    assert fake_agent.sleeps == [0.375, 0.75]
+
+
+def test_latency_excludes_backoff(agent_cfg, fake_agent):
+    cfg = _with(agent_cfg, retry=RetryPolicy(retries=1, backoff_s=0.5))
+    r = fake_agent.refuses_first(1).adapter(cfg).send(CTX)
+    assert r.latency_ms == 0 and fake_agent.sleeps == [0.5]
+
+
+def test_connect_timeout_is_retried(agent_cfg, fake_agent):
+    cfg = _with(agent_cfg, retry=RetryPolicy(retries=1), wait=WaitPolicy(connect_s=2))
+    r = fake_agent.answers("ok").refuses_first(1, timeout=True).adapter(cfg).send(CTX)
+    assert r.error is None and r.retries == ["cannot connect to agent within 2s"]
+
+
+def test_gives_up_after_the_last_retry(agent_cfg, fake_agent):
+    cfg = _with(agent_cfg, retry=RetryPolicy(retries=2, backoff_s=0))
+    r = fake_agent.refuses().adapter(cfg).send(CTX)
+    assert r.error == "cannot connect to agent: ConnectError"
+    assert len(r.retries) == 2 and len(fake_agent.requests) == 3
+
+
+@pytest.mark.parametrize("behaviour", ["http_503", "read_timeout"])
+def test_never_retries_once_the_agent_may_have_the_request(agent_cfg, fake_agent, behaviour):
+    if behaviour == "http_503":
+        fake_agent.fails(503)
+    else:
+        fake_agent.times_out()
+    r = fake_agent.adapter(_with(agent_cfg, retry=RetryPolicy(retries=3))).send(CTX)
+    assert r.error is not None and r.retries == [] and len(fake_agent.requests) == 1
+
+
+def test_no_retry_by_default(agent_cfg, fake_agent):
+    fake_agent.refuses().adapter(agent_cfg).send(CTX)
+    assert len(fake_agent.requests) == 1 and fake_agent.sleeps == []
+
+
+def test_wait_policy_sets_connect_and_total_timeouts(agent_cfg, fake_agent):
+    fake_agent.adapter(_with(agent_cfg, wait=WaitPolicy(connect_s=2, total_s=4))).send(CTX)
+    assert fake_agent.timeouts[0] == {"connect": 2, "read": 4, "write": 2, "pool": 2}
+
+
+def test_read_timeout_names_total_deadline(agent_cfg, fake_agent):
+    assert fake_agent.times_out().adapter(agent_cfg).send(CTX).error == "timeout after 5.0s"
