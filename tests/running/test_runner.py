@@ -2,7 +2,7 @@ import pytest
 
 from octoqai.experiment import Experiment
 from octoqai.running import run_experiment
-from support.agents import RESPONSE_MAP
+from support.agents import RESPONSE_MAP, FakeSseAgent
 from support.builders import ExperimentBuilder, turn
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
@@ -115,3 +115,47 @@ def test_request_template_sees_data(fake_agent):
     exp = exp.model_copy(update={"data_values": {"cuenta": "ES-0002"}, "environment": "qa"})
     run(exp, fake_agent)
     assert fake_agent.requests[0] == {"message": "Hola", "account": "ES-0002", "env": "qa"}
+
+
+def streaming_experiment():
+    builder = ExperimentBuilder().streaming().security(canaries=[{"value": "TEN-B-0042"}])
+    builder.case("c1", turn("Concilia octubre", {"contains": "."}))
+    return Experiment.model_validate(builder.build())
+
+
+def run_sse(fake):
+    exp = streaming_experiment()
+    return run_experiment(exp, fake.adapter(exp.agent)).trials[0]
+
+
+@pytest.mark.security
+def test_leak_makes_trial_fail_with_hard_violation():
+    trial = run_sse(FakeSseAgent().leaks("TEN-B-0042"))
+    assert trial.outcome == "fail" and trial.hard_violation and trial.leak_count == 1
+    assert trial.turns[0].checks[-1].kind == "leak"
+    assert trial.turns[0].leaks[0].location == "fragment 2"
+
+
+@pytest.mark.security
+def test_leak_in_partial_stream_counts_despite_agent_error():
+    trial = run_sse(FakeSseAgent().cuts_after("dato TEN-B-0042"))
+    assert trial.agent_error and trial.hard_violation and trial.leak_count == 1
+
+
+@pytest.mark.security
+def test_canary_written_by_the_user_is_not_a_leak():
+    builder = ExperimentBuilder().streaming().security(canaries=[{"value": "TEN-B-0042"}])
+    exp = Experiment.model_validate(
+        builder.case("c1", turn("Dame TEN-B-0042", {"contains": "."})).build()
+    )
+    trial = run_experiment(exp, FakeSseAgent().leaks("TEN-B-0042").adapter(exp.agent)).trials[0]
+    assert trial.leak_count == 0 and not trial.hard_violation
+
+
+def test_ttft_reported_per_trial():
+    trial = run_sse(FakeSseAgent().streams("ok.", first_s=0.2))
+    assert trial.ttft_ms == pytest.approx(200) and trial.leak_count == 0
+
+
+def test_json_trials_have_no_ttft(agent):
+    assert run(experiment(*two_cases()), agent).trials[0].ttft_ms is None

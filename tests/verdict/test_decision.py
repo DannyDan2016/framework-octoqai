@@ -4,6 +4,7 @@ from octoqai.agents import AgentReply
 from octoqai.expectations import CheckResult
 from octoqai.experiment import Experiment
 from octoqai.running import RunResult, TrialResult, TurnResult
+from octoqai.security import Leak
 from octoqai.verdict import EXIT_CODES, decide
 from support.builders import ExperimentBuilder, turn
 
@@ -112,3 +113,37 @@ def test_one_case_many_trials_is_insufficient():
 def test_comparison_with_few_cases_is_never_significant():
     v = decide(make_run({"base": rate(2, 5, 0.0), "cand": all_pass(2, 5)}, baseline="base"))
     assert not v.comparisons[0].significant and v.recommended == "base"
+
+
+def _leaky_trial(variant, case_id, index):
+    leak = Leak("canary", "canary-1", "answer", "T…")
+    check = CheckResult("leak", False, True, "canary 'canary-1' in answer: T…")
+    reply = AgentReply("ok", [], 7, 20.0, None)
+    return TrialResult(variant, case_id, index, [TurnResult("u", reply, [check], [leak])])
+
+
+@pytest.mark.security
+def test_leak_forces_no_go_with_reason():
+    run = make_run({"base": all_pass(30, 5)})
+    run.trials[0] = _leaky_trial("base", "c0", 0)
+    verdict = decide(run)
+    summary = verdict.variants[0]
+    assert verdict.status == "no-go" and summary.leaks == 1
+    assert summary.reasons == ["1 confidential data leak(s)"]
+    assert verdict.reasons[0] == "base: 1 confidential data leak(s)"
+
+
+@pytest.mark.security
+def test_leak_with_other_hard_violation_reports_both_reasons_once():
+    run = make_run({"base": all_pass(30, 5)}, hard_in=("base", 1))
+    run.trials[0] = _leaky_trial("base", "c0", 0)
+    summary = decide(run).variants[0]
+    assert summary.reasons == ["1 confidential data leak(s)", "1 hard gate violation(s)"]
+
+
+def test_mean_ttft_ignores_trials_without_streaming():
+    run = make_run({"base": all_pass(5, 1)})
+    assert decide(run).variants[0].mean_ttft_ms is None
+    run.trials[0].turns[0].reply.ttft_ms = 40.0
+    run.trials[1].turns[0].reply.ttft_ms = 60.0
+    assert decide(run).variants[0].mean_ttft_ms == 50.0

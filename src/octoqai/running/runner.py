@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
 from octoqai.agents.port import AgentPort, AgentReply
 from octoqai.expectations import CheckResult, evaluate
 from octoqai.experiment import Case, Experiment, Variant
+from octoqai.security import Detector, Leak, scan_reply
 
 Outcome = Literal["pass", "fail", "not_evaluable"]
 
@@ -21,6 +22,7 @@ class TurnResult:
     user: str
     reply: AgentReply
     checks: list[CheckResult]
+    leaks: list[Leak] = field(default_factory=list)
 
 
 @dataclass
@@ -67,6 +69,25 @@ class TrialResult:
         return total
 
     @property
+    def leak_count(self) -> int:
+        """Number of confidential values the agent leaked across turns."""
+        return sum(len(turn.leaks) for turn in self.turns)
+
+    @property
+    def ttft_ms(self) -> float | None:
+        """Mean time to first token over the turns that report it, or ``None``."""
+        values = [t.reply.ttft_ms for t in self.turns if t.reply.ttft_ms is not None]
+        return sum(values) / len(values) if values else None
+
+    @property
+    def other_hard_violation(self) -> bool:
+        """Whether a hard expectation other than a leak failed on a real agent answer."""
+        return any(
+            c.hard and c.passed is False and not c.agent_error and c.kind != "leak"
+            for c in self._checks
+        )
+
+    @property
     def latency_ms(self) -> float:
         """Total agent latency across turns."""
         return sum(turn.reply.latency_ms for turn in self.turns)
@@ -86,9 +107,22 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _run_trial(
-    agent: AgentPort, exp: Experiment, variant: Variant, case: Case, index: int
-) -> TrialResult:
+@dataclass(frozen=True)
+class _Session:
+    agent: AgentPort
+    exp: Experiment
+    detector: Detector
+
+
+def _leak_check(leak: Leak) -> CheckResult:
+    return CheckResult(
+        "leak", False, True, f"{leak.kind} {leak.label!r} in {leak.location}: {leak.masked}"
+    )
+
+
+def _run_trial(session: _Session, variant: Variant, case: Case, index: int) -> TrialResult:
+    agent, exp = session.agent, session.exp
+    said: list[str] = []
     conversation_id = str(uuid.uuid4())
     history: list[dict[str, str]] = []
     turns: list[TurnResult] = []
@@ -104,7 +138,10 @@ def _run_trial(
                 "env": exp.environment,
             }
         )
-        turns.append(TurnResult(turn.user, reply, [evaluate(e, reply) for e in turn.expect]))
+        said.append(turn.user)
+        leaks = scan_reply(session.detector, reply, said)
+        checks = [evaluate(e, reply) for e in turn.expect] + [_leak_check(x) for x in leaks]
+        turns.append(TurnResult(turn.user, reply, checks, leaks))
         if reply.error is not None:
             break
         history.append({"role": "user", "content": turn.user})
@@ -123,8 +160,9 @@ def run_experiment(exp: Experiment, agent: AgentPort) -> RunResult:
         The collected trial results.
     """
     started_at = _now()
+    session = _Session(agent, exp, Detector(exp.security))
     trials = [
-        _run_trial(agent, exp, variant, case, index)
+        _run_trial(session, variant, case, index)
         for variant in exp.variants
         for case in exp.cases
         for index in range(exp.trials)

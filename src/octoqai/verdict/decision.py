@@ -32,6 +32,8 @@ class VariantSummary:
     hard_violations: int
     mean_tokens: float | None
     mean_latency_ms: float
+    mean_ttft_ms: float | None
+    leaks: int
     status: Status
     reasons: list[str] = field(default_factory=list)
 
@@ -65,6 +67,33 @@ def _by_case(trials: list[TrialResult]) -> dict[str, list[TrialResult]]:
     return grouped
 
 
+def _gate_reasons(leaks: int, other_hard: int) -> list[str]:
+    reasons: list[str] = []
+    if leaks:
+        reasons.append(f"{leaks} confidential data leak(s)")
+    if other_hard:
+        reasons.append(f"{other_hard} hard gate violation(s)")
+    return reasons
+
+
+def _rate_status(
+    lo: float, hi: float, threshold: float, n_not_evaluable: int
+) -> tuple[Status, list[str]]:
+    if hi < threshold:
+        return "no-go", [f"pass rate upper bound {hi:.2f} is below threshold {threshold:.2f}"]
+    if lo >= threshold and n_not_evaluable == 0:
+        return "go", [f"pass rate lower bound {lo:.2f} meets threshold {threshold:.2f}"]
+    reasons: list[str] = []
+    if n_not_evaluable:
+        reasons.append(f"{n_not_evaluable} trial(s) could not be evaluated")
+    if lo < threshold:
+        reasons.append(
+            f"interval [{lo:.2f}, {hi:.2f}] contains threshold {threshold:.2f}: "
+            f"more cases or trials are needed"
+        )
+    return "insufficient", reasons
+
+
 def _summarize(
     name: str, baseline: bool, trials: list[TrialResult], threshold: float
 ) -> VariantSummary:
@@ -78,25 +107,14 @@ def _summarize(
     case_outcomes = [[t.outcome == "pass" for t in group] for group in cases.values()]
     hard = sum(t.hard_violation for t in trials)
     tokens = [t.tokens for t in trials if t.tokens is not None]
-    reasons: list[str] = []
-    if hard:
+    leaks = sum(t.leak_count for t in trials)
+    gate_reasons = _gate_reasons(leaks, sum(t.other_hard_violation for t in trials))
+    if gate_reasons:
         status: Status = "no-go"
-        reasons.append(f"{hard} hard gate violation(s)")
-    elif hi < threshold:
-        status = "no-go"
-        reasons.append(f"pass rate upper bound {hi:.2f} is below threshold {threshold:.2f}")
-    elif lo >= threshold and n_not_evaluable == 0:
-        status = "go"
-        reasons.append(f"pass rate lower bound {lo:.2f} meets threshold {threshold:.2f}")
+        reasons = gate_reasons
     else:
-        status = "insufficient"
-        if n_not_evaluable:
-            reasons.append(f"{n_not_evaluable} trial(s) could not be evaluated")
-        if lo < threshold:
-            reasons.append(
-                f"interval [{lo:.2f}, {hi:.2f}] contains threshold {threshold:.2f}: "
-                f"more cases or trials are needed"
-            )
+        status, reasons = _rate_status(lo, hi, threshold, n_not_evaluable)
+    ttfts = [t.ttft_ms for t in trials if t.ttft_ms is not None]
     return VariantSummary(
         name=name,
         baseline=baseline,
@@ -110,6 +128,8 @@ def _summarize(
         hard_violations=hard,
         mean_tokens=sum(tokens) / len(tokens) if tokens else None,
         mean_latency_ms=sum(t.latency_ms for t in trials) / len(trials),
+        mean_ttft_ms=sum(ttfts) / len(ttfts) if ttfts else None,
+        leaks=leaks,
         status=status,
         reasons=reasons,
     )
