@@ -13,7 +13,7 @@ from octoqai.security import _patterns
 FindingKind = Literal["canary", "secret", "env", "pii"]
 
 MIN_ENV_VALUE_LENGTH = 4
-_PRIORITY: dict[FindingKind, int] = {"canary": 0, "secret": 1, "env": 2, "pii": 3}
+PRIORITY: dict[FindingKind, int] = {"canary": 0, "secret": 1, "env": 2, "pii": 3}
 _MASK_THRESHOLD = 12
 
 
@@ -142,7 +142,7 @@ def _ibans(text: str) -> Iterator[Finding]:
 
 
 def _without_overlaps(candidates: list[Finding]) -> list[Finding]:
-    ranked = sorted(candidates, key=lambda c: (_PRIORITY[c.kind], c.start, c.start - c.end))
+    ranked = sorted(candidates, key=lambda c: (PRIORITY[c.kind], c.start, c.start - c.end))
     accepted: list[Finding] = []
     for candidate in ranked:
         if all(candidate.end <= kept.start or candidate.start >= kept.end for kept in accepted):

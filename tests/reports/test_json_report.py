@@ -3,10 +3,11 @@ import json
 import pytest
 
 from octoqai.experiment import Experiment
-from octoqai.reports import write_json
+from octoqai.reports import build_report, write_json
 from octoqai.running import run_experiment
 from octoqai.verdict import decide
-from support.agents import FakeJsonAgent
+from support import samples
+from support.agents import FakeJsonAgent, FakeSseAgent
 from support.assertions import assert_not_in_outputs
 from support.builders import ExperimentBuilder, turn
 
@@ -57,3 +58,43 @@ def test_report_creates_parent_directories(tmp_path):
     target = tmp_path / "nested" / "out" / "r.json"
     write_json(*_run("ñ"), target)
     assert target.is_file()
+
+
+@pytest.mark.security
+def test_report_redacts_canary_everywhere(tmp_path):
+    canary = "TEN-B-0042"
+    builder = (
+        ExperimentBuilder().variant("base", note=canary).security(canaries=[{"value": canary}])
+    )
+    exp = Experiment.model_validate(
+        builder.case("c1", turn(f"¿Conoces {canary}?", {"contains": "."})).build()
+    )
+    run = run_experiment(exp, FakeJsonAgent().answers(f"sí, {canary}.").adapter(exp.agent))
+    write_json(run, decide(run), tmp_path / "r.json")
+    text = (tmp_path / "r.json").read_text(encoding="utf-8")
+    assert canary.casefold() not in text.casefold() and "[canary:canary-1]" in text
+
+
+@pytest.mark.security
+def test_report_counts_fragments_and_lists_masked_leaks():
+    builder = ExperimentBuilder().streaming().security(canaries=[{"value": "TEN-B-0042"}])
+    exp = Experiment.model_validate(
+        builder.variant("base").trials(1).case("c1", turn("Hola", {"contains": "."})).build()
+    )
+    run = run_experiment(exp, FakeSseAgent().leaks("TEN-B-0042").adapter(exp.agent))
+    report = build_report(run, decide(run))
+    turn_data = report["trials"][0]["turns"][0]
+    assert turn_data["fragments"] == 3 and turn_data["retries"] == []
+    assert turn_data["ttft_ms"] is not None
+    assert turn_data["leaks"] == [
+        {"kind": "canary", "label": "canary-1", "location": "fragment 2", "masked": "T…"}
+    ]
+    assert report["trials"][0]["leaks"] == 1 and report["variants"][0]["leaks"] == 1
+    assert "TEN-B-0042" not in str(report)
+
+
+@pytest.mark.security
+def test_report_masks_pii_even_when_detectors_are_disabled():
+    run, verdict = _run(f"ñ {samples.EMAIL}")
+    run.experiment.security.detectors = []
+    assert samples.EMAIL not in str(build_report(run, verdict))

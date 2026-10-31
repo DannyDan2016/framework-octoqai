@@ -181,3 +181,54 @@ def test_cli_runs_a_streaming_agent(experiment, tmp_path, run_cli):
     result = run_cli("run", path, agent=FakeSseAgent().streams("Extracto ", "conciliado."))
     assert result.code != 3, result.err
     assert result.report()["trials"][0]["turns"][0]["answer"] == "Extracto conciliado."
+
+
+@pytest.fixture
+def streaming(experiment, tmp_path):
+    def _write(canary="TEN-B-0042"):
+        experiment.streaming().security(canaries=[{"value": canary}]).trials(2)
+        experiment.case("c1", turn("Concilia octubre", {"contains": "."}))
+        return str(experiment.write(tmp_path))
+
+    return _write
+
+
+@pytest.mark.security
+def test_streaming_leak_exits_no_go_and_never_prints_canary(streaming, run_cli):
+    result = run_cli("run", streaming(), agent=FakeSseAgent().leaks("TEN-B-0042"))
+    assert_exit(result.code, 1)
+    assert_not_in_outputs("TEN-B-0042", result.out, result.err, result.report_text())
+    assert "leaks=2" in result.out
+
+
+@pytest.mark.security
+def test_env_canary_never_written(experiment, tmp_path, run_cli, monkeypatch):
+    monkeypatch.setenv("CANARY_KEY", "tenant-b-secret-01")
+    experiment.streaming().security(canaries=[{"value": "${CANARY_KEY}"}])
+    path = str(experiment.case("c1", turn("Hola", {"contains": "."})).write(tmp_path))
+    result = run_cli("run", path, agent=FakeSseAgent().leaks("tenant-b-secret-01"))
+    assert_exit(result.code, 1)
+    assert_not_in_outputs("tenant-b-secret-01", result.out, result.err, result.report_text())
+
+
+@pytest.mark.security
+def test_leak_before_a_stream_cut_is_no_go_not_unreachable(streaming, run_cli):
+    result = run_cli("run", streaming(), agent=FakeSseAgent().cuts_after("dato TEN-B-0042"))
+    assert_exit(result.code, 1)
+    assert "unreachable" not in result.err
+
+
+def test_retries_are_written_to_the_report(experiment, tmp_path, run_cli, fake_agent):
+    path = str(experiment.agent(retry={"retries": 1, "backoff_s": 0}).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent.answers("ok.").refuses_first(1))
+    assert result.code != 3, result.err
+    turns = [t["turns"][0] for t in result.report()["trials"]]
+    assert turns[0]["retries"] == ["cannot connect to agent: ConnectError"]
+    assert all(t["retries"] == [] for t in turns[1:])
+
+
+def test_streaming_example_runs_against_a_fake_agent(run_cli):
+    example = str(EXAMPLES / "streaming" / "experiment.yaml")
+    result = run_cli("run", example, agent=FakeSseAgent().streams("Extracto conciliado."))
+    assert result.code != 3, result.err
+    assert all(v["leaks"] == 0 for v in result.report()["variants"])

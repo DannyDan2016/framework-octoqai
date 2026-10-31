@@ -8,12 +8,28 @@ from pathlib import Path
 from typing import Any
 
 from octoqai import __version__
-from octoqai.running import RunResult, TrialResult
+from octoqai.running import RunResult, TrialResult, TurnResult
+from octoqai.security import Redactor
 from octoqai.verdict import Verdict
 
 SCHEMA_VERSION = "1"
-REDACTED = "[redacted]"
-MIN_REDACTED_LENGTH = 4
+
+
+def _turn(turn: TurnResult) -> dict[str, Any]:
+    reply = turn.reply
+    return {
+        "user": turn.user,
+        "answer": reply.answer,
+        "tool_calls": reply.tool_calls,
+        "tokens": reply.tokens,
+        "latency_ms": reply.latency_ms,
+        "ttft_ms": reply.ttft_ms,
+        "fragments": len(reply.fragments),
+        "retries": reply.retries,
+        "error": reply.error,
+        "checks": [asdict(check) for check in turn.checks],
+        "leaks": [asdict(leak) for leak in turn.leaks],
+    }
 
 
 def _trial(trial: TrialResult) -> dict[str, Any]:
@@ -25,36 +41,18 @@ def _trial(trial: TrialResult) -> dict[str, Any]:
         "hard_violation": trial.hard_violation,
         "tokens": trial.tokens,
         "latency_ms": trial.latency_ms,
-        "turns": [
-            {
-                "user": turn.user,
-                "answer": turn.reply.answer,
-                "tool_calls": turn.reply.tool_calls,
-                "tokens": turn.reply.tokens,
-                "latency_ms": turn.reply.latency_ms,
-                "error": turn.reply.error,
-                "checks": [asdict(check) for check in turn.checks],
-            }
-            for turn in trial.turns
-        ],
+        "leaks": trial.leak_count,
+        "ttft_ms": trial.ttft_ms,
+        "turns": [_turn(turn) for turn in trial.turns],
     }
-
-
-def _redact(value: Any, secrets: list[str]) -> Any:
-    if isinstance(value, dict):
-        return {key: _redact(item, secrets) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_redact(item, secrets) for item in value]
-    if isinstance(value, str):
-        for secret in secrets:
-            value = value.replace(secret, REDACTED)
-    return value
 
 
 def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
     """Build the report document without agent connection details.
 
-    Every value that came from a ``${VAR}`` expansion is replaced by ``[redacted]``.
+    Every string passes through the redactor: canaries, secrets, personal data and values
+    from ``${VAR}`` expansions are replaced by placeholders. Raw stream fragments are not
+    written, only their count.
 
     Args:
         run: The collected trial results.
@@ -64,10 +62,7 @@ def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
         A JSON-serializable report.
     """
     exp = run.experiment
-    secrets = sorted(
-        (v for v in exp.redacted_values if len(v) >= MIN_REDACTED_LENGTH), key=len, reverse=True
-    )
-    report = {
+    report: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "tool": {"name": "octoqai", "version": __version__},
         "experiment": {
@@ -89,7 +84,8 @@ def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
         "comparisons": [asdict(comparison) for comparison in verdict.comparisons],
         "trials": [_trial(trial) for trial in run.trials],
     }
-    redacted: dict[str, Any] = _redact(report, secrets)
+    redactor = Redactor.for_report(exp.security, exp.redacted_values)
+    redacted: dict[str, Any] = redactor.redact_tree(report)
     return redacted
 
 

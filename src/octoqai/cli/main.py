@@ -13,7 +13,7 @@ from octoqai.agents import AdapterKwargs, adapter_for
 from octoqai.errors import ConfigError
 from octoqai.experiment import load_experiment
 from octoqai.reports import write_json
-from octoqai.running import run_experiment
+from octoqai.running import RunResult, run_experiment
 from octoqai.verdict import EXIT_CODES, Verdict, decide
 
 EXIT_ERROR = 3
@@ -46,7 +46,8 @@ def _print_summary(verdict: Verdict) -> None:
         lo, hi = summary.ci95
         print(
             f"{summary.name:<20} {summary.status:<12} "
-            f"pass_rate={summary.pass_rate:.2f} [{lo:.2f}, {hi:.2f}]"
+            f"pass_rate={summary.pass_rate:.2f} [{lo:.2f}, {hi:.2f}] "
+            f"leaks={summary.leaks}"
         )
     for comparison in verdict.comparisons:
         lo, hi = comparison.ci95
@@ -57,6 +58,10 @@ def _print_summary(verdict: Verdict) -> None:
     for reason in verdict.reasons:
         print(f"  - {reason}")
     print(f"VERDICT: {verdict.status} (recommended: {verdict.recommended})")
+
+
+def _unreachable(run: RunResult) -> bool:
+    return all(t.agent_error and t.leak_count == 0 for t in run.trials)
 
 
 def _run(
@@ -76,7 +81,7 @@ def _run(
     verdict = decide(run)
     report = out / "report.json"
     write_json(run, verdict, report)
-    if all(trial.agent_error for trial in run.trials):
+    if _unreachable(run):
         first = next(turn.reply.error for turn in run.trials[0].turns if turn.reply.error)
         print(
             f"Error: agent unreachable in every trial ({first}). Report: {report}", file=sys.stderr

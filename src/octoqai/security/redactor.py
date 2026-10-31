@@ -1,0 +1,94 @@
+"""Mask every sensitive value in a report with a placeholder."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Any
+
+from octoqai.experiment import SecurityConfig
+from octoqai.security.detectors import PRIORITY, Detector, Finding
+
+REDACTED = "[redacted]"
+
+
+def _placeholder(finding: Finding) -> str:
+    if finding.kind == "env":
+        return REDACTED
+    return f"[{finding.kind}:{finding.label}]"
+
+
+def _merged(candidates: list[Finding]) -> list[list[Finding]]:
+    groups: list[list[Finding]] = []
+    end = -1
+    for finding in sorted(candidates, key=lambda c: (c.start, c.start - c.end)):
+        if groups and finding.start < end:
+            groups[-1].append(finding)
+            end = max(end, finding.end)
+        else:
+            groups.append([finding])
+            end = finding.end
+    return groups
+
+
+class Redactor:
+    """Replaces sensitive values in text and in report trees."""
+
+    def __init__(self, detector: Detector) -> None:
+        """Create a redactor.
+
+        Args:
+            detector: Finds the values to mask; it should run every detector.
+        """
+        self._detector = detector
+
+    @classmethod
+    def for_report(cls, security: SecurityConfig, env_values: Sequence[str]) -> Redactor:
+        """Create the report redactor, which runs every detector whatever ``detectors`` says.
+
+        Args:
+            security: Canaries and allow patterns of the experiment.
+            env_values: Values taken from the environment that must never be written.
+
+        Returns:
+            A redactor that masks canaries, secrets, environment values and personal data.
+        """
+        every = security.model_copy(update={"detectors": ["secrets", "pii"]})
+        return cls(Detector(every, env_values=env_values))
+
+    def redact(self, text: str) -> str:
+        """Replace the union of all findings in ``text`` with placeholders.
+
+        Overlapping findings are merged into one span whose placeholder comes from the
+        highest-priority kind: canary, secret, environment value, personal data.
+
+        Args:
+            text: The text to clean.
+
+        Returns:
+            The text with every sensitive span masked.
+        """
+        groups = _merged(self._detector.candidates(text))
+        for group in reversed(groups):
+            lead = min(group, key=lambda f: (PRIORITY[f.kind], f.start, f.start - f.end))
+            start, end = group[0].start, max(f.end for f in group)
+            text = text[:start] + _placeholder(lead) + text[end:]
+        return text
+
+    def redact_tree(self, obj: Any) -> Any:
+        """Redact every string value in nested dicts and lists.
+
+        Dictionary keys are kept as they are: no report key is controlled by the agent.
+
+        Args:
+            obj: The structure to clean.
+
+        Returns:
+            A copy with strings redacted and other values unchanged.
+        """
+        if isinstance(obj, dict):
+            return {key: self.redact_tree(value) for key, value in obj.items()}
+        if isinstance(obj, list):
+            return [self.redact_tree(item) for item in obj]
+        if isinstance(obj, str):
+            return self.redact(obj)
+        return obj
