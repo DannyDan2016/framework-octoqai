@@ -101,3 +101,8 @@ def test_canary_labels_default_to_position(experiment):
 def test_agent_headers_are_hidden_from_repr(experiment):
     experiment.agent(headers={"Authorization": "Bearer zzz-visible-check"})
     assert "zzz-visible-check" not in repr(Experiment.model_validate(experiment.build()).agent)
+
+
+def test_agent_request_is_hidden_from_repr(experiment):
+    experiment.agent(request={"token": "zzz-inline-token"})
+    assert "zzz-inline-token" not in repr(Experiment.model_validate(experiment.build()).agent)

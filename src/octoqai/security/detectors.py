@@ -100,8 +100,9 @@ class Detector:
         if "secrets" not in self._security.detectors:
             return
         for label, pattern in _patterns.SECRET_PATTERNS.items():
+            group = "url" if "url" in pattern.groupindex else 0
             for match in pattern.finditer(text):
-                yield _finding("secret", label, match.group(), match.start())
+                yield _finding("secret", label, match.group(group), match.start(group))
 
     def _env(self, text: str) -> Iterator[Finding]:
         for value in self._env_values:

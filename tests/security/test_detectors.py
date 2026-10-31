@@ -148,3 +148,13 @@ def test_dashed_card_followed_by_a_group_is_found():
 @pytest.mark.parametrize("run", [samples.CARD_DIGITS_RUN, samples.LONG_DIGITS_RUN])
 def test_digit_runs_are_never_split_to_look_for_cards(run):
     assert found(f"pedido {run}") == []
+
+
+@pytest.mark.parametrize("text", [samples.URL_AFTER_DIGIT, samples.URL_AFTER_DASH])
+def test_credential_url_is_found_after_a_non_letter_prefix(text):
+    findings = Detector(SecurityConfig()).find(text)
+    secrets = [f for f in findings if f.label == "url with credentials"]
+    assert [f.value for f in secrets] == [
+        samples.DATABASE_URL[: samples.DATABASE_URL.index("@") + 1]
+    ]
+    assert text[secrets[0].start : secrets[0].end] == secrets[0].value

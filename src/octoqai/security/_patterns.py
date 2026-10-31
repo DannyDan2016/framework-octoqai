@@ -13,7 +13,8 @@ SECRET_PATTERNS: dict[str, re.Pattern[str]] = {
     "google api key": re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),
     "jwt": re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\."),
     "url with credentials": re.compile(
-        r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://[^\s/:@\"']+:[^\s/@\"']+@"
+        r"(?<![a-z0-9+.-])[0-9+.-]*"
+        r"(?P<url>[a-z][a-z0-9+.-]*://[^\s/:@\"']+:[^\s/@\"']+@)"
     ),
     "bearer token": re.compile(r"(?i:Bearer)\s+[A-Za-z0-9._~+/=-]{20,}"),
     "credential assignment": re.compile(r"(?i)\b(password|passwd|pwd|secret)\s*[:=]\s*\S{6,}"),

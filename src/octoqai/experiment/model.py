@@ -179,7 +179,7 @@ class AgentConfig(_Model):
     url: str
     method: str = "POST"
     headers: dict[str, str] = Field(default_factory=dict, repr=False)
-    request: Any
+    request: Any = Field(repr=False)
     response: ResponseMap
     timeout_s: float = Field(default=60, gt=0)
     stream: StreamConfig | None = None
