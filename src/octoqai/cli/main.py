@@ -5,12 +5,11 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
 
 import httpx
 
 from octoqai import __version__
-from octoqai.agents import adapter_for
+from octoqai.agents import AdapterKwargs, adapter_for
 from octoqai.errors import ConfigError
 from octoqai.experiment import load_experiment
 from octoqai.reports import write_json
@@ -63,7 +62,7 @@ def _print_summary(verdict: Verdict) -> None:
 def _run(
     args: argparse.Namespace,
     transport: httpx.BaseTransport | None,
-    adapter_kwargs: dict[str, Any],
+    adapter_kwargs: AdapterKwargs,
 ) -> int:
     exp = load_experiment(args.experiment, env=args.env)
     if args.tags:
@@ -92,7 +91,7 @@ def main(
     argv: list[str],
     transport: httpx.BaseTransport | None = None,
     *,
-    adapter_kwargs: dict[str, Any] | None = None,
+    adapter_kwargs: AdapterKwargs | None = None,
 ) -> int:
     """Run the CLI and return the process exit code.
 
@@ -114,7 +113,7 @@ def main(
         parser.print_usage(sys.stderr)
         return EXIT_ERROR
     try:
-        return _run(args, transport, adapter_kwargs or {})
+        return _run(args, transport, adapter_kwargs or AdapterKwargs())
     except ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
     except Exception as exc:

@@ -1,9 +1,11 @@
+from contextlib import closing
+
 import pytest
 
 from octoqai.agents import HttpAgentAdapter, SseAgentAdapter, adapter_for
 from octoqai.errors import ConfigError
 from octoqai.experiment import Experiment
-from support.agents import TURN_CONTEXT, FakeSseAgent
+from support.agents import DONE, TURN_CONTEXT, FakeSseAgent, sse_event
 from support.builders import ExperimentBuilder
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
@@ -14,7 +16,8 @@ def stream_cfg(**agent):
 
 
 def send(fake, **agent):
-    return fake.adapter(stream_cfg(**agent)).send(TURN_CONTEXT)
+    with closing(fake.adapter(stream_cfg(**agent))) as adapter:
+        return adapter.send(TURN_CONTEXT)
 
 
 @pytest.fixture
@@ -120,6 +123,49 @@ def test_never_retries_after_the_stream_started(sse):
 def test_stream_timeouts_follow_wait_policy(sse):
     send(sse, wait={"connect_s": 2, "first_fragment_s": 20, "idle_s": 5, "total_s": 30})
     assert sse.timeouts[0] == {"connect": 2, "read": 20, "write": 2, "pool": 2}
+
+
+def test_wait_policy_read_timeout_is_the_longest_of_first_fragment_and_idle(sse):
+    send(sse, wait={"connect_s": 2, "first_fragment_s": 4, "idle_s": 8, "total_s": 30})
+    assert sse.timeouts[0] == {"connect": 2, "read": 8, "write": 2, "pool": 2}
+
+
+def test_timeout_before_response_names_the_timeout_httpx_applied(sse):
+    r = send(sse.times_out(), wait={"first_fragment_s": 2, "idle_s": 8, "total_s": 30})
+    assert r.error == "no stream fragment within 8s"
+
+
+def test_heartbeats_alone_hit_the_first_fragment_deadline(sse):
+    r = send(sse.heartbeats(10, gap_s=1), wait={"first_fragment_s": 3, "total_s": 30})
+    assert r.error == "no stream fragment within 3s"
+    assert r.fragments == [] and sse.clock.now == 4
+
+
+def test_heartbeats_do_not_reset_the_idle_deadline(sse):
+    ping = (2.0, ": ping\n\n")
+    sse.script((0.0, sse_event("token", {"delta": "a"})), ping, ping, ping, ping)
+    r = send(sse, wait={"idle_s": 5, "total_s": 100})
+    assert r.error == "stream idle for more than 5s"
+    assert r.answer == "a" and sse.clock.now == 6
+
+
+def test_done_after_the_total_deadline_is_an_error_and_keeps_fragments(sse):
+    sse.script((4.0, sse_event("token", {"delta": "a"})), (7.0, DONE))
+    r = send(sse, wait={"idle_s": 10, "total_s": 10})
+    assert r.error == "stream exceeded 10s"
+    assert r.fragments == ['{"delta": "a"}'] and r.answer == "a"
+
+
+def test_error_body_timeout_keeps_the_http_status(sse):
+    r = send(sse.fails_reading(500))
+    assert r.error == "agent returned HTTP 500" and r.body is None
+
+
+def test_content_type_is_case_insensitive(sse):
+    r = send(
+        sse.emits('data: {"delta": "ok"}', "", content_type="Text/Event-Stream; charset=utf-8")
+    )
+    assert (r.answer, r.error) == ("ok", None)
 
 
 def test_adapter_for_picks_the_transport_from_the_config():

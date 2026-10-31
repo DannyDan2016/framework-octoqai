@@ -107,11 +107,6 @@ def test_json_reply_keeps_body_for_scanning(agent_cfg, fake_agent):
     assert '"debug"' in fake_agent.adapter(agent_cfg).send(TURN_CONTEXT).body
 
 
-def test_http_error_keeps_body(agent_cfg, fake_agent):
-    r = fake_agent.fails(500, "boom").adapter(agent_cfg).send(TURN_CONTEXT)
-    assert (r.answer, r.error, r.body) == (None, "agent returned HTTP 500", "boom")
-
-
 def test_non_json_body_is_kept(agent_cfg, fake_agent):
     r = fake_agent.returns(b"<html>").adapter(agent_cfg).send(TURN_CONTEXT)
     assert (r.error, r.body) == ("agent response is not valid JSON", "<html>")

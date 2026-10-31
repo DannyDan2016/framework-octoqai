@@ -8,7 +8,7 @@ from typing import Any, Self
 
 import httpx
 
-from octoqai.agents import HttpAgentAdapter, SseAgentAdapter
+from octoqai.agents import AdapterKwargs, HttpAgentAdapter, SseAgentAdapter
 from octoqai.experiment import AgentConfig
 
 RESPONSE_MAP = {
@@ -27,6 +27,7 @@ TURN_CONTEXT = {
     "variant": {"temperature": 0},
 }
 
+EVENT_STREAM = "text/event-stream"
 DONE = "data: [DONE]\n\n"
 
 _Frame = tuple[float, str]
@@ -103,7 +104,8 @@ class FakeAgent:
         """Return a transport that records each request and applies the behaviour."""
         return httpx.MockTransport(self._record)
 
-    def _adapter_kwargs(self) -> dict[str, Any]:
+    def adapter_kwargs(self) -> AdapterKwargs:
+        """Clock, sleep and jitter that make an adapter use this agent's fake time."""
         return {"clock": self.clock, "sleep": self.clock.sleep, "jitter": self.jitter}
 
     def _record(self, request: httpx.Request) -> httpx.Response:
@@ -146,7 +148,7 @@ class FakeJsonAgent(FakeAgent):
 
     def adapter(self, cfg: AgentConfig) -> HttpAgentAdapter:
         """Return a real HTTP adapter wired to this fake agent, its clock and a fixed jitter."""
-        return HttpAgentAdapter(cfg, transport=self.transport(), **self._adapter_kwargs())
+        return HttpAgentAdapter(cfg, transport=self.transport(), **self.adapter_kwargs())
 
 
 def sse_event(name: str, payload: Any) -> str:
@@ -183,9 +185,30 @@ class FakeSseAgent(FakeAgent):
         ]
         return self._use([*frames, (0.0, DONE)])
 
-    def emits(self, *lines: str) -> Self:
+    def emits(self, *lines: str, content_type: str = EVENT_STREAM) -> Self:
         """Send raw SSE lines, joined with newlines."""
-        return self._use([(0.0, "\n".join(lines) + "\n")])
+        return self._use([(0.0, "\n".join(lines) + "\n")], content_type=content_type)
+
+    def script(self, *frames: _Frame) -> Self:
+        """Send raw frames; the fake clock advances by each delay as the frame is read."""
+        return self._use(list(frames))
+
+    def heartbeats(self, count: int, gap_s: float) -> Self:
+        """Send ``count`` comment lines, one every ``gap_s``, and no event."""
+        return self._use([(gap_s, ": ping\n\n")] * count)
+
+    def fails_reading(self, status: int) -> Self:
+        """Answer with an error status whose body times out while being read."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            def body() -> Iterator[bytes]:
+                raise httpx.ReadTimeout("stalled", request=request)
+                yield b""
+
+            return httpx.Response(status, content=body())
+
+        self._handler = handler
+        return self
 
     def leaks(self, value: str) -> Self:
         """Leak ``value`` in the second delta."""
@@ -202,9 +225,11 @@ class FakeSseAgent(FakeAgent):
 
     def adapter(self, cfg: AgentConfig) -> SseAgentAdapter:
         """Return a real SSE adapter wired to this fake agent, its clock and a fixed jitter."""
-        return SseAgentAdapter(cfg, transport=self.transport(), **self._adapter_kwargs())
+        return SseAgentAdapter(cfg, transport=self.transport(), **self.adapter_kwargs())
 
-    def _use(self, frames: list[_Frame], cut: bool = False) -> Self:
+    def _use(
+        self, frames: list[_Frame], cut: bool = False, content_type: str = EVENT_STREAM
+    ) -> Self:
         def handler(request: httpx.Request) -> httpx.Response:
             def body() -> Iterator[bytes]:
                 for delay, text in frames:
@@ -213,9 +238,7 @@ class FakeSseAgent(FakeAgent):
                 if cut:
                     raise httpx.ReadTimeout("stalled", request=request)
 
-            return httpx.Response(
-                200, headers={"content-type": "text/event-stream"}, content=body()
-            )
+            return httpx.Response(200, headers={"content-type": content_type}, content=body())
 
         self._handler = handler
         return self

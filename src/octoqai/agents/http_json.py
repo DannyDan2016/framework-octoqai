@@ -11,13 +11,24 @@ from typing import Any
 
 import httpx
 
-from octoqai.agents._delivery import NotDelivered, client_timeout, not_delivered, with_retries
-from octoqai.agents._mapping import MISSING, ReplyError, ResponseFields, compile_path, first_match
+from octoqai.agents._delivery import (
+    HTTP_ERROR_MIN,
+    NotDelivered,
+    classify_delivery,
+    client_timeout,
+    with_retries,
+)
+from octoqai.agents._mapping import (
+    MISSING,
+    ReplyError,
+    ResponseFields,
+    compile_path,
+    first_match,
+    mapping_guard,
+)
 from octoqai.agents.port import AgentReply
 from octoqai.errors import ConfigError
 from octoqai.experiment import AgentConfig, render
-
-HTTP_ERROR_MIN = 400
 
 
 class HttpAgentAdapter:
@@ -109,17 +120,10 @@ class HttpAgentAdapter:
 
     def _post(self, body: Any, starts: list[float]) -> httpx.Response:
         starts.append(self._clock())
-        try:
-            response = self._client.request(
+        with classify_delivery(self._wait, f"timeout after {self._wait.total_s}s"):
+            return self._client.request(
                 self._cfg.method, self._cfg.url, json=body, headers=self._cfg.headers
             )
-        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-            raise not_delivered(exc, self._wait) from exc
-        except httpx.TimeoutException as exc:
-            raise ReplyError(f"timeout after {self._wait.total_s}s") from exc
-        except httpx.HTTPError as exc:
-            raise ReplyError(f"transport error: {type(exc).__name__}") from exc
-        return response
 
     @staticmethod
     def _decode(response: httpx.Response) -> Any:
@@ -136,12 +140,10 @@ class HttpAgentAdapter:
             raise ReplyError(f"answer path {self._cfg.response.answer!r} not found", payload)
         if answer is None:
             raise ReplyError("agent answer is null", payload)
-        try:
+        with mapping_guard(payload):
             text = answer if isinstance(answer, str) else json.dumps(answer, ensure_ascii=False)
             tool_calls = self._fields.tools(payload)
             tokens = self._fields.tokens(payload)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise ReplyError(f"cannot map agent response: {type(exc).__name__}", payload) from exc
         return AgentReply(
             answer=text,
             tool_calls=tool_calls,

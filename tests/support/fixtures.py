@@ -65,7 +65,7 @@ def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., 
         code = main(
             argv,
             transport=agent.transport() if agent else None,
-            adapter_kwargs=agent._adapter_kwargs() if agent else None,
+            adapter_kwargs=agent.adapter_kwargs() if agent else None,
         )
         captured = capsys.readouterr()
         return CliRun(code, captured.out, captured.err, out_dir)

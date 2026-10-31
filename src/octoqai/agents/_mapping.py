@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from jsonpath_ng.exceptions import JSONPathError
@@ -21,6 +23,14 @@ class ReplyError(Exception):
         self.error = error
         self.raw = raw
         self.body = body
+
+
+@contextmanager
+def mapping_guard(payload: Any) -> Iterator[None]:
+    try:
+        yield
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ReplyError(f"cannot map agent response: {type(exc).__name__}", payload) from exc
 
 
 def compile_path(expr: str) -> JSONPath:

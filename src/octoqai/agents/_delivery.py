@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 
 import httpx
 
+from octoqai.agents._mapping import ReplyError
 from octoqai.experiment import EffectiveWait, RetryPolicy
 
 JITTER_SPREAD = 0.25
+HTTP_ERROR_MIN = 400
 
 
 class NotDelivered(Exception):
@@ -21,6 +24,22 @@ def not_delivered(exc: httpx.TransportError, wait: EffectiveWait) -> NotDelivere
     if isinstance(exc, httpx.ConnectTimeout):
         return NotDelivered(f"cannot connect to agent within {wait.connect_s:g}s")
     return NotDelivered(f"cannot connect to agent: {type(exc).__name__}")
+
+
+def transport_failure(exc: httpx.HTTPError) -> ReplyError:
+    return ReplyError(f"transport error: {type(exc).__name__}")
+
+
+@contextmanager
+def classify_delivery(wait: EffectiveWait, timeout_message: str) -> Iterator[None]:
+    try:
+        yield
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise not_delivered(exc, wait) from exc
+    except httpx.TimeoutException as exc:
+        raise ReplyError(timeout_message) from exc
+    except httpx.HTTPError as exc:
+        raise transport_failure(exc) from exc
 
 
 def with_retries[T](

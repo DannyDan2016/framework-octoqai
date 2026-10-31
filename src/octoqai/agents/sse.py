@@ -5,20 +5,32 @@ from __future__ import annotations
 import json
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
-from octoqai.agents._delivery import NotDelivered, client_timeout, not_delivered, with_retries
-from octoqai.agents._mapping import ReplyError, ResponseFields, compile_path, first_match
+from octoqai.agents._delivery import (
+    HTTP_ERROR_MIN,
+    NotDelivered,
+    classify_delivery,
+    client_timeout,
+    transport_failure,
+    with_retries,
+)
+from octoqai.agents._mapping import (
+    ReplyError,
+    ResponseFields,
+    compile_path,
+    first_match,
+    mapping_guard,
+)
 from octoqai.agents.port import AgentReply
 from octoqai.agents.sse_events import SseEvent, parse_sse
 from octoqai.errors import ConfigError
 from octoqai.experiment import AgentConfig, StreamConfig, render
 
-HTTP_ERROR_MIN = 400
 EVENT_STREAM = "text/event-stream"
 
 
@@ -68,8 +80,10 @@ class SseAgentAdapter:
         self._clock = clock
         self._sleep = sleep
         self._jitter = jitter
-        read_s = max(self._wait.first_fragment_s, self._wait.idle_s)
-        self._client = httpx.Client(transport=transport, timeout=client_timeout(self._wait, read_s))
+        self._read_s = max(self._wait.first_fragment_s, self._wait.idle_s)
+        self._client = httpx.Client(
+            transport=transport, timeout=client_timeout(self._wait, self._read_s)
+        )
 
     def send(self, context: dict[str, Any]) -> AgentReply:
         """Send one turn and read the event stream.
@@ -114,63 +128,66 @@ class SseAgentAdapter:
             self._cfg.method, self._cfg.url, json=body, headers=self._cfg.headers
         )
         state.start = self._clock()
-        try:
+        with classify_delivery(self._wait, self._no_fragment(self._read_s)):
             return self._client.send(request, stream=True)
-        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-            raise not_delivered(exc, self._wait) from exc
-        except httpx.TimeoutException as exc:
-            raise ReplyError(self._no_fragment()) from exc
-        except httpx.HTTPError as exc:
-            raise ReplyError(f"transport error: {type(exc).__name__}") from exc
 
     def _consume(self, response: httpx.Response, state: _Stream) -> None:
         try:
             self._check_response(response, state)
-            for event in parse_sse(response.iter_lines()):
+            for event in parse_sse(self._watched(response.iter_lines(), state)):
                 if self._on_event(event, state):
                     return
         except httpx.TimeoutException as exc:
             raise ReplyError(self._stalled(state)) from exc
         except httpx.HTTPError as exc:
-            raise ReplyError(f"transport error: {type(exc).__name__}") from exc
+            raise transport_failure(exc) from exc
+
+    def _watched(self, lines: Iterable[str], state: _Stream) -> Iterator[str]:
+        pending = False
+        for raw in lines:
+            pending = pending or (bool(raw) and not raw.startswith(":"))
+            error = self._check_deadlines(self._clock(), state)
+            if error and not pending:
+                raise ReplyError(error)
+            pending = pending and bool(raw)
+            yield raw
 
     def _check_response(self, response: httpx.Response, state: _Stream) -> None:
         content_type = response.headers.get("content-type", "")
         if response.status_code >= HTTP_ERROR_MIN:
             error = f"agent returned HTTP {response.status_code}"
-        elif not content_type.startswith(EVENT_STREAM):
+        elif not content_type.lower().startswith(EVENT_STREAM):
             error = f"expected {EVENT_STREAM}, got {content_type}"
         else:
             return
-        response.read()
+        try:
+            response.read()
+        except httpx.HTTPError:
+            raise ReplyError(error) from None
         state.body = response.text
         raise ReplyError(error)
 
     def _on_event(self, event: SseEvent, state: _Stream) -> bool:
         now = self._clock()
-        if event.data == self._stream.done:
-            return True
-        previous = state.last_at
-        state.fragments.append(event.data)
-        if state.first_at is None:
-            state.first_at = now
-        state.last_at = now
-        self._extract(event, state)
-        error = self._check_deadlines(now, previous, state)
+        error = self._check_deadlines(now, state)
+        done = event.data == self._stream.done
+        if not done:
+            state.fragments.append(event.data)
+            state.first_at = now if state.first_at is None else state.first_at
+            state.last_at = now
+            self._extract(event, state)
         if error:
             raise ReplyError(error)
-        return False
+        return done
 
     def _extract(self, event: SseEvent, state: _Stream) -> None:
         try:
             payload = json.loads(event.data)
         except ValueError:
             return
-        try:
+        with mapping_guard(payload):
             tools = self._fields.tools(payload)
             tokens = self._fields.tokens(payload)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise ReplyError(f"cannot map agent response: {type(exc).__name__}", payload) from exc
         state.tool_calls = state.tool_calls if tools is None else tools
         state.tokens = state.tokens if tokens is None else tokens
         if self._stream.event in (None, event.event):
@@ -178,22 +195,23 @@ class SseAgentAdapter:
             if isinstance(delta, str):
                 state.deltas.append(delta)
 
-    def _check_deadlines(self, now: float, previous: float | None, state: _Stream) -> str | None:
+    def _check_deadlines(self, now: float, state: _Stream) -> str | None:
         wait = self._wait
-        if previous is None and now - state.start > wait.first_fragment_s:
-            return self._no_fragment()
-        if previous is not None and now - previous > wait.idle_s:
+        if state.last_at is None and now - state.start > wait.first_fragment_s:
+            return self._no_fragment(wait.first_fragment_s)
+        if state.last_at is not None and now - state.last_at > wait.idle_s:
             return f"stream idle for more than {wait.idle_s:g}s"
         if now - state.start > wait.total_s:
             return f"stream exceeded {wait.total_s:g}s"
         return None
 
-    def _no_fragment(self) -> str:
-        return f"no stream fragment within {self._wait.first_fragment_s:g}s"
+    @staticmethod
+    def _no_fragment(seconds: float) -> str:
+        return f"no stream fragment within {seconds:g}s"
 
     def _stalled(self, state: _Stream) -> str:
         if state.first_at is None:
-            return self._no_fragment()
+            return self._no_fragment(self._read_s)
         return f"stream idle for more than {self._wait.idle_s:g}s"
 
     def _reply(self, state: _Stream, error: str | None, retries: list[str]) -> AgentReply:

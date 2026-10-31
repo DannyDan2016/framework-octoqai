@@ -12,7 +12,7 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `errors.py` | `ConfigError` and other errors shared by every package | nothing |
 | `experiment/` | Pydantic model, YAML loader, `${VAR}` expansion from `.env` files (`envfiles.py`), per-environment data sets (`datasets.py`) and `{{ }}` templates | `errors` |
 | `stats/` | Pure estimators: Wilson interval, paired bootstrap, pass@k | `errors` |
-| `agents/` | `port.py` (`AgentPort`, `AgentReply`) `sse_events.py` (SSE parser), adapters such as `http_json.py` and `sse.py`, and `factory.py` (`adapter_for` picks the adapter from the config) | `experiment`, `errors` |
+| `agents/` | `port.py` (`AgentPort`, `AgentReply`), `sse_events.py` (SSE parser), adapters such as `http_json.py` and `sse.py`, and `factory.py` (`adapter_for` picks the adapter from the config) | `experiment`, `errors` |
 | `expectations/` | Registry of deterministic checks applied to an agent reply | `agents.port`, `experiment` |
 | `running/` | Serial runner; knows only `AgentPort`, never a concrete adapter | lower layers |
 | `verdict/` | Go/no-go decision, hard gates and A/B recommendation | `running`, `stats` |

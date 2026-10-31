@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 import time
 from collections.abc import Callable
+from typing import TypedDict
 
 import httpx
 
@@ -12,6 +13,14 @@ from octoqai.agents.http_json import HttpAgentAdapter
 from octoqai.agents.port import AgentPort
 from octoqai.agents.sse import SseAgentAdapter
 from octoqai.experiment import AgentConfig
+
+
+class AdapterKwargs(TypedDict, total=False):
+    """Time and randomness sources an adapter accepts, injectable for tests."""
+
+    clock: Callable[[], float]
+    sleep: Callable[[float], None]
+    jitter: Callable[[], float]
 
 
 def adapter_for(
