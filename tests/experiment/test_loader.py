@@ -169,3 +169,30 @@ def test_contains_inserts_data_escaped(with_data):
 def test_invalid_tag_rejected(experiment, tmp_path):
     path = experiment.case("c1", turn("x", {"contains": "."}), tags=["Smoke Test"]).write(tmp_path)
     assert_config_error(lambda: load_experiment(path, process_env={}), "invalid tag")
+
+
+def test_hyphenated_data_keys_render(with_data):
+    path = with_data(
+        turn("cuenta {{ data.numero-cuenta }}", {"contains": "{{ data.numero-cuenta }}"}),
+        values={"numero-cuenta": "ES-2"},
+    )
+    rendered = load_experiment(path, env="dev", process_env={}).cases[0].turns[0]
+    assert rendered.user == "cuenta ES-2" and rendered.expect[0].value == r"ES\-2"
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        turn("{{ data.ref | upper }}", {"contains": "."}),
+        turn("x", {"contains": "{{ data.ref | upper }}"}),
+        turn("{{data}", {"contains": "."}),
+    ],
+    ids=["filter-in-message", "filter-in-pattern", "unbalanced"],
+)
+def test_unsupported_placeholder_fails_at_load(item, with_data):
+    path = with_data(item, values={"ref": "r"})
+    assert_config_error(
+        lambda: load_experiment(path, env="dev", process_env={}),
+        r"cases\[c1\]\.turns\[0\]",
+        "placeholder",
+    )

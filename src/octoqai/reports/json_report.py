@@ -12,6 +12,8 @@ from octoqai.running import RunResult, TrialResult
 from octoqai.verdict import Verdict
 
 SCHEMA_VERSION = "1"
+REDACTED = "[redacted]"
+MIN_REDACTED_LENGTH = 4
 
 
 def _trial(trial: TrialResult) -> dict[str, Any]:
@@ -38,8 +40,21 @@ def _trial(trial: TrialResult) -> dict[str, Any]:
     }
 
 
+def _redact(value: Any, secrets: list[str]) -> Any:
+    if isinstance(value, dict):
+        return {key: _redact(item, secrets) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact(item, secrets) for item in value]
+    if isinstance(value, str):
+        for secret in secrets:
+            value = value.replace(secret, REDACTED)
+    return value
+
+
 def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
     """Build the report document without agent connection details.
+
+    Every value that came from a ``${VAR}`` expansion is replaced by ``[redacted]``.
 
     Args:
         run: The collected trial results.
@@ -49,7 +64,10 @@ def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
         A JSON-serializable report.
     """
     exp = run.experiment
-    return {
+    secrets = sorted(
+        (v for v in exp.redacted_values if len(v) >= MIN_REDACTED_LENGTH), key=len, reverse=True
+    )
+    report = {
         "schema_version": SCHEMA_VERSION,
         "tool": {"name": "octoqai", "version": __version__},
         "experiment": {
@@ -71,6 +89,8 @@ def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
         "comparisons": [asdict(comparison) for comparison in verdict.comparisons],
         "trials": [_trial(trial) for trial in run.trials],
     }
+    redacted: dict[str, Any] = _redact(report, secrets)
+    return redacted
 
 
 def write_json(run: RunResult, verdict: Verdict, path: Path) -> None:

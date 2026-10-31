@@ -172,6 +172,7 @@ class Experiment(_Model):
     data_values: dict[str, Any] = Field(default_factory=dict)
     environment: str | None = None
     selected_tags: list[str] = Field(default_factory=list)
+    redacted_values: list[str] = Field(default_factory=list, repr=False)
 
     @model_validator(mode="after")
     def _check_variants(self) -> Experiment:
@@ -265,7 +266,7 @@ _EXPERIMENT_CHECKS: tuple[Callable[[Experiment], None], ...] = (
     _variants_cover_template,
 )
 
-_VARIANT_REF = re.compile(r"\{\{\s*variant\.([\w.]+)\s*\}\}")
+_VARIANT_REF = re.compile(r"\{\{\s*variant\.([\w.-]+)\s*\}\}")
 
 
 def _variant_paths(template: Any) -> set[str]:

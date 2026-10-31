@@ -22,7 +22,7 @@ from octoqai.experiment.template import render_text
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _QUOTED = re.compile(r"'([^']+)'")
 _PATTERN_KINDS = ("contains", "not_contains")
-_RESERVED = ("data_values", "environment", "selected_tags")
+_RESERVED = ("data_values", "environment", "selected_tags", "redacted_values")
 
 
 def load_experiment(
@@ -47,7 +47,9 @@ def load_experiment(
     path = Path(path)
     data = _read_experiment(path)
     _check_environment(data.get("environments"), env)
-    variables = resolve_env(path.parent, env, os.environ if process_env is None else process_env)
+    variables = _Variables(
+        resolve_env(path.parent, env, os.environ if process_env is None else process_env)
+    )
     _expand_agent(data, variables)
     exp = _validate(data)
     values: dict[str, Any] = {}
@@ -56,7 +58,9 @@ def load_experiment(
             load_data_set(path.parent, exp.data, exp.environments, env), variables
         )
     exp = _render_cases(exp, _template_context(values, env))
-    return exp.model_copy(update={"data_values": values, "environment": env})
+    return exp.model_copy(
+        update={"data_values": values, "environment": env, "redacted_values": variables.used}
+    )
 
 
 def _template_context(values: dict[str, Any], env: str | None) -> dict[str, Any]:
@@ -118,36 +122,44 @@ def _check_environment(declared: Any, env: str | None) -> None:
         raise ConfigError(f"unknown environment {env!r}; declared environments: {names}")
 
 
-def _expand_agent(data: dict[str, Any], variables: Mapping[str, str]) -> None:
+class _Variables:
+    def __init__(self, values: Mapping[str, str]) -> None:
+        self._values = values
+        self.used: list[str] = []
+
+    def expand(self, text: str) -> str:
+        return _ENV_PATTERN.sub(self._replace, text)
+
+    def _replace(self, match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in self._values:
+            raise ConfigError(f"environment variable {name} is not set")
+        value = self._values[name]
+        if value not in self.used:
+            self.used.append(value)
+        return value
+
+
+def _expand_agent(data: dict[str, Any], variables: _Variables) -> None:
     agent = data.get("agent")
     if not isinstance(agent, dict):
         return
     if isinstance(agent.get("url"), str):
-        agent["url"] = _expand_env(agent["url"], variables)
+        agent["url"] = variables.expand(agent["url"])
     if isinstance(agent.get("headers"), dict):
         agent["headers"] = {
-            key: _expand_env(str(value), variables) for key, value in agent["headers"].items()
+            key: variables.expand(str(value)) for key, value in agent["headers"].items()
         }
 
 
-def _expand_values(value: Any, variables: Mapping[str, str]) -> Any:
+def _expand_values(value: Any, variables: _Variables) -> Any:
     if isinstance(value, dict):
         return {key: _expand_values(item, variables) for key, item in value.items()}
     if isinstance(value, list):
         return [_expand_values(item, variables) for item in value]
     if isinstance(value, str):
-        return _expand_env(value, variables)
+        return variables.expand(value)
     return value
-
-
-def _expand_env(text: str, variables: Mapping[str, str]) -> str:
-    def replace(match: re.Match[str]) -> str:
-        name = match.group(1)
-        if name not in variables:
-            raise ConfigError(f"environment variable {name} is not set")
-        return variables[name]
-
-    return _ENV_PATTERN.sub(replace, text)
 
 
 def _validate(data: dict[str, Any]) -> Experiment:

@@ -3,7 +3,7 @@ import importlib
 import pytest
 
 from support.assertions import assert_exit, assert_not_in_outputs
-from support.builders import turn, write_env_file
+from support.builders import turn, write_data_set, write_env_file
 from support.paths import EXAMPLES
 
 pytestmark = [pytest.mark.integration, pytest.mark.regression]
@@ -154,3 +154,20 @@ def test_multienv_example_smoke_suite_renders_qa_data(run_cli, fake_agent, monke
     assert result.code != 3, result.err
     assert {t["case_id"] for t in result.report()["trials"]} == {"conciliar-extracto"}
     assert "ES-QA-0001" in fake_agent.requests[0]["message"]
+
+
+@pytest.mark.security
+def test_values_from_env_vars_in_data_are_masked_in_report(
+    experiment, tmp_path, run_cli, fake_agent
+):
+    write_data_set(tmp_path, "qa", {"cuenta": "${QA_ACCOUNT}"})
+    write_env_file(tmp_path, ".env.qa", QA_ACCOUNT="ES-REAL-998877")
+    experiment.environments("qa").case(
+        "c1", turn("Concilia la cuenta {{ data.cuenta }}", {"contains": "."})
+    )
+    path = str(experiment.write(tmp_path))
+    result = run_cli("run", path, "--env", "qa", agent=fake_agent.answers("ok ES-REAL-998877."))
+    assert result.code != 3, result.err
+    assert "ES-REAL-998877" in fake_agent.requests[0]["message"]
+    assert_not_in_outputs("ES-REAL-998877", result.out, result.err, result.report_text())
+    assert "[redacted]" in result.report_text()

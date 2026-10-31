@@ -8,7 +8,7 @@ from typing import Any
 
 from octoqai.errors import ConfigError
 
-_PLACEHOLDER = re.compile(r"\{\{\s*([\w.]+)\s*\}\}")
+_PLACEHOLDER = re.compile(r"\{\{\s*([\w.-]+)\s*\}\}")
 _MISSING = object()
 
 
@@ -35,8 +35,10 @@ def render_text(
         The text with every placeholder replaced.
 
     Raises:
-        ConfigError: If a placeholder references an unknown variable.
+        ConfigError: If a placeholder is malformed or references an unknown variable.
     """
+    if "{{" in _PLACEHOLDER.sub("", text):
+        raise ConfigError("unsupported placeholder: use {{ name.path }} with letters, digits, _, -")
 
     def replace(match: re.Match[str]) -> str:
         value = str(_lookup(match.group(1), context))
