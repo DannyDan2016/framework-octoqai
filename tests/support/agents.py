@@ -92,6 +92,9 @@ class FakeAgent:
         """Return a transport that records each request and applies the behaviour."""
         return httpx.MockTransport(self._record)
 
+    def _adapter_kwargs(self) -> dict[str, Any]:
+        return {"clock": self.clock, "sleep": self.clock.sleep, "jitter": self.jitter}
+
     def _record(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(json.loads(request.content) if request.content else None)
         self.headers.append(request.headers)
@@ -132,10 +135,4 @@ class FakeJsonAgent(FakeAgent):
 
     def adapter(self, cfg: AgentConfig) -> HttpAgentAdapter:
         """Return a real HTTP adapter wired to this fake agent, its clock and a fixed jitter."""
-        return HttpAgentAdapter(
-            cfg,
-            transport=self.transport(),
-            clock=self.clock,
-            sleep=self.clock.sleep,
-            jitter=self.jitter,
-        )
+        return HttpAgentAdapter(cfg, transport=self.transport(), **self._adapter_kwargs())

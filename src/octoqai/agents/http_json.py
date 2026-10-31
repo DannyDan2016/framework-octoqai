@@ -39,7 +39,7 @@ class HttpAgentAdapter:
             transport: Optional httpx transport, used to test without a network.
             clock: Monotonic clock in seconds, injectable for tests.
             sleep: Sleep function used between retries, injectable for tests.
-            jitter: Random fraction in [0, 1] that shortens each backoff by up to 25%.
+            jitter: Random fraction in [0, 1) that shortens each backoff by up to 25%.
         """
         self._cfg = cfg
         if cfg.response.answer is None:
@@ -67,18 +67,24 @@ class HttpAgentAdapter:
         """
         body = render(self._cfg.request, context)
         retries: list[str] = []
-        first_start = self._clock()
+        starts: list[float] = []
         try:
-            response, start = with_retries(
-                lambda: self._post(body), self._cfg.retry, self._sleep, self._jitter, retries
+            response = with_retries(
+                lambda: self._post(body, starts),
+                self._cfg.retry,
+                self._sleep,
+                retries,
+                self._jitter,
             )
         except NotDelivered as exc:
-            return self._failure(ReplyError(exc.reason), first_start, retries)
+            return self._failure(ReplyError(exc.reason), starts[-1], retries)
         except ReplyError as exc:
-            return self._failure(exc, first_start, retries)
+            return self._failure(exc, starts[-1], retries)
+        start = starts[-1]
         try:
             reply = self._map_payload(self._decode(response), self._elapsed_ms(start))
         except ReplyError as exc:
+            exc.body = response.text
             return self._failure(exc, start, retries)
         return dataclasses.replace(reply, body=response.text, retries=retries)
 
@@ -101,8 +107,8 @@ class HttpAgentAdapter:
             retries=retries,
         )
 
-    def _post(self, body: Any) -> tuple[httpx.Response, float]:
-        start = self._clock()
+    def _post(self, body: Any, starts: list[float]) -> httpx.Response:
+        starts.append(self._clock())
         try:
             response = self._client.request(
                 self._cfg.method, self._cfg.url, json=body, headers=self._cfg.headers
@@ -113,7 +119,7 @@ class HttpAgentAdapter:
             raise ReplyError(f"timeout after {self._wait.total_s}s") from exc
         except httpx.HTTPError as exc:
             raise ReplyError(f"transport error: {type(exc).__name__}") from exc
-        return response, start
+        return response
 
     @staticmethod
     def _decode(response: httpx.Response) -> Any:

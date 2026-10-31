@@ -161,12 +161,12 @@ def test_gives_up_after_the_last_retry(agent_cfg, fake_agent):
     assert len(r.retries) == 2 and len(fake_agent.requests) == 3
 
 
-@pytest.mark.parametrize("behaviour", ["http_503", "read_timeout"])
+@pytest.mark.parametrize("behaviour", ["http_502", "http_503", "http_504", "read_timeout"])
 def test_never_retries_once_the_agent_may_have_the_request(agent_cfg, fake_agent, behaviour):
-    if behaviour == "http_503":
-        fake_agent.fails(503)
-    else:
+    if behaviour == "read_timeout":
         fake_agent.times_out()
+    else:
+        fake_agent.fails(int(behaviour.removeprefix("http_")))
     r = fake_agent.adapter(_with(agent_cfg, retry=RetryPolicy(retries=3))).send(CTX)
     assert r.error is not None and r.retries == [] and len(fake_agent.requests) == 1
 
@@ -182,4 +182,22 @@ def test_wait_policy_sets_connect_and_total_timeouts(agent_cfg, fake_agent):
 
 
 def test_read_timeout_names_total_deadline(agent_cfg, fake_agent):
-    assert fake_agent.times_out().adapter(agent_cfg).send(CTX).error == "timeout after 5.0s"
+    cfg = _with(agent_cfg, wait=WaitPolicy(total_s=4))
+    assert fake_agent.times_out().adapter(cfg).send(CTX).error == "timeout after 4.0s"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"answer": None, "debug": "trace-xyz"}, {"other": 1, "debug": "trace-xyz"}],
+    ids=["null-answer", "answer-path-missing"],
+)
+def test_mapping_failure_keeps_body(agent_cfg, fake_agent, payload):
+    r = fake_agent.replies(payload).adapter(agent_cfg).send(CTX)
+    assert r.error is not None and "trace-xyz" in r.body
+
+
+def test_final_failure_latency_starts_at_the_last_attempt(agent_cfg, fake_agent):
+    cfg = _with(agent_cfg, retry=RetryPolicy(retries=1, backoff_s=0.5))
+    r = fake_agent.times_out().refuses_first(1).adapter(cfg).send(CTX)
+    assert r.error.startswith("timeout") and r.latency_ms == 0
+    assert fake_agent.sleeps == [0.5]

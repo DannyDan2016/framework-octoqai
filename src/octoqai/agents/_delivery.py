@@ -27,8 +27,8 @@ def with_retries[T](
     attempt: Callable[[], T],
     policy: RetryPolicy,
     sleep: Callable[[float], None],
-    jitter: Callable[[], float],
     retries: list[str],
+    jitter: Callable[[], float],
 ) -> T:
     for n in range(policy.retries):
         try:
