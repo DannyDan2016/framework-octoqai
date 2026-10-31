@@ -38,12 +38,16 @@ def luhn_valid(digits: str) -> bool:
 
 
 def card_span(candidate: str) -> int | None:
-    """Return the length of the longest prefix that is a card number, or ``None``."""
-    ends = [i + 1 for i, char in enumerate(candidate) if char.isdigit()]
-    for end in reversed(ends[MIN_CARD_DIGITS - 1 :]):
-        digits = re.sub(r"\D", "", candidate[:end])
-        if len(set(digits)) > 1 and luhn_valid(digits):
-            return end
+    """Return the length of the longest prefix of whole groups that is a card number."""
+    text = candidate
+    while text:
+        digits = re.sub(r"\D", "", text)
+        if len(digits) >= MIN_CARD_DIGITS and len(set(digits)) > 1 and luhn_valid(digits):
+            return len(text)
+        cut = max(text.rfind(" "), text.rfind("-"))
+        if cut < 0:
+            return None
+        text = text[:cut]
     return None
 
 

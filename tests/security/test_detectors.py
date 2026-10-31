@@ -139,3 +139,12 @@ def test_long_alphanumeric_text_is_scanned_in_linear_time():
     started = time.perf_counter()
     Detector(SecurityConfig()).find(text)
     assert time.perf_counter() - started < 2
+
+
+def test_dashed_card_followed_by_a_group_is_found():
+    assert found(f"tarjeta {samples.CARD_DASHED_WITH_TRAILING}") == [("pii", "card")]
+
+
+@pytest.mark.parametrize("run", [samples.CARD_DIGITS_RUN, samples.LONG_DIGITS_RUN])
+def test_digit_runs_are_never_split_to_look_for_cards(run):
+    assert found(f"pedido {run}") == []
