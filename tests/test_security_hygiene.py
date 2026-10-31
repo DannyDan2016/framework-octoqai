@@ -126,7 +126,7 @@ def test_no_secret_files_tracked():
         ("llm api key", "sk-ant-" + "x" * 30),
         ("google api key", "AIza" + "B" * 35),
         ("jwt", "eyJ" + "h" * 12 + ".eyJ" + "p" * 12 + ".sig"),
-        ("url with credentials", "postgres://admin:" + "hunter2@db.internal/x"),
+        ("url with credentials", "postgres://admin:hunter2" + "@db.internal/x"),
     ],
 )
 def test_credential_detectors_catch_samples(label, sample):
