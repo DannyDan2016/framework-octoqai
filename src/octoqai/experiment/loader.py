@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import difflib
 import os
 import re
 from pathlib import Path
+from typing import Any, get_args
 
 import yaml
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+from pydantic_core import ErrorDetails
 
 from octoqai.errors import ConfigError
 from octoqai.experiment.model import Experiment
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_QUOTED = re.compile(r"'([^']+)'")
 
 
 def _expand_env(text: str) -> str:
@@ -59,11 +63,42 @@ def load_experiment(path: Path) -> Experiment:
 
 
 def _format_validation_error(exc: ValidationError) -> str:
-    lines = []
-    for error in exc.errors():
-        location = ".".join(str(part) for part in error["loc"]) or "<root>"
-        detail = error["msg"]
-        if error["type"] == "literal_error":
-            detail = f"{detail} (got {error['input']!r})"
-        lines.append(f"{location}: {detail}")
-    return "invalid experiment: " + "; ".join(lines)
+    return "invalid experiment: " + "; ".join(_describe(error) for error in exc.errors())
+
+
+def _describe(error: ErrorDetails) -> str:
+    location = ".".join(str(part) for part in error["loc"]) or "<root>"
+    detail = error["msg"]
+    if error["type"] == "literal_error":
+        detail = f"{detail} (got {error['input']!r})"
+        expected = str(error.get("ctx", {}).get("expected", ""))
+        detail += _suggestion(error["input"], _QUOTED.findall(expected))
+    elif error["type"] == "extra_forbidden":
+        detail += _suggestion(error["loc"][-1], _allowed_keys(error["loc"][:-1]))
+    return f"{location}: {detail}"
+
+
+def _suggestion(word: Any, candidates: list[str]) -> str:
+    matches = difflib.get_close_matches(str(word), candidates, n=1, cutoff=0.6)
+    return f" (did you mean '{matches[0]}'?)" if matches else ""
+
+
+def _allowed_keys(loc: tuple[int | str, ...]) -> list[str]:
+    model: type[BaseModel] | None = Experiment
+    for part in loc:
+        if model is None:
+            return []
+        if isinstance(part, str):
+            field = model.model_fields.get(part)
+            model = _model_in(field.annotation) if field else None
+    return list(model.model_fields) if model else []
+
+
+def _model_in(annotation: Any) -> type[BaseModel] | None:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    for arg in get_args(annotation):
+        found = _model_in(arg)
+        if found is not None:
+            return found
+    return None

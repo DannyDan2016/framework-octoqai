@@ -36,4 +36,6 @@ def test_invalid_experiment_is_config_error(row, experiment, tmp_path):
     if "expect" in row:
         experiment.case("c1", turn("Hola", *row["expect"]))
     path = experiment.merge(row.get("overrides", {})).write(tmp_path)
-    assert_config_error(lambda: load_experiment(path), *row["fragments"])
+    assert_config_error(
+        lambda: load_experiment(path), *row["fragments"], absent=row.get("absent", ())
+    )

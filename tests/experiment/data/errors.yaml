@@ -35,3 +35,21 @@
 - id: hard-must-be-boolean
   expect: [{contains: {pattern: x, hard: maybe}}]
   fragments: [hard]
+
+- id: typo-in-agent-key
+  overrides:
+    agent: {timeout_sec: 5}
+  fragments: ["agent.timeout_sec", "did you mean 'timeout_s'"]
+
+- id: typo-in-top-level-key
+  overrides: {trails: 3}
+  fragments: ["did you mean 'trials'"]
+
+- id: typo-in-expectation-kind
+  expect: [{contians: x}]
+  fragments: ["did you mean 'contains'"]
+
+- id: unknown-key-without-suggestion
+  overrides: {zzz: 1}
+  fragments: [zzz]
+  absent: [did you mean]
