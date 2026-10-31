@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import math
 import time
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -13,24 +12,13 @@ from jsonpath_ng.exceptions import JSONPathError
 from jsonpath_ng.jsonpath import JSONPath
 from jsonpath_ng.parser import parse as parse_jsonpath
 
-from octoqai.config import AgentConfig, ConfigError
-from octoqai.template import render
+from octoqai.agents.port import AgentReply
+from octoqai.errors import ConfigError
+from octoqai.experiment import AgentConfig, render
 
 HTTP_ERROR_MIN = 400
 
 _MISSING = object()
-
-
-@dataclass
-class AgentReply:
-    """What the agent answered to one turn."""
-
-    answer: str | None
-    tool_calls: list[str] | None
-    tokens: int | None
-    latency_ms: float
-    error: str | None
-    raw: Any = None
 
 
 class _ReplyError(Exception):

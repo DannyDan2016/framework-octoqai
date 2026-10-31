@@ -1,8 +1,8 @@
 import pytest
 
-from octoqai.adapter import AgentReply
-from octoqai.config import Expectation
+from octoqai.agents import AgentReply
 from octoqai.expectations import evaluate
+from octoqai.experiment import Expectation
 
 
 def E(kind, value, hard=False):

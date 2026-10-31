@@ -23,6 +23,7 @@ dev = [
     "ruff>=0.17.3,<0.18",
     "mypy>=2.4,<3",
     "types-PyYAML>=6.0,<7",
+    "import-linter>=2.15,<3",
 ]
 
 [project.scripts]
@@ -55,3 +56,55 @@ convention = "google"
 strict = true
 plugins = ["pydantic.mypy"]
 files = ["src"]
+
+[tool.importlinter]
+root_package = "octoqai"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers from the CLI down to shared errors"
+type = "layers"
+layers = [
+    "octoqai.cli",
+    "octoqai.reports",
+    "octoqai.verdict",
+    "octoqai.running",
+    "octoqai.expectations",
+    "octoqai.agents",
+    "octoqai.stats | octoqai.experiment",
+    "octoqai.errors",
+]
+
+[[tool.importlinter.contracts]]
+name = "httpx only inside agents and cli"
+type = "forbidden"
+source_modules = [
+    "octoqai.errors",
+    "octoqai.experiment",
+    "octoqai.stats",
+    "octoqai.expectations",
+    "octoqai.running",
+    "octoqai.verdict",
+    "octoqai.reports",
+]
+forbidden_modules = ["httpx"]
+
+[[tool.importlinter.contracts]]
+name = "The runner only knows the agent port"
+type = "forbidden"
+source_modules = ["octoqai.running"]
+forbidden_modules = ["octoqai.agents.http_json"]
+
+[[tool.importlinter.contracts]]
+name = "Statistics are pure"
+type = "forbidden"
+source_modules = ["octoqai.stats"]
+forbidden_modules = [
+    "octoqai.experiment",
+    "octoqai.agents",
+    "octoqai.expectations",
+    "octoqai.running",
+    "octoqai.verdict",
+    "octoqai.reports",
+    "octoqai.cli",
+]

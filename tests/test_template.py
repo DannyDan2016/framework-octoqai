@@ -1,7 +1,7 @@
 import pytest
 
-from octoqai.config import ConfigError
-from octoqai.template import render
+from octoqai.errors import ConfigError
+from octoqai.experiment import render
 
 CTX = {
     "message": "Hola ñandú",

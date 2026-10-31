@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from octoqai import __version__
-from octoqai.runner import RunResult, TrialResult
+from octoqai.running import RunResult, TrialResult
 from octoqai.verdict import Verdict
 
 SCHEMA_VERSION = "1"

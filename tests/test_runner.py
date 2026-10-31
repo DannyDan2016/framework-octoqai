@@ -3,9 +3,9 @@ import json
 import httpx
 import pytest
 
-from octoqai.adapter import HttpAgentAdapter
-from octoqai.config import Experiment
-from octoqai.runner import run_experiment
+from octoqai.agents import HttpAgentAdapter
+from octoqai.experiment import Experiment
+from octoqai.running import run_experiment
 
 
 def experiment(variants=None, cases=None, trials=1):

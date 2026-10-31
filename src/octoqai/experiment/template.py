@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from octoqai.config import ConfigError
+from octoqai.errors import ConfigError
 
 _PLACEHOLDER = re.compile(r"\{\{\s*([\w.]+)\s*\}\}")
 _MISSING = object()

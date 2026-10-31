@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from octoqai.adapter import AgentReply, HttpAgentAdapter
-from octoqai.config import Case, Experiment, Variant
+from octoqai.agents.port import AgentPort, AgentReply
 from octoqai.expectations import CheckResult, evaluate
+from octoqai.experiment import Case, Experiment, Variant
 
 Outcome = Literal["pass", "fail", "not_evaluable"]
 
@@ -86,12 +86,12 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _run_trial(adapter: HttpAgentAdapter, variant: Variant, case: Case, index: int) -> TrialResult:
+def _run_trial(agent: AgentPort, variant: Variant, case: Case, index: int) -> TrialResult:
     conversation_id = str(uuid.uuid4())
     history: list[dict[str, str]] = []
     turns: list[TurnResult] = []
     for turn_index, turn in enumerate(case.turns):
-        reply = adapter.send(
+        reply = agent.send(
             {
                 "message": turn.user,
                 "conversation_id": conversation_id,
@@ -108,19 +108,19 @@ def _run_trial(adapter: HttpAgentAdapter, variant: Variant, case: Case, index: i
     return TrialResult(variant.name, case.id, index, turns)
 
 
-def run_experiment(exp: Experiment, adapter: HttpAgentAdapter) -> RunResult:
+def run_experiment(exp: Experiment, agent: AgentPort) -> RunResult:
     """Run every variant, case and trial in series.
 
     Args:
         exp: The experiment to run.
-        adapter: Adapter connected to the agent under test.
+        agent: Adapter connected to the agent under test.
 
     Returns:
         The collected trial results.
     """
     started_at = _now()
     trials = [
-        _run_trial(adapter, variant, case, index)
+        _run_trial(agent, variant, case, index)
         for variant in exp.variants
         for case in exp.cases
         for index in range(exp.trials)

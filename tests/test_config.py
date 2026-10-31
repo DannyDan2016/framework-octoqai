@@ -1,6 +1,7 @@
 import pytest
 
-from octoqai.config import ConfigError, load_experiment
+from octoqai.errors import ConfigError
+from octoqai.experiment import load_experiment
 
 
 def test_loads_minimal_experiment(write_yaml):

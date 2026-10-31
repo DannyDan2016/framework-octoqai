@@ -1,7 +1,7 @@
-from octoqai.adapter import AgentReply
-from octoqai.config import Experiment
+from octoqai.agents import AgentReply
 from octoqai.expectations import CheckResult
-from octoqai.runner import RunResult, TrialResult, TurnResult
+from octoqai.experiment import Experiment
+from octoqai.running import RunResult, TrialResult, TurnResult
 from octoqai.verdict import EXIT_CODES, decide
 
 

@@ -9,10 +9,11 @@ from pathlib import Path
 import httpx
 
 from octoqai import __version__
-from octoqai.adapter import HttpAgentAdapter
-from octoqai.config import ConfigError, load_experiment
-from octoqai.report_json import write_json
-from octoqai.runner import run_experiment
+from octoqai.agents import HttpAgentAdapter
+from octoqai.errors import ConfigError
+from octoqai.experiment import load_experiment
+from octoqai.reports import write_json
+from octoqai.running import run_experiment
 from octoqai.verdict import EXIT_CODES, Verdict, decide
 
 EXIT_ERROR = 3

@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Literal
 
-from octoqai.runner import RunResult, TrialResult
+from octoqai.running import RunResult, TrialResult
 from octoqai.stats import paired_bootstrap_diff, pass_at_k, pass_hat_k, wilson_interval
 
 Status = Literal["go", "no-go", "insufficient"]

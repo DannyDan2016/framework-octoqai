@@ -1,3 +1,4 @@
+import importlib
 import json
 
 import httpx
@@ -95,7 +96,7 @@ def test_cli_unexpected_error_exit_3_without_traceback(tmp_path, out, capsys, mo
     def boom(*args, **kwargs):
         raise RuntimeError("kaboom")
 
-    monkeypatch.setattr("octoqai.cli.run_experiment", boom)
+    monkeypatch.setattr(importlib.import_module("octoqai.cli.main"), "run_experiment", boom)
     code = main(["run", str(_exp_file(tmp_path)), "--out", str(out)], transport=_answer("x"))
     err = capsys.readouterr().err
     assert code == 3 and "kaboom" in err and "Traceback" not in err

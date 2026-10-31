@@ -7,8 +7,8 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from octoqai.adapter import AgentReply
-from octoqai.config import Expectation
+from octoqai.agents.port import AgentReply
+from octoqai.experiment import Expectation
 
 
 @dataclass

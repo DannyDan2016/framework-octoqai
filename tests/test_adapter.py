@@ -3,8 +3,8 @@ import json
 import httpx
 import pytest
 
-from octoqai.adapter import HttpAgentAdapter
-from octoqai.config import AgentConfig
+from octoqai.agents import HttpAgentAdapter
+from octoqai.experiment import AgentConfig
 
 CTX = {
     "message": "Concilia octubre",
@@ -109,7 +109,7 @@ def test_structured_answer_is_serialized(agent_cfg):
 
 
 def test_invalid_jsonpath_is_config_error(agent_cfg):
-    from octoqai.config import ConfigError
+    from octoqai.errors import ConfigError
 
     bad = agent_cfg.model_copy(
         update={"response": agent_cfg.response.model_copy(update={"answer": "%%"})}
