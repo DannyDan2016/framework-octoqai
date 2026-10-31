@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Self
 
 import httpx
 
-from octoqai.agents import HttpAgentAdapter
+from octoqai.agents import HttpAgentAdapter, SseAgentAdapter
 from octoqai.experiment import AgentConfig
 
 RESPONSE_MAP = {
@@ -19,6 +19,17 @@ RESPONSE_MAP = {
 
 SSE_RESPONSE_MAP = {"tool_calls": "$.tools[*]", "tokens": "$.usage.total"}
 
+TURN_CONTEXT = {
+    "message": "Concilia octubre",
+    "conversation_id": "c1",
+    "turn_index": 0,
+    "history": [],
+    "variant": {"temperature": 0},
+}
+
+DONE = "data: [DONE]\n\n"
+
+_Frame = tuple[float, str]
 _Handler = Callable[[httpx.Request], httpx.Response]
 
 
@@ -136,3 +147,75 @@ class FakeJsonAgent(FakeAgent):
     def adapter(self, cfg: AgentConfig) -> HttpAgentAdapter:
         """Return a real HTTP adapter wired to this fake agent, its clock and a fixed jitter."""
         return HttpAgentAdapter(cfg, transport=self.transport(), **self._adapter_kwargs())
+
+
+def sse_event(name: str, payload: Any) -> str:
+    """Encode one SSE event whose data is ``payload`` as JSON."""
+    return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+class FakeSseAgent(FakeAgent):
+    """An SSE agent whose events, timing and failures are chosen by the test."""
+
+    def __init__(self) -> None:
+        """Create an agent that streams ``ok`` until told otherwise."""
+        super().__init__()
+        self.streams("ok")
+
+    def streams(
+        self,
+        *deltas: str,
+        first_s: float = 0.0,
+        gap_s: float = 0.0,
+        final: dict[str, Any] | None = None,
+    ) -> Self:
+        """Stream ``token`` events with a ``delta`` each; ``final`` is merged into the last.
+
+        The fake clock advances ``first_s`` before the first event and ``gap_s`` before each
+        later one, only when the adapter reads it.
+        """
+        payloads: list[dict[str, Any]] = [{"delta": delta} for delta in deltas]
+        if final and payloads:
+            payloads[-1].update(final)
+        frames = [
+            (first_s if index == 0 else gap_s, sse_event("token", payload))
+            for index, payload in enumerate(payloads)
+        ]
+        return self._use([*frames, (0.0, DONE)])
+
+    def emits(self, *lines: str) -> Self:
+        """Send raw SSE lines, joined with newlines."""
+        return self._use([(0.0, "\n".join(lines) + "\n")])
+
+    def leaks(self, value: str) -> Self:
+        """Leak ``value`` in the second delta."""
+        return self.streams("Te paso ", value, " y nada más.")
+
+    def cuts_after(self, *deltas: str) -> Self:
+        """Stream some deltas and then stall until the read times out."""
+        return self._use([(0.0, sse_event("token", {"delta": d})) for d in deltas], cut=True)
+
+    def wrong_content_type(self) -> Self:
+        """Answer with JSON instead of an event stream."""
+        self._handler = lambda request: httpx.Response(200, json={"answer": "x"})
+        return self
+
+    def adapter(self, cfg: AgentConfig) -> SseAgentAdapter:
+        """Return a real SSE adapter wired to this fake agent, its clock and a fixed jitter."""
+        return SseAgentAdapter(cfg, transport=self.transport(), **self._adapter_kwargs())
+
+    def _use(self, frames: list[_Frame], cut: bool = False) -> Self:
+        def handler(request: httpx.Request) -> httpx.Response:
+            def body() -> Iterator[bytes]:
+                for delay, text in frames:
+                    self.clock.advance(delay)
+                    yield text.encode("utf-8")
+                if cut:
+                    raise httpx.ReadTimeout("stalled", request=request)
+
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, content=body()
+            )
+
+        self._handler = handler
+        return self

@@ -105,10 +105,19 @@ source_modules = [
 forbidden_modules = ["httpx"]
 
 [[tool.importlinter.contracts]]
-name = "The runner only knows the agent port"
+name = "The core only knows the agent port"
 type = "forbidden"
-source_modules = ["octoqai.running"]
-forbidden_modules = ["octoqai.agents.http_json"]
+source_modules = [
+    "octoqai.running",
+    "octoqai.expectations",
+    "octoqai.verdict",
+    "octoqai.reports",
+]
+forbidden_modules = [
+    "octoqai.agents.http_json",
+    "octoqai.agents.sse",
+    "octoqai.agents.factory",
+]
 
 [[tool.importlinter.contracts]]
 name = "Statistics are pure"

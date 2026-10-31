@@ -5,11 +5,12 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 import httpx
 
 from octoqai import __version__
-from octoqai.agents import HttpAgentAdapter
+from octoqai.agents import adapter_for
 from octoqai.errors import ConfigError
 from octoqai.experiment import load_experiment
 from octoqai.reports import write_json
@@ -59,12 +60,16 @@ def _print_summary(verdict: Verdict) -> None:
     print(f"VERDICT: {verdict.status} (recommended: {verdict.recommended})")
 
 
-def _run(args: argparse.Namespace, transport: httpx.BaseTransport | None) -> int:
+def _run(
+    args: argparse.Namespace,
+    transport: httpx.BaseTransport | None,
+    adapter_kwargs: dict[str, Any],
+) -> int:
     exp = load_experiment(args.experiment, env=args.env)
     if args.tags:
         exp = exp.select(args.tags)
     out: Path = args.out
-    adapter = HttpAgentAdapter(exp.agent, transport=transport)
+    adapter = adapter_for(exp.agent, transport, **adapter_kwargs)
     try:
         run = run_experiment(exp, adapter)
     finally:
@@ -83,12 +88,19 @@ def _run(args: argparse.Namespace, transport: httpx.BaseTransport | None) -> int
     return EXIT_CODES[verdict.status]
 
 
-def main(argv: list[str], transport: httpx.BaseTransport | None = None) -> int:
+def main(
+    argv: list[str],
+    transport: httpx.BaseTransport | None = None,
+    *,
+    adapter_kwargs: dict[str, Any] | None = None,
+) -> int:
     """Run the CLI and return the process exit code.
 
     Args:
         argv: Command line arguments without the program name.
         transport: Optional httpx transport, used to test without a network.
+        adapter_kwargs: Optional ``clock``, ``sleep`` and ``jitter`` for the adapter, used to
+            test without real waiting.
 
     Returns:
         0 for go, 1 for no-go, 2 for insufficient evidence and 3 for errors.
@@ -102,7 +114,7 @@ def main(argv: list[str], transport: httpx.BaseTransport | None = None) -> int:
         parser.print_usage(sys.stderr)
         return EXIT_ERROR
     try:
-        return _run(args, transport)
+        return _run(args, transport, adapter_kwargs or {})
     except ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
     except Exception as exc:

@@ -2,6 +2,7 @@ import importlib
 
 import pytest
 
+from support.agents import FakeSseAgent
 from support.assertions import assert_exit, assert_not_in_outputs
 from support.builders import turn, write_data_set, write_env_file
 from support.paths import EXAMPLES
@@ -171,3 +172,12 @@ def test_values_from_env_vars_in_data_are_masked_in_report(
     assert "ES-REAL-998877" in fake_agent.requests[0]["message"]
     assert_not_in_outputs("ES-REAL-998877", result.out, result.err, result.report_text())
     assert "[redacted]" in result.report_text()
+
+
+@pytest.mark.smoke
+def test_cli_runs_a_streaming_agent(experiment, tmp_path, run_cli):
+    experiment.streaming().case("c1", turn("Concilia", {"contains": "conciliado"}))
+    path = str(experiment.trials(1).write(tmp_path))
+    result = run_cli("run", path, agent=FakeSseAgent().streams("Extracto ", "conciliado."))
+    assert result.code != 3, result.err
+    assert result.report()["trials"][0]["turns"][0]["answer"] == "Extracto conciliado."

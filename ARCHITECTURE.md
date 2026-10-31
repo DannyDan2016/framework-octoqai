@@ -12,7 +12,7 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `errors.py` | `ConfigError` and other errors shared by every package | nothing |
 | `experiment/` | Pydantic model, YAML loader, `${VAR}` expansion from `.env` files (`envfiles.py`), per-environment data sets (`datasets.py`) and `{{ }}` templates | `errors` |
 | `stats/` | Pure estimators: Wilson interval, paired bootstrap, pass@k | `errors` |
-| `agents/` | `port.py` (`AgentPort`, `AgentReply`) and adapters such as `http_json.py` | `experiment`, `errors` |
+| `agents/` | `port.py` (`AgentPort`, `AgentReply`) `sse_events.py` (SSE parser), adapters such as `http_json.py` and `sse.py`, and `factory.py` (`adapter_for` picks the adapter from the config) | `experiment`, `errors` |
 | `expectations/` | Registry of deterministic checks applied to an agent reply | `agents.port`, `experiment` |
 | `running/` | Serial runner; knows only `AgentPort`, never a concrete adapter | lower layers |
 | `verdict/` | Go/no-go decision, hard gates and A/B recommendation | `running`, `stats` |
@@ -39,7 +39,7 @@ From top to bottom; a package may import only from packages below it:
 Additional contracts in `[tool.importlinter]`:
 
 - `httpx` is imported only inside `octoqai.agents` and `octoqai.cli`.
-- `octoqai.running` never imports `octoqai.agents.http_json`; it imports `octoqai.agents.port`.
+- The core (`running`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse` or `octoqai.agents.factory`; it imports `octoqai.agents.port`.
 - `octoqai.stats` is pure: it imports nothing from Octoqai except `errors`.
 
 ## Ports and adapters
@@ -81,7 +81,10 @@ tests/
   token samples are never written in YAML: they are built by concatenation in Python so the
   hygiene checks do not flag the repository.
 - **Simulated agents:** use `FakeJsonAgent` (`answers`, `replies`, `returns`, `fails`, `times_out`,
-  `refuses`, `requests`, `headers`), never an ad hoc `httpx.MockTransport` inside a test.
+  `refuses`, `refuses_first`, `requests`, `headers`) or `FakeSseAgent` (`streams`, `emits`, `leaks`,
+  `cuts_after`, `wrong_content_type`), never an ad hoc `httpx.MockTransport` inside a test. Time
+  comes from `FakeClock`, so deadlines and backoff never sleep for real; simulated agents fix
+  `jitter` to 0 (change it with `fake.jitter`).
 - **Experiments:** build them with `ExperimentBuilder` and `turn(...)`, or the `experiment` fixture.
 - **CLI:** use the `run_cli` fixture; it returns the exit code, captured output and report.
 - Tests are written first and seen failing before the implementation.
@@ -101,7 +104,7 @@ pytest -m security -q         secrets, hygiene and headers
 
 1. Create `src/octoqai/agents/<name>.py` with a class that satisfies `AgentPort`.
 2. Export it in `agents/__init__.py` and `__all__`.
-3. Wire it in `cli/`.
+3. Register it in `agents/factory.py`, which `cli/` uses through `adapter_for`.
 4. Add `tests/agents/test_<name>.py` (`unit`, `regression`, one `smoke`) and a fake agent in
    `tests/support/agents.py`.
 

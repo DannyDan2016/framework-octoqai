@@ -62,7 +62,11 @@ def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., 
         argv = list(args)
         if argv[:1] == ["run"]:
             argv += ["--out", str(out_dir)]
-        code = main(argv, transport=agent.transport() if agent else None)
+        code = main(
+            argv,
+            transport=agent.transport() if agent else None,
+            adapter_kwargs=agent._adapter_kwargs() if agent else None,
+        )
         captured = capsys.readouterr()
         return CliRun(code, captured.out, captured.err, out_dir)
 
