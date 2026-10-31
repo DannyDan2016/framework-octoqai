@@ -1,0 +1,31 @@
+- id: named-and-multiline
+  lines: ["event: progress", "data: buscando", "", "data: a", "data: b", ""]
+  events: [[progress, buscando], [message, "a\nb"]]
+
+- id: comments-and-unknown-fields
+  lines: [": ping", "id: 7", "retry: 10", "data: x", ""]
+  events: [[message, x]]
+
+- id: crlf-and-missing-space
+  lines: ["data:x\r", "\r"]
+  events: [[message, x]]
+
+- id: only-one-leading-space-removed
+  lines: ["data:  dos", ""]
+  events: [[message, " dos"]]
+
+- id: field-without-colon-is-empty-data
+  lines: ["data", ""]
+  events: [[message, ""]]
+
+- id: name-resets-after-dispatch
+  lines: ["event: progress", "data: a", "", "data: b", ""]
+  events: [[progress, a], [message, b]]
+
+- id: pending-event-flushed-at-end
+  lines: ["data: tail"]
+  events: [[message, tail]]
+
+- id: blank-lines-without-data-emit-nothing
+  lines: ["", "event: x", "", ""]
+  events: []

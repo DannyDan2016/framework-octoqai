@@ -2,5 +2,6 @@
 
 from octoqai.agents.http_json import HttpAgentAdapter
 from octoqai.agents.port import AgentPort, AgentReply
+from octoqai.agents.sse_events import SseEvent, parse_sse
 
-__all__ = ["AgentPort", "AgentReply", "HttpAgentAdapter"]
+__all__ = ["AgentPort", "AgentReply", "HttpAgentAdapter", "SseEvent", "parse_sse"]
