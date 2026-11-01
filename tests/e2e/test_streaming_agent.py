@@ -36,6 +36,9 @@ def test_real_sse_leak_is_no_go_with_masked_report(streaming_example, run_cli):
 @pytest.mark.smoke
 def test_real_sse_agent_measures_time_to_first_fragment(streaming_example, run_cli):
     result = run_cli("run", streaming_example, "--tags", "smoke")
-    assert result.code != 3, result.err
-    turn = result.report()["trials"][0]["turns"][0]
+    assert_exit(result.code, 2)
+    report = result.report()
+    assert report["verdict"]["status"] == "insufficient"
+    assert all(trial["leaks"] == 0 for trial in report["trials"])
+    turn = report["trials"][0]["turns"][0]
     assert turn["error"] is None and turn["ttft_ms"] is not None and turn["fragments"] == 3
