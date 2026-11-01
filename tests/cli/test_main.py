@@ -6,6 +6,7 @@ from support.agents import FakeSseAgent
 from support.assertions import assert_exit, assert_not_in_outputs
 from support.builders import turn, write_data_set, write_env_file
 from support.paths import EXAMPLES
+from support.samples import HOSTILE_JSON
 
 pytestmark = [pytest.mark.integration, pytest.mark.regression]
 
@@ -285,3 +286,18 @@ def test_mismatched_charset_leak_is_found_and_never_written(
     result = run_cli("run", path, agent=agent)
     assert any(v["leaks"] for v in result.report()["variants"])
     assert_not_in_outputs(canary, result.out, result.err, result.report_text())
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("body", HOSTILE_JSON.values(), ids=HOSTILE_JSON.keys())
+def test_hostile_json_with_a_leak_still_writes_the_report_and_is_no_go(
+    experiment, tmp_path, run_cli, fake_agent, body
+):
+    experiment.security(canaries=[{"value": "TEN-B-0042"}])
+    path = str(experiment.case("c1", turn("Hola", {"contains": "."})).write(tmp_path))
+    agent = fake_agent.returns(body.encode("ascii"), content_type="application/json")
+    result = run_cli("run", path, agent=agent)
+    assert_exit(result.code, 1)
+    assert "Traceback" not in result.err
+    assert all(v["leaks"] for v in result.report()["variants"])
+    assert_not_in_outputs("TEN-B-0042", result.out, result.err, result.report_text())

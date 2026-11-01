@@ -36,7 +36,7 @@ class ReplyError(Exception):
 def mapping_guard(payload: Any) -> Iterator[None]:
     try:
         yield
-    except (TypeError, ValueError, OverflowError) as exc:
+    except (TypeError, ValueError, OverflowError, RecursionError) as exc:
         raise ReplyError(f"cannot map agent response: {type(exc).__name__}", payload) from exc
 
 

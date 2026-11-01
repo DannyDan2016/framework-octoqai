@@ -5,9 +5,11 @@ import pytest
 
 from octoqai.agents import HttpAgentAdapter, SseAgentAdapter, adapter_for
 from octoqai.errors import ConfigError
-from octoqai.experiment import Experiment
+from octoqai.experiment import Experiment, SecurityConfig
+from octoqai.security import Detector, scan_reply
 from support.agents import DONE, EVENT_STREAM, TURN_CONTEXT, FakeSseAgent, sse_event
 from support.builders import ExperimentBuilder
+from support.samples import HOSTILE_JSON
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
@@ -274,3 +276,25 @@ def test_pending_line_is_only_joined_on_a_breach_or_at_the_end(sse, monkeypatch)
     sse.script(*[(0.0, "x")] * 50, (0.0, '\ndata: {"delta": "ok"}\n\n'))
     assert send(sse).answer == "ok"
     assert len(joins) <= 1
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("data", HOSTILE_JSON.values(), ids=HOSTILE_JSON.keys())
+def test_hostile_json_event_is_kept_as_a_fragment_and_scanned(sse, data):
+    r = send(sse.emits(f"data: {data}", ""))
+    assert (r.answer, r.fragments) == (None, [data])
+    assert r.error == "no stream event matched stream.delta '$.delta'"
+    detector = Detector(SecurityConfig.model_validate({"canaries": [{"value": "TEN-B-0042"}]}))
+    assert [leak.location for leak in scan_reply(detector, r, [])] == ["fragment 1"]
+
+
+@pytest.mark.security
+def test_mapping_that_recurses_too_deep_is_a_mapping_error(sse, monkeypatch):
+    def too_deep(self, payload):
+        raise RecursionError
+
+    monkeypatch.setattr(
+        importlib.import_module("octoqai.agents._mapping").ResponseFields, "tools", too_deep
+    )
+    r = send(sse.streams("ok"))
+    assert (r.answer, r.error) == (None, "cannot map agent response: RecursionError")

@@ -1,3 +1,5 @@
+import importlib
+
 import pytest
 
 from octoqai.agents import AgentReply, HttpAgentAdapter
@@ -6,7 +8,7 @@ from octoqai.experiment import AgentConfig, RetryPolicy, SecurityConfig, WaitPol
 from octoqai.security import Detector, scan_reply
 from support.agents import RESPONSE_MAP, TURN_CONTEXT
 from support.builders import DEFAULT_URL
-from support.samples import NON_ASCII_CANARY
+from support.samples import HOSTILE_JSON, NON_ASCII_CANARY
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
@@ -266,3 +268,24 @@ def test_non_json_success_body_with_an_escaped_canary_is_scanned_in_every_decode
     r = fake_agent.adapter(agent_cfg).send(TURN_CONTEXT)
     assert r.error == "agent response is not valid JSON"
     assert _canary_locations(r, "TEN-B-0042") == ["body"]
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("body", HOSTILE_JSON.values(), ids=HOSTILE_JSON.keys())
+def test_hostile_json_is_an_invalid_reply_whose_body_is_scanned(agent_cfg, fake_agent, body):
+    fake_agent.returns(body.encode("ascii"), content_type="application/json")
+    r = fake_agent.adapter(agent_cfg).send(TURN_CONTEXT)
+    assert (r.answer, r.error, r.body) == (None, "agent response is not valid JSON", body)
+    assert _canary_locations(r, "TEN-B-0042") == ["body"]
+
+
+@pytest.mark.security
+def test_mapping_that_recurses_too_deep_is_a_mapping_error(agent_cfg, fake_agent, monkeypatch):
+    def too_deep(self, payload):
+        raise RecursionError
+
+    monkeypatch.setattr(
+        importlib.import_module("octoqai.agents._mapping").ResponseFields, "tools", too_deep
+    )
+    r = fake_agent.adapter(agent_cfg).send(TURN_CONTEXT)
+    assert (r.answer, r.error) == (None, "cannot map agent response: RecursionError")

@@ -36,3 +36,7 @@ JWT_RUN = "eyJ" + "a-"
 JWT_SHAPED_PARTS = ("eyJ", "a" * 5, "a" * 10, "-", ".", "_", " ", "é", ".eyJ", "e", "J")
 JWT_PART_WEIGHTS = (3, 1, 3, 2, 2, 1, 1, 1, 3, 1, 1)
 SHORT_DOMAIN = "@" + "x.yz"
+HOSTILE_JSON = {
+    "huge-int": '{"answer": ' + "1" * 5000 + ', "x": "TEN-B-0042"}',
+    "too-deep": "[" * 100_000 + '"TEN-B-0042"' + "]" * 100_000,
+}

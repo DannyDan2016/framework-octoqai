@@ -276,7 +276,7 @@ class SseAgentAdapter:
     def _extract(self, event: SseEvent, state: _Stream) -> None:
         try:
             payload = json.loads(event.data)
-        except ValueError:
+        except (ValueError, RecursionError):
             return
         with mapping_guard(payload):
             tools = self._fields.tools(payload)

@@ -185,7 +185,7 @@ class HttpAgentAdapter:
     def _decode(content: bytes) -> Any:
         try:
             return json.loads(content)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        except (ValueError, RecursionError) as exc:
             raise ReplyError("agent response is not valid JSON") from exc
 
     def _map_payload(self, payload: Any, latency_ms: float) -> AgentReply:

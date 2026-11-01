@@ -128,3 +128,9 @@ def test_each_decode_of_the_body_is_scanned_alone_and_counted_once(body):
     alt = '{"e": "\\u0054EN-B-0042"}'
     r = AgentReply(None, None, None, 1.0, "agent returned HTTP 500", body=body, alt_body=alt)
     assert [leak.location for leak in scan_reply(DETECTOR, r, [])] == ["body"]
+
+
+@pytest.mark.parametrize("text", samples.HOSTILE_JSON.values(), ids=samples.HOSTILE_JSON.keys())
+def test_hostile_json_is_scanned_as_text(text):
+    leaks = scan_reply(DETECTOR, reply(answer=text, fragments=[text], body=text), [])
+    assert [(leak.label, leak.location) for leak in leaks] == [("cuenta-b", "fragment 1")]

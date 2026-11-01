@@ -111,3 +111,8 @@ def test_json_too_deep_to_decode_is_masked_as_text():
 
 def test_many_findings_are_masked_in_linear_time():
     assert_linear_growth(redactor().redact, lambda n: "TEN-B-0042 " * n, 5000)
+
+
+@pytest.mark.parametrize("text", samples.HOSTILE_JSON.values(), ids=samples.HOSTILE_JSON.keys())
+def test_hostile_json_is_masked_as_text(text):
+    assert redactor().redact(text) == text.replace("TEN-B-0042", "[canary:cuenta-b]")
