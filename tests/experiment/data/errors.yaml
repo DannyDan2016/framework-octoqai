@@ -108,6 +108,11 @@
   fragments: ["canary label #1 contains a canary value"]
   absent: [zq9-secret]
 
+- id: short-canary-whose-label-is-its-value
+  overrides: {security: {canaries: [{value: zq9, label: zq9}]}}
+  fragments: ["canary label #1 contains a canary value"]
+  absent: [zq9]
+
 - id: canary-label-contains-other-canary-value
   overrides:
     security:

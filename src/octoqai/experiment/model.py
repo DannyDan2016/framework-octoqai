@@ -239,17 +239,17 @@ class SecurityConfig(_Model):
 
     @model_validator(mode="after")
     def _check_security(self) -> SecurityConfig:
+        values = [canary.value.casefold() for canary in self.canaries if canary.value]
         for number, canary in enumerate(self.canaries, 1):
             canary.label = canary.label or f"canary-{number}"
+            label = canary.label.casefold()
+            if any(value in label for value in values):
+                raise ValueError(f"canary label #{number} contains a canary value")
+        for canary in self.canaries:
             if len(canary.value) < MIN_CANARY_LENGTH:
                 raise ValueError(
                     f"canary {canary.label} is shorter than {MIN_CANARY_LENGTH} characters"
                 )
-        values = [canary.value.casefold() for canary in self.canaries]
-        for number, canary in enumerate(self.canaries, 1):
-            label = canary.label.casefold()
-            if any(value in label for value in values):
-                raise ValueError(f"canary label #{number} contains a canary value")
         for number, pattern in enumerate(self.allow, 1):
             try:
                 re.compile(pattern)
