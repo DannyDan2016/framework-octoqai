@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 from octoqai.experiment import SecurityConfig
@@ -17,6 +17,17 @@ def _placeholder(finding: Finding) -> str:
     if finding.kind == "env":
         return REDACTED
     return f"[{finding.kind}:{finding.label}]"
+
+
+def _keys(tree: Any) -> Iterator[str]:
+    stack = [tree]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            yield from (key for key in item if isinstance(key, str))
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
 
 
 def _merged(candidates: list[Finding]) -> list[list[Finding]]:
@@ -64,9 +75,10 @@ class Redactor:
         Overlapping findings are merged into one span whose placeholder comes from the
         highest-priority kind: canary, secret, environment value, personal data. JSON text
         with a finding in any decoded string is decoded, redacted and written again without
-        escapes, so a unicode escape or an escaped slash cannot hide a value. When the
-        result still hides a value in some decoded string, such as a key that is itself
-        escaped JSON, the whole text becomes ``REDACTED``.
+        escapes, so a unicode escape or an escaped slash cannot hide a value. Keys are not
+        rewritten, so when any key of that JSON hides a value, even as nested escaped JSON,
+        the whole text becomes ``REDACTED``; the decision is taken on the decoded tree and
+        never depends on the masked text still being valid JSON.
 
         Args:
             text: The text to clean.
@@ -77,13 +89,13 @@ class Redactor:
         decoded = decode_json(text)
         if decoded is None or not self._hides(decoded):
             return self._mask(text)
+        if any(self._hides(key) for key in _keys(decoded)):
+            return REDACTED
         try:
             cleaned = self.redact_tree(decoded)
         except RecursionError:
             return REDACTED
-        masked = self._mask(json.dumps(cleaned, ensure_ascii=False))
-        rest = decode_json(masked)
-        return REDACTED if rest is not None and self._hides(rest) else masked
+        return self._mask(json.dumps(cleaned, ensure_ascii=False))
 
     def _hides(self, decoded: Any) -> bool:
         return any(self._detector.candidates(leaf) for leaf in string_leaves(decoded))

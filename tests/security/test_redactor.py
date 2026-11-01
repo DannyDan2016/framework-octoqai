@@ -2,11 +2,10 @@ import json
 
 import pytest
 
-from octoqai.agents import AgentReply
 from octoqai.experiment import SecurityConfig
-from octoqai.security import Detector, Redactor, scan_reply
+from octoqai.security import Detector, Redactor
 from support import samples
-from support.assertions import assert_linear_growth
+from support.assertions import assert_canary_hidden, assert_linear_growth
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.security]
 
@@ -119,11 +118,12 @@ def test_hostile_json_is_masked_as_text(text):
     assert redactor().redact(text) == text.replace("TEN-B-0042", "[canary:cuenta-b]")
 
 
-def _canary_leaks(text):
-    detector = Detector(SecurityConfig.model_validate({"canaries": [{"value": "TEN-B-0042"}]}))
-    return scan_reply(detector, AgentReply(text, None, None, 1.0, None), [])
-
-
-def test_value_hidden_in_an_escaped_json_key_is_never_left():
-    assert _canary_leaks(samples.ESCAPED_KEY_ANSWER)
-    assert _canary_leaks(redactor().redact(samples.ESCAPED_KEY_ANSWER)) == []
+@pytest.mark.parametrize(
+    "answer", samples.ESCAPED_KEY_ANSWERS.values(), ids=samples.ESCAPED_KEY_ANSWERS.keys()
+)
+def test_value_hidden_in_an_escaped_json_key_is_never_left(answer):
+    with pytest.raises(AssertionError):
+        assert_canary_hidden("TEN-B-0042", answer)
+    cleaned = redactor().redact(answer)
+    report = json.dumps({"answer": cleaned}, ensure_ascii=False)
+    assert_canary_hidden("TEN-B-0042", cleaned, report, json.loads(report)["answer"])

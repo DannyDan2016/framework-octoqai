@@ -1,16 +1,12 @@
 import importlib
-import json
 
 import pytest
 
-from octoqai.agents import AgentReply
-from octoqai.experiment import SecurityConfig
-from octoqai.security import Detector, scan_reply
-from support.agents import FakeSseAgent
-from support.assertions import assert_exit, assert_not_in_outputs
+from support.agents import FakeJsonAgent, FakeSseAgent
+from support.assertions import assert_canary_hidden, assert_exit, assert_not_in_outputs
 from support.builders import turn, write_data_set, write_env_file
 from support.paths import EXAMPLES
-from support.samples import ESCAPED_KEY_ANSWER, HOSTILE_JSON
+from support.samples import ESCAPED_KEY_ANSWERS, HOSTILE_JSON
 
 pytestmark = [pytest.mark.integration, pytest.mark.regression]
 
@@ -308,15 +304,23 @@ def test_hostile_json_with_a_leak_still_writes_the_report_and_is_no_go(
 
 
 @pytest.mark.security
+@pytest.mark.parametrize(
+    ("streaming", "case"),
+    [(False, "alone"), (False, "credential-value"), (True, "credential-key")],
+    ids=["json-alone", "json-credential-value", "sse-credential-key"],
+)
 def test_value_hidden_in_an_escaped_json_key_never_reaches_the_report(
-    experiment, tmp_path, run_cli, fake_agent
+    experiment, tmp_path, run_cli, streaming, case
 ):
-    canary = "TEN-B-0042"
+    canary, answer = "TEN-B-0042", ESCAPED_KEY_ANSWERS[case]
+    fake_agent = FakeJsonAgent()
     experiment.security(canaries=[{"value": canary}])
+    if streaming:
+        experiment.streaming()
     path = str(experiment.case("c1", turn("Hola", {"contains": "."})).write(tmp_path))
-    result = run_cli("run", path, agent=fake_agent.answers(ESCAPED_KEY_ANSWER))
+    agent = FakeSseAgent().streams(answer) if streaming else fake_agent.answers(answer)
+    result = run_cli("run", path, agent=agent)
     assert_exit(result.code, 1)
     text = result.report_text()
-    detector = Detector(SecurityConfig.model_validate({"canaries": [{"value": canary}]}))
-    assert scan_reply(detector, AgentReply(text, None, None, 1.0, None), []) == []
-    assert_not_in_outputs(canary, result.out, result.err, text, json.dumps(json.loads(text)))
+    answers = [t["turns"][0]["answer"] for t in result.report()["trials"]]
+    assert_canary_hidden(canary, result.out, result.err, text, *answers)

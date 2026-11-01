@@ -8,7 +8,10 @@ from collections.abc import Callable, Sequence
 
 import pytest
 
+from octoqai.agents import AgentReply
 from octoqai.errors import ConfigError
+from octoqai.experiment import SecurityConfig
+from octoqai.security import Detector, scan_reply
 
 
 def assert_exit(code: int, expected: int) -> None:
@@ -64,3 +67,33 @@ def assert_linear_growth(
 
     ratio = best(large) / max(best(small), 1e-6)
     assert ratio < bound, f"cost grew {ratio:.1f}x for a {factor}x larger input"
+
+
+_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\(.)", re.DOTALL)
+
+
+def _unescape_once(match: re.Match[str]) -> str:
+    code, char = match.groups()
+    return chr(int(code, 16)) if code else char
+
+
+def _unescaped(text: str, rounds: int = 3) -> list[str]:
+    forms = [text]
+    for _ in range(rounds):
+        forms.append(_ESCAPE.sub(_unescape_once, forms[-1]))
+    return forms
+
+
+def assert_canary_hidden(canary: str, *texts: str) -> None:
+    """Check that ``canary`` is in no text: raw, behind JSON escapes, or behind backslash escapes.
+
+    Texts are scanned as JSON at any depth, and also unescaped a few times by hand, so a value
+    inside text that is no longer valid JSON is still caught.
+    """
+    security = SecurityConfig.model_validate({"detectors": [], "canaries": [{"value": canary}]})
+    detector = Detector(security)
+    for text in texts:
+        for form in _unescaped(text):
+            assert canary.casefold() not in form.casefold(), f"{canary!r} leaked into an output"
+        reply = AgentReply(text, None, None, 1.0, None)
+        assert scan_reply(detector, reply, []) == [], f"{canary!r} hidden in an output"

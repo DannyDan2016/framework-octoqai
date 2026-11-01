@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 SECRET_SAMPLES: dict[str, str] = {
     "private key": "-----BEGIN RSA " + "PRIVATE KEY-----",
     "aws access key": "AKIA" + "Q" * 16,
@@ -40,4 +42,10 @@ HOSTILE_JSON = {
     "huge-int": '{"answer": ' + "1" * 5000 + ', "x": "TEN-B-0042"}',
     "too-deep": "[" * 100_000 + '"TEN-B-0042"' + "]" * 100_000,
 }
-ESCAPED_KEY_ANSWER = '{"' + '\\"TEN' + "\\\\u002dB-0042" + '\\"": 1}'
+ESCAPED_KEY = '"TEN' + "\\" + 'u002dB-0042"'
+WEAK_CREDENTIAL = "pw" + "d=abcd"
+ESCAPED_KEY_ANSWERS = {
+    "alone": json.dumps({ESCAPED_KEY: 1}),
+    "credential-key": json.dumps({ESCAPED_KEY: 1, WEAK_CREDENTIAL: 2}),
+    "credential-value": json.dumps({ESCAPED_KEY: 1, "x": WEAK_CREDENTIAL}),
+}
