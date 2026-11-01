@@ -20,7 +20,9 @@ def _subpackages() -> list[str]:
 def test_import_contracts_hold():
     exe = shutil.which("lint-imports", path=str(Path(sys.executable).parent))
     assert exe is not None, "lint-imports is not installed"
-    result = subprocess.run([exe], cwd=ROOT, capture_output=True, text=True)
+    result = subprocess.run(
+        [exe], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
