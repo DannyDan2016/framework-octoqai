@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import accumulate
 from types import MappingProxyType
 from typing import Literal
 
@@ -103,7 +105,7 @@ class Detector:
         if "secrets" not in self._security.detectors:
             return
         for label, pattern in _patterns.SECRET_PATTERNS.items():
-            group = "url" if "url" in pattern.groupindex else 0
+            group = "value" if "value" in pattern.groupindex else 0
             for match in pattern.finditer(text):
                 yield _finding("secret", label, match.group(group), match.start(group))
 
@@ -144,10 +146,38 @@ def _ibans(text: str) -> Iterator[Finding]:
             yield _finding("pii", "iban", match.group()[:span], match.start())
 
 
+_Ranked = tuple[int, Finding]
+
+
+class _Spans:
+    def __init__(self, items: Sequence[_Ranked] = ()) -> None:
+        self.items = list(items)
+        self._starts = [finding.start for _, finding in self.items]
+        self._reach = list(accumulate((finding.end for _, finding in self.items), max))
+
+    def blocks(self, finding: Finding) -> bool:
+        before = bisect_left(self._starts, finding.end)
+        return before > 0 and self._reach[before - 1] > finding.start
+
+    def add(self, item: _Ranked) -> None:
+        end = item[1].end
+        self.items.append(item)
+        self._starts.append(item[1].start)
+        self._reach.append(max(self._reach[-1], end) if self._reach else end)
+
+
+def _accept_free(group: list[_Ranked], accepted: _Spans) -> _Spans:
+    fresh = _Spans()
+    for item in group:
+        if not accepted.blocks(item[1]) and not fresh.blocks(item[1]):
+            fresh.add(item)
+    return _Spans(sorted([*accepted.items, *fresh.items], key=lambda item: item[1].start))
+
+
 def _without_overlaps(candidates: list[Finding]) -> list[Finding]:
     ranked = sorted(candidates, key=lambda c: (PRIORITY[c.kind], c.start, c.start - c.end))
-    accepted: list[Finding] = []
-    for candidate in ranked:
-        if all(candidate.end <= kept.start or candidate.start >= kept.end for kept in accepted):
-            accepted.append(candidate)
-    return sorted(accepted, key=lambda c: c.start)
+    accepted = _Spans()
+    for kind in sorted(PRIORITY, key=PRIORITY.__getitem__):
+        group = [(rank, c) for rank, c in enumerate(ranked) if c.kind == kind]
+        accepted = _accept_free(group, accepted)
+    return [finding for _, finding in sorted(accepted.items, key=lambda i: (i[1].start, i[0]))]

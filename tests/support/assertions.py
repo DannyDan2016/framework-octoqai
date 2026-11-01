@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable, Sequence
 
 import pytest
@@ -37,3 +38,29 @@ def assert_not_in_outputs(value: str, *texts: str) -> None:
     """Check that a sensitive value does not leak into any output."""
     for text in texts:
         assert value not in text, f"{value!r} leaked into an output"
+
+
+def assert_linear_growth(
+    run: Callable[[str], object],
+    make: Callable[[int], str],
+    size: int,
+    factor: int = 4,
+    bound: float = 8.0,
+) -> None:
+    """Check that ``run`` on an input ``factor`` times larger costs less than ``bound`` times more.
+
+    Each size keeps its best of three timings, so a pause of the machine cannot fail the check,
+    while a quadratic cost grows ``factor ** 2`` times and does.
+    """
+    small, large = make(size), make(size * factor)
+
+    def best(text: str) -> float:
+        timings = []
+        for _ in range(3):
+            started = time.perf_counter()
+            run(text)
+            timings.append(time.perf_counter() - started)
+        return min(timings)
+
+    ratio = best(large) / max(best(small), 1e-6)
+    assert ratio < bound, f"cost grew {ratio:.1f}x for a {factor}x larger input"

@@ -32,3 +32,7 @@ URL_AFTER_DASH = "-" + DATABASE_URL
 NON_ASCII_CANARY = "contrase" + "ña-ultra"
 SLASH_CANARY = "ZETA</" + "x>KEY"
 ESCAPED_DATABASE_URL = DATABASE_URL.replace("/", "\\/")
+JWT_RUN = "eyJ" + "a-"
+JWT_SHAPED_PARTS = ("eyJ", "a" * 5, "a" * 10, "-", ".", "_", " ", "é", ".eyJ", "e", "J")
+JWT_PART_WEIGHTS = (3, 1, 3, 2, 2, 1, 1, 1, 3, 1, 1)
+SHORT_DOMAIN = "@" + "x.yz"

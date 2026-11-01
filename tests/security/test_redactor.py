@@ -5,6 +5,7 @@ import pytest
 from octoqai.experiment import SecurityConfig
 from octoqai.security import Detector, Redactor
 from support import samples
+from support.assertions import assert_linear_growth
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.security]
 
@@ -106,3 +107,7 @@ def test_json_too_deep_to_redact_is_redacted_whole(monkeypatch):
 def test_json_too_deep_to_decode_is_masked_as_text():
     text = "[" * 100_000 + samples.SLASH_CANARY + "]" * 100_000
     assert samples.SLASH_CANARY not in escaping_redactor().redact(text)
+
+
+def test_many_findings_are_masked_in_linear_time():
+    assert_linear_growth(redactor().redact, lambda n: "TEN-B-0042 " * n, 5000)

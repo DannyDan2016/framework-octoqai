@@ -1,3 +1,4 @@
+import random
 import re
 import time
 
@@ -6,6 +7,7 @@ import pytest
 from octoqai.experiment import SecurityConfig
 from octoqai.security import Detector, Finding, mask
 from support import samples
+from support.assertions import assert_linear_growth
 from support.paths import cases
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.security]
@@ -158,3 +160,56 @@ def test_credential_url_is_found_after_a_non_letter_prefix(text):
         samples.DATABASE_URL[: samples.DATABASE_URL.index("@") + 1]
     ]
     assert text[secrets[0].start : secrets[0].end] == secrets[0].value
+
+
+PRIORITY = {"canary": 0, "secret": 1, "env": 2, "pii": 3}
+
+
+def _old_without_overlaps(candidates):
+    ranked = sorted(candidates, key=lambda c: (PRIORITY[c.kind], c.start, c.start - c.end))
+    accepted = []
+    for candidate in ranked:
+        if all(candidate.end <= kept.start or candidate.start >= kept.end for kept in accepted):
+            accepted.append(candidate)
+    return sorted(accepted, key=lambda c: c.start)
+
+
+def test_overlap_pruning_matches_the_pairwise_definition():
+    rng = random.Random(7)
+    canaries = [{"value": v} for v in ("abab", "baab", "aabb", "b" + samples.SHORT_DOMAIN)]
+    security = SecurityConfig.model_validate({"canaries": canaries})
+    detector = Detector(security, env_values=["abab", "bbaa", "a" + samples.SHORT_DOMAIN])
+    pieces = ["a", "b", "ab", samples.SHORT_DOMAIN, " "]
+    for _ in range(500):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 30)))
+        candidates = detector.candidates(text)
+        assert detector.find(text) == _old_without_overlaps(candidates), text
+
+
+OLD_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.")
+
+
+def test_jwt_pattern_finds_what_the_unbounded_pattern_found():
+    rng = random.Random(11)
+    detector = Detector(SecurityConfig())
+    hits = 0
+    for _ in range(3000):
+        k = rng.randint(0, 18)
+        text = "".join(rng.choices(samples.JWT_SHAPED_PARTS, samples.JWT_PART_WEIGHTS, k=k))
+        spans = [(f.start, f.end) for f in detector.candidates(text) if f.label == "jwt"]
+        assert spans == [m.span() for m in OLD_JWT.finditer(text)], text
+        hits += bool(spans)
+    assert hits > 30
+
+
+@pytest.mark.parametrize(
+    ("detector", "make", "size"),
+    [
+        ("pii", lambda n: (samples.EMAIL + " ") * n, 2000),
+        ("secrets", lambda n: samples.JWT_RUN * n, 5000),
+    ],
+    ids=["emails", "jwt-run"],
+)
+def test_adversarial_text_is_scanned_in_linear_time(detector, make, size):
+    security = SecurityConfig.model_validate({"detectors": [detector]})
+    assert_linear_growth(Detector(security).find, make, size)

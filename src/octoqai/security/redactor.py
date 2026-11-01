@@ -85,12 +85,15 @@ class Redactor:
         return any(self._detector.candidates(leaf) for leaf in string_leaves(decoded))
 
     def _mask(self, text: str) -> str:
-        groups = _merged(self._detector.candidates(text))
-        for group in reversed(groups):
+        parts: list[str] = []
+        done = 0
+        for group in _merged(self._detector.candidates(text)):
             lead = min(group, key=lambda f: (PRIORITY[f.kind], f.start, f.start - f.end))
             start, end = group[0].start, max(f.end for f in group)
-            text = text[:start] + _placeholder(lead) + text[end:]
-        return text
+            parts += [text[done:start], _placeholder(lead)]
+            done = end
+        parts.append(text[done:])
+        return "".join(parts)
 
     def redact_tree(self, obj: Any) -> Any:
         """Redact every string value in nested dicts and lists.
