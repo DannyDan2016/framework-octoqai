@@ -126,7 +126,7 @@ def test_error_body_is_decoded_with_its_declared_charset(build):
     fake, adapter = build()
     fake.fails(500, NON_ASCII_CANARY, charset="iso-8859-1")
     r = adapter.send(TURN_CONTEXT)
-    assert (r.error, r.body) == ("agent returned HTTP 500", NON_ASCII_CANARY)
+    assert (r.error, r.body.split("\n")[0]) == ("agent returned HTTP 500", NON_ASCII_CANARY)
 
 
 @pytest.mark.security
@@ -138,3 +138,27 @@ def test_error_body_with_an_unusable_charset_is_kept_as_utf8(build, charset):
     detector = Detector(SecurityConfig.model_validate({"canaries": [{"value": "TEN-B-0042"}]}))
     assert (r.error, r.body) == ("agent returned HTTP 500", "dato TEN-B-0042")
     assert [leak.location for leak in scan_reply(detector, r, [])] == ["body"]
+
+
+def _canary_detector(value):
+    return Detector(SecurityConfig.model_validate({"canaries": [{"value": value}]}))
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("charset", ["utf-16", "utf-32", "cp037"])
+def test_error_body_with_a_mismatched_charset_still_shows_the_canary(build, charset):
+    fake, adapter = build()
+    fake.fails(500, "dato TEN-B-0042", charset=charset, encoding="ascii")
+    r = adapter.send(TURN_CONTEXT)
+    leaks = scan_reply(_canary_detector("TEN-B-0042"), r, [])
+    assert r.error == "agent returned HTTP 500"
+    assert [leak.location for leak in leaks] == ["body"]
+
+
+@pytest.mark.security
+def test_error_body_in_its_declared_charset_counts_one_leak(build):
+    fake, adapter = build()
+    fake.fails(500, NON_ASCII_CANARY, charset="iso-8859-1")
+    r = adapter.send(TURN_CONTEXT)
+    leaks = scan_reply(_canary_detector(NON_ASCII_CANARY), r, [])
+    assert [leak.location for leak in leaks] == ["body"]

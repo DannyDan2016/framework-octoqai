@@ -221,4 +221,37 @@ def test_non_json_success_body_is_decoded_with_its_declared_charset(agent_cfg, f
     content = NON_ASCII_CANARY.encode("iso-8859-1")
     fake_agent.returns(content, content_type="text/html; charset=iso-8859-1")
     r = fake_agent.adapter(agent_cfg).send(TURN_CONTEXT)
-    assert (r.error, r.body) == ("agent response is not valid JSON", NON_ASCII_CANARY)
+    assert r.error == "agent response is not valid JSON"
+    assert r.body.split("\n")[0] == NON_ASCII_CANARY
+
+
+def _canary_locations(reply, value):
+    detector = Detector(SecurityConfig.model_validate({"canaries": [{"value": value}]}))
+    return [leak.location for leak in scan_reply(detector, reply, [])]
+
+
+@pytest.mark.security
+def test_non_json_success_body_with_a_mismatched_charset_shows_the_canary(agent_cfg, fake_agent):
+    fake_agent.returns(b"dato TEN-B-0042", content_type="text/html; charset=utf-16")
+    r = fake_agent.adapter(agent_cfg).send(TURN_CONTEXT)
+    assert r.error == "agent response is not valid JSON"
+    assert _canary_locations(r, "TEN-B-0042") == ["body"]
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    ("value", "content", "charset"),
+    [
+        (NON_ASCII_CANARY, NON_ASCII_CANARY.encode("iso-8859-1"), "iso-8859-1"),
+        ("TEN-B-0042", b"dato TEN-B-0042", "utf-16"),
+    ],
+    ids=["declared", "mismatched"],
+)
+def test_partial_body_is_decoded_with_its_declared_charset(
+    agent_cfg, fake_agent, value, content, charset
+):
+    cfg = _with(agent_cfg, wait=WaitPolicy(total_s=7))
+    fake_agent.stalls(status=200, body=content, charset=charset)
+    r = fake_agent.adapter(cfg).send(TURN_CONTEXT)
+    assert r.error == "timeout after 7.0s"
+    assert _canary_locations(r, value) == ["body"]

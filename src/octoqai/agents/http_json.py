@@ -37,8 +37,8 @@ from octoqai.errors import ConfigError
 from octoqai.experiment import AgentConfig, render
 
 
-def _kept_text(kept: bytearray) -> str:
-    return text_of(bytes(kept[:MAX_ERROR_BODY_BYTES]))
+def _kept_text(kept: bytearray, encoding: str) -> str:
+    return text_of(bytes(kept[:MAX_ERROR_BODY_BYTES]), encoding)
 
 
 class HttpAgentAdapter:
@@ -145,22 +145,19 @@ class HttpAgentAdapter:
                     response.close()
 
     def _read(self, response: httpx.Response, start: float) -> bytes:
+        charset = response.charset_encoding or "utf-8"
         if response.status_code >= HTTP_ERROR_MIN:
-            body = read_capped(
-                response.iter_bytes(),
-                lambda: self._expired(start),
-                response.charset_encoding or "utf-8",
-            )
+            body = read_capped(response.iter_bytes(), lambda: self._expired(start), charset)
             raise AgentAnswered(f"agent returned HTTP {response.status_code}", body=body)
         kept = bytearray()
         try:
             for chunk in read_bounded(response.iter_bytes(), lambda: self._deadline(start)):
                 kept += chunk
         except ReplyError as exc:
-            exc.body = _kept_text(kept)
+            exc.body = _kept_text(kept, charset)
             raise
         except httpx.HTTPError as exc:
-            raise ReplyError(self._read_error(exc), body=_kept_text(kept)) from exc
+            raise ReplyError(self._read_error(exc), body=_kept_text(kept, charset)) from exc
         return bytes(kept)
 
     def _read_error(self, exc: httpx.HTTPError) -> str:

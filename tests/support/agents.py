@@ -163,26 +163,30 @@ class FakeAgent:
         self,
         while_connecting: bool = False,
         status: int | None = None,
-        body: str = "boom",
+        body: str | bytes = "boom",
         timeout: bool = False,
+        charset: str | None = None,
     ) -> Self:
         """Block until the watchdog fires; the read then fails as on a closed socket.
 
         With ``status``, the agent first answers that status and ``body``, then blocks; with
-        ``timeout`` the blocked read times out instead of being closed by the watchdog.
+        ``timeout`` the blocked read times out instead of being closed by the watchdog. A text
+        ``body`` is sent as UTF-8, bytes as they are; ``charset`` is declared in the headers.
         """
+        data = body.encode("utf-8") if isinstance(body, str) else body
+        headers = {} if charset is None else {"content-type": f"text/plain; charset={charset}"}
 
         def handler(request: httpx.Request) -> httpx.Response:
             if status is None:
                 self._closed_by_watchdog(request, while_connecting)
 
             def content() -> Iterator[bytes]:
-                yield body.encode("utf-8")
+                yield data
                 if timeout:
                     _read_timeout(request)
                 self._closed_by_watchdog(request)
 
-            return httpx.Response(status or 500, content=content())
+            return httpx.Response(status or 500, headers=headers, content=content())
 
         self._handler = handler
         return self

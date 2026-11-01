@@ -272,3 +272,16 @@ def test_config_error_after_loading_never_prints_canary(experiment, tmp_path, ru
     assert_exit(result.code, 3)
     assert "invalid JSONPath" in result.err
     assert_not_in_outputs(canary, result.out, result.err)
+
+
+@pytest.mark.security
+def test_mismatched_charset_leak_is_found_and_never_written(
+    experiment, tmp_path, run_cli, fake_agent
+):
+    canary = "TEN-B-0042"
+    experiment.security(canaries=[{"value": canary}])
+    path = str(experiment.case("c1", turn("Hola", {"contains": "."})).write(tmp_path))
+    agent = fake_agent.fails(500, f"dato {canary}", charset="utf-16", encoding="ascii")
+    result = run_cli("run", path, agent=agent)
+    assert any(v["leaks"] for v in result.report()["variants"])
+    assert_not_in_outputs(canary, result.out, result.err, result.report_text())

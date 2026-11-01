@@ -202,13 +202,21 @@ def client_timeout(wait: EffectiveWait, read_s: float) -> httpx.Timeout:
     )
 
 
-def text_of(data: bytes, encoding: str = "utf-8") -> str:
+def _declared_text(data: bytes, encoding: str) -> str | None:
     try:
         if codecs.lookup(encoding).name not in NOT_CHARSETS:
             return data.decode(encoding, errors="replace")
     except (LookupError, UnicodeError):
         pass
-    return data.decode("utf-8", errors="replace")
+    return None
+
+
+def text_of(data: bytes, encoding: str = "utf-8") -> str:
+    utf8 = data.decode("utf-8", errors="replace")
+    declared = _declared_text(data, encoding)
+    if declared is None or declared == utf8:
+        return utf8
+    return f"{declared}\n{utf8}"
 
 
 def read_bounded(
