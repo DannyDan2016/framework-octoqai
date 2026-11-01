@@ -14,6 +14,7 @@ import httpx
 from octoqai.agents._delivery import (
     HTTP_ERROR_MIN,
     AdapterKwargs,
+    AgentAnswered,
     NotDelivered,
     Seams,
     TooLarge,
@@ -249,7 +250,7 @@ class SseAgentAdapter:
         state.body = read_capped(
             response.iter_bytes(), lambda: self._check_deadlines(self._clock(), state) is not None
         )
-        raise ReplyError(error)
+        raise AgentAnswered(error)
 
     def _on_event(self, event: SseEvent, state: _Stream) -> bool:
         if event.data == self._stream.done:

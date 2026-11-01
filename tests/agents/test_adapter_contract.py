@@ -101,3 +101,10 @@ def test_adapter_works_again_after_the_watchdog_fired(build):
     fake.fails(500, "boom")
     r = adapter.send(TURN_CONTEXT)
     assert (r.error, r.body) == ("agent returned HTTP 500", "boom")
+
+
+def test_watchdog_during_an_error_body_keeps_the_status(build):
+    fake, adapter = build(wait={"total_s": 7})
+    fake.stalls(status=500)
+    r = adapter.send(TURN_CONTEXT)
+    assert (r.error, r.body) == ("agent returned HTTP 500", "boom")

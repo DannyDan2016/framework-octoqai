@@ -12,6 +12,7 @@ from octoqai.agents._delivery import (
     HTTP_ERROR_MIN,
     MAX_ERROR_BODY_BYTES,
     AdapterKwargs,
+    AgentAnswered,
     NotDelivered,
     Seams,
     WatchedClient,
@@ -135,7 +136,7 @@ class HttpAgentAdapter:
     def _read(self, response: httpx.Response, start: float) -> bytes:
         if response.status_code >= HTTP_ERROR_MIN:
             body = read_capped(response.iter_bytes(), lambda: self._expired(start))
-            raise ReplyError(f"agent returned HTTP {response.status_code}", body=body)
+            raise AgentAnswered(f"agent returned HTTP {response.status_code}", body=body)
         kept = bytearray()
         try:
             for chunk in read_bounded(response.iter_bytes(), lambda: self._deadline(start)):

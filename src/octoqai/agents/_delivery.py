@@ -108,6 +108,8 @@ class WatchedClient:
         alarm = self._watchdog(seconds, fire)
         try:
             yield client
+        except AgentAnswered:
+            raise
         except Exception as exc:
             if fired.is_set():
                 raise _interrupted(exc, message) from exc
@@ -136,6 +138,10 @@ class NotDelivered(Exception):
 
 
 class TooLarge(ReplyError):
+    pass
+
+
+class AgentAnswered(ReplyError):
     pass
 
 
