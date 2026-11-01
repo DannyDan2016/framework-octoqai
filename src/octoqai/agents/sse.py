@@ -193,9 +193,7 @@ class SseAgentAdapter:
 
     def _lines(self, response: httpx.Response, block: _Block, state: _Stream) -> Iterator[str]:
         splitter = _Splitter()
-        chunks = read_bounded(
-            response.iter_bytes(), lambda: self._guard(block, state, splitter.pending)
-        )
+        chunks = read_bounded(response.iter_bytes(), lambda: self._guard(block, state, splitter))
         try:
             for chunk in chunks:
                 yield from splitter.feed(chunk)
@@ -222,12 +220,12 @@ class SseAgentAdapter:
             yield raw
         self._guard(block, state)
 
-    def _guard(self, block: _Block, state: _Stream, partial: str = "") -> None:
+    def _guard(self, block: _Block, state: _Stream, splitter: _Splitter | None = None) -> None:
         now = self._clock()
         error = self._check_deadlines(now, state)
         if error is None:
             return
-        self._keep(block, partial, now, state)
+        self._keep(block, "" if splitter is None else splitter.pending, now, state)
         raise ReplyError(error)
 
     def _keep(self, block: _Block, partial: str, now: float, state: _Stream) -> None:

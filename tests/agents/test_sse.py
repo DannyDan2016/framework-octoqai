@@ -1,3 +1,4 @@
+import importlib
 from contextlib import closing
 
 import pytest
@@ -258,3 +259,18 @@ def test_read_timeout_keeps_the_pending_event_and_names_the_deadline(sse):
     r = send(sse.cuts_after(partial='data: {"delta": "a"}'), wait={"idle_s": 4, "total_s": 9})
     assert r.error == "no stream fragment within 9s"
     assert r.fragments == ['{"delta": "a"}']
+
+
+def test_pending_line_is_only_joined_on_a_breach_or_at_the_end(sse, monkeypatch):
+    splitter = importlib.import_module("octoqai.agents.sse")._Splitter
+    joins = []
+    pending = splitter.pending.fget
+
+    def counted(self):
+        joins.append(1)
+        return pending(self)
+
+    monkeypatch.setattr(splitter, "pending", property(counted))
+    sse.script(*[(0.0, "x")] * 50, (0.0, '\ndata: {"delta": "ok"}\n\n'))
+    assert send(sse).answer == "ok"
+    assert len(joins) <= 1
