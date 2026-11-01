@@ -108,3 +108,12 @@ def test_watchdog_during_an_error_body_keeps_the_status(build):
     fake.stalls(status=500)
     r = adapter.send(TURN_CONTEXT)
     assert (r.error, r.body) == ("agent returned HTTP 500", "boom")
+
+
+def test_a_late_watchdog_of_an_earlier_attempt_never_breaks_the_next(build):
+    fake, adapter = build(wait={"total_s": 7})
+    adapter.send(TURN_CONTEXT)
+    fake.fires_stale_watchdog()
+    r = adapter.send(TURN_CONTEXT)
+    assert (r.answer, r.error) == ("ok", None)
+    assert fake.closes == 0

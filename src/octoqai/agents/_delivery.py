@@ -100,10 +100,15 @@ class WatchedClient:
             self._client = self._new()
         client = self._client
         fired = threading.Event()
+        done = threading.Event()
+        lock = threading.Lock()
 
         def fire() -> None:
-            fired.set()
-            client.close()
+            with lock:
+                if done.is_set():
+                    return
+                fired.set()
+                client.close()
 
         alarm = self._watchdog(seconds, fire)
         try:
@@ -115,6 +120,8 @@ class WatchedClient:
                 raise _interrupted(exc, message) from exc
             raise
         finally:
+            with lock:
+                done.set()
             alarm.cancel()
 
     def close(self) -> None:

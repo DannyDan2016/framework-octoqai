@@ -63,21 +63,31 @@ class FakeWatchdog:
         """Start with no armed alarm."""
         self.armed: list[float] = []
         self.cancelled = 0
-        self._fire: Callable[[], None] = lambda: None
+        self._fires: list[Callable[[], None]] = []
 
     def __call__(self, seconds: float, fire: Callable[[], None]) -> Self:
         """Arm an alarm for ``seconds``; ``fire`` runs only when the test calls ``fire()``."""
         self.armed.append(seconds)
-        self._fire = fire
+        self._fires.append(fire)
         return self
 
     def cancel(self) -> None:
         """Count a cancelled alarm."""
         self.cancelled += 1
 
-    def fire(self) -> None:
-        """Fire the last armed alarm, as if its time had run out."""
-        self._fire()
+    def fire(self, index: int = -1) -> None:
+        """Fire an armed alarm, the last one by default, as if its time had run out."""
+        if self._fires:
+            self._fires[index]()
+
+
+class _FakeTransport(httpx.MockTransport):
+    def __init__(self, handler: _Handler, on_close: Callable[[], None]) -> None:
+        super().__init__(handler)
+        self._on_close = on_close
+
+    def close(self) -> None:
+        self._on_close()
 
 
 def _read_timeout(request: httpx.Request) -> None:
@@ -96,6 +106,7 @@ class FakeAgent:
         self.clock = FakeClock()
         self.jitter: Callable[[], float] = lambda: 0.0
         self.watchdog = FakeWatchdog()
+        self.closes = 0
         self._adapters: list[AgentPort] = []
         self._refusals = 0
         self._refusal: type[httpx.TransportError] = httpx.ConnectError
@@ -181,9 +192,29 @@ class FakeAgent:
         self._refusal = httpx.ConnectTimeout if timeout else httpx.ConnectError
         return self
 
+    def fires_stale_watchdog(self) -> Self:
+        """Fire the first attempt's alarm while each later request is in flight.
+
+        The request fails, as on a closed socket, only if that firing closed its connection.
+        """
+        answer = self._handler
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            closes = self.closes
+            self.watchdog.fire(0)
+            if self.closes > closes:
+                raise httpx.ReadError("closed by a stale watchdog", request=request)
+            return answer(request)
+
+        self._handler = handler
+        return self
+
     def transport(self) -> httpx.MockTransport:
-        """Return a transport that records each request and applies the behaviour."""
-        return httpx.MockTransport(self._record)
+        """Return a transport that records each request and counts its closes in ``closes``."""
+        return _FakeTransport(self._record, self._count_close)
+
+    def _count_close(self) -> None:
+        self.closes += 1
 
     def close(self) -> None:
         """Close every adapter created through this fake agent."""
