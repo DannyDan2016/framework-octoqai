@@ -248,7 +248,9 @@ class SseAgentAdapter:
         else:
             return
         state.body = read_capped(
-            response.iter_bytes(), lambda: self._check_deadlines(self._clock(), state) is not None
+            response.iter_bytes(),
+            lambda: self._check_deadlines(self._clock(), state) is not None,
+            response.charset_encoding or "utf-8",
         )
         raise AgentAnswered(error)
 

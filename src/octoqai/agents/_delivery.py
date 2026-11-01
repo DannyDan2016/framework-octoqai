@@ -200,8 +200,11 @@ def client_timeout(wait: EffectiveWait, read_s: float) -> httpx.Timeout:
     )
 
 
-def text_of(data: bytes) -> str:
-    return data.decode("utf-8", errors="replace")
+def text_of(data: bytes, encoding: str = "utf-8") -> str:
+    try:
+        return data.decode(encoding, errors="replace")
+    except LookupError:
+        return data.decode("utf-8", errors="replace")
 
 
 def read_bounded(
@@ -217,7 +220,10 @@ def read_bounded(
 
 
 def read_capped(
-    chunks: Iterable[bytes], expired: Callable[[], bool], cap: int = MAX_ERROR_BODY_BYTES
+    chunks: Iterable[bytes],
+    expired: Callable[[], bool],
+    encoding: str = "utf-8",
+    cap: int = MAX_ERROR_BODY_BYTES,
 ) -> str | None:
     kept = bytearray()
 
@@ -233,4 +239,4 @@ def read_capped(
     except (_Expired, httpx.HTTPError):
         if not kept:
             return None
-    return text_of(bytes(kept))
+    return text_of(bytes(kept), encoding)

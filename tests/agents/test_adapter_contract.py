@@ -3,6 +3,7 @@ import pytest
 from octoqai.experiment import Experiment
 from support.agents import TURN_CONTEXT, FakeJsonAgent, FakeSseAgent
 from support.builders import ExperimentBuilder
+from support.samples import NON_ASCII_CANARY
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
@@ -117,3 +118,11 @@ def test_a_late_watchdog_of_an_earlier_attempt_never_breaks_the_next(build):
     r = adapter.send(TURN_CONTEXT)
     assert (r.answer, r.error) == ("ok", None)
     assert fake.closes == 0
+
+
+@pytest.mark.security
+def test_error_body_is_decoded_with_its_declared_charset(build):
+    fake, adapter = build()
+    fake.fails(500, NON_ASCII_CANARY, charset="iso-8859-1")
+    r = adapter.send(TURN_CONTEXT)
+    assert (r.error, r.body) == ("agent returned HTTP 500", NON_ASCII_CANARY)

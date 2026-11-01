@@ -117,9 +117,14 @@ class FakeAgent:
         """Backoff sleeps requested by the adapter."""
         return self.clock.sleeps
 
-    def fails(self, status: int, body: str = "") -> Self:
-        """Answer every turn with an HTTP error status."""
-        self._handler = lambda request: httpx.Response(status, text=body)
+    def fails(self, status: int, body: str = "", charset: str | None = None) -> Self:
+        """Answer every turn with an HTTP error status, its body encoded in ``charset``."""
+        if charset is None:
+            self._handler = lambda request: httpx.Response(status, text=body)
+            return self
+        headers = {"content-type": f"text/plain; charset={charset}"}
+        content = body.encode(charset)
+        self._handler = lambda request: httpx.Response(status, headers=headers, content=content)
         return self
 
     def sends(
