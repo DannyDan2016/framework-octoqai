@@ -108,11 +108,14 @@ def _stop(process: subprocess.Popen[str]) -> str:
         process.kill()
         process.wait()
     assert process.stderr is not None
-    stderr = process.stderr.read()
-    process.stderr.close()
-    assert process.stdout is not None
-    process.stdout.close()
-    return stderr
+    return process.stderr.read()
+
+
+def _close_pipes(process: subprocess.Popen[str]) -> None:
+    """Close the stdout and stderr pipes of ``process``, whether or not it still runs."""
+    for pipe in (process.stdout, process.stderr):
+        if pipe is not None:
+            pipe.close()
 
 
 @pytest.fixture
@@ -134,3 +137,4 @@ def toy_sse_agent_url() -> Iterator[str]:
     finally:
         if process.poll() is None:
             _stop(process)
+        _close_pipes(process)
