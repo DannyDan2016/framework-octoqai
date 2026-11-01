@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import codecs
 import json
-import random
 import re
-import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Unpack
 
 import httpx
 
 from octoqai.agents._delivery import (
     HTTP_ERROR_MIN,
+    AdapterKwargs,
     NotDelivered,
+    Seams,
     TooLarge,
+    WatchedClient,
     classify_delivery,
     client_timeout,
     read_bounded,
@@ -107,19 +108,15 @@ class SseAgentAdapter:
         self,
         cfg: AgentConfig,
         transport: httpx.BaseTransport | None = None,
-        *,
-        clock: Callable[[], float] = time.perf_counter,
-        sleep: Callable[[float], None] = time.sleep,
-        jitter: Callable[[], float] = random.random,
+        **seams: Unpack[AdapterKwargs],
     ) -> None:
         """Create the adapter.
 
         Args:
             cfg: Agent connection settings; ``stream`` is required.
             transport: Optional httpx transport, used to test without a network.
-            clock: Monotonic clock in seconds, injectable for tests.
-            sleep: Sleep function used between retries, injectable for tests.
-            jitter: Random fraction in [0, 1) that shortens each backoff by up to 25%.
+            **seams: Optional ``clock``, ``sleep``, ``jitter`` and ``watchdog`` (see
+                ``AdapterKwargs``), injectable for tests.
 
         Raises:
             ConfigError: When the configuration has no ``stream`` section.
@@ -131,12 +128,11 @@ class SseAgentAdapter:
         self._delta = compile_path(self._stream.delta)
         self._fields = ResponseFields(cfg.response)
         self._wait = cfg.effective_wait()
-        self._clock = clock
-        self._sleep = sleep
-        self._jitter = jitter
+        seam = Seams.of(seams)
+        self._clock, self._sleep, self._jitter = seam.clock, seam.sleep, seam.jitter
         self._read_s = max(self._wait.first_fragment_s, self._wait.idle_s)
-        self._client = httpx.Client(
-            transport=transport, timeout=client_timeout(self._wait, self._read_s)
+        self._http = WatchedClient(
+            transport, client_timeout(self._wait, self._read_s), seam.watchdog
         )
 
     def send(self, context: dict[str, Any]) -> AgentReply:
@@ -154,8 +150,8 @@ class SseAgentAdapter:
         retries: list[str] = []
         state = _Stream()
         try:
-            response = with_retries(
-                lambda: self._open(body, state),
+            with_retries(
+                lambda: self._attempt(body, state),
                 self._cfg.retry,
                 self._sleep,
                 retries,
@@ -165,38 +161,34 @@ class SseAgentAdapter:
             return self._reply(state, exc.reason, retries)
         except ReplyError as exc:
             return self._reply(state, exc.error, retries)
-        try:
-            self._consume(response, state)
-        except ReplyError as exc:
-            return self._reply(state, exc.error, retries)
-        finally:
-            response.close()
         return self._reply(state, None, retries)
 
     def close(self) -> None:
         """Release the underlying HTTP connections."""
-        self._client.close()
+        self._http.close()
 
-    def _open(self, body: Any, state: _Stream) -> httpx.Response:
-        request = self._client.build_request(
+    def _attempt(self, body: Any, state: _Stream) -> None:
+        with self._http.attempt(self._wait.total_s, self._over_total()) as client:
+            response = self._open(client, body, state)
+            try:
+                self._consume(response, state)
+            finally:
+                response.close()
+
+    def _open(self, client: httpx.Client, body: Any, state: _Stream) -> httpx.Response:
+        request = client.build_request(
             self._cfg.method, self._cfg.url, json=body, headers=self._cfg.headers
         )
         state.start = self._clock()
         with classify_delivery(self._wait, self._no_fragment(self._read_s)):
-            return self._client.send(request, stream=True)
+            return client.send(request, stream=True)
 
     def _consume(self, response: httpx.Response, state: _Stream) -> None:
-        try:
-            self._check_response(response, state)
-            block = _Block()
-            lines = self._lines(response, block, state)
-            for event in parse_sse(self._watched(lines, block, state)):
-                if self._on_event(event, state):
-                    return
-        except httpx.TimeoutException as exc:
-            raise ReplyError(self._stalled(state)) from exc
-        except httpx.HTTPError as exc:
-            raise transport_failure(exc) from exc
+        self._check_response(response, state)
+        block = _Block()
+        for event in parse_sse(self._watched(self._lines(response, block, state), block, state)):
+            if self._on_event(event, state):
+                return
 
     def _lines(self, response: httpx.Response, block: _Block, state: _Stream) -> Iterator[str]:
         splitter = _Splitter()
@@ -206,10 +198,18 @@ class SseAgentAdapter:
         try:
             for chunk in chunks:
                 yield from splitter.feed(chunk)
-        except TooLarge:
+        except (TooLarge, httpx.HTTPError) as exc:
+            error = self._read_failure(exc, state)
             self._keep(block, splitter.pending, self._clock(), state)
-            raise
+            raise error from exc
         yield from splitter.flush()
+
+    def _read_failure(self, exc: TooLarge | httpx.HTTPError, state: _Stream) -> ReplyError:
+        if isinstance(exc, TooLarge):
+            return exc
+        if isinstance(exc, httpx.TimeoutException):
+            return ReplyError(self._stalled(state))
+        return transport_failure(exc)
 
     def _watched(self, lines: Iterable[str], block: _Block, state: _Stream) -> Iterator[str]:
         for raw in lines:
@@ -288,8 +288,11 @@ class SseAgentAdapter:
 
     def _total_error(self, now: float, state: _Stream) -> str | None:
         if now - state.start > self._wait.total_s:
-            return f"stream exceeded {self._wait.total_s:g}s"
+            return self._over_total()
         return None
+
+    def _over_total(self) -> str:
+        return f"stream exceeded {self._wait.total_s:g}s"
 
     @staticmethod
     def _no_fragment(seconds: float) -> str:

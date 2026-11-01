@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import random
+import threading
+import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Protocol, TypedDict
 
 import httpx
 
@@ -14,6 +19,114 @@ JITTER_SPREAD = 0.25
 HTTP_ERROR_MIN = 400
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_ERROR_BODY_BYTES = 64 * 1024
+
+
+class Watchdog(Protocol):
+    """A wall-clock alarm armed for one attempt."""
+
+    def cancel(self) -> None:
+        """Disarm the alarm so that it never fires."""
+
+
+WatchdogFactory = Callable[[float, Callable[[], None]], Watchdog]
+
+
+def timer_watchdog(seconds: float, fire: Callable[[], None]) -> Watchdog:
+    """Call ``fire`` from a daemon thread after ``seconds`` of real time.
+
+    Args:
+        seconds: Wall-clock time before the alarm fires.
+        fire: Called once when the time runs out, unless the alarm was cancelled.
+
+    Returns:
+        The started ``threading.Timer``.
+    """
+    timer = threading.Timer(seconds, fire)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+class AdapterKwargs(TypedDict, total=False):
+    """Time and randomness sources an adapter accepts, injectable for tests.
+
+    Attributes:
+        clock: Monotonic clock in seconds.
+        sleep: Sleep function used between retries.
+        jitter: Random fraction in [0, 1) that shortens each backoff by up to 25%.
+        watchdog: Arms a wall-clock alarm of ``total_s`` for each attempt; when it fires the
+            connection is closed, so a read blocked inside the HTTP client still ends.
+    """
+
+    clock: Callable[[], float]
+    sleep: Callable[[float], None]
+    jitter: Callable[[], float]
+    watchdog: WatchdogFactory
+
+
+@dataclass(frozen=True)
+class Seams:
+    clock: Callable[[], float]
+    sleep: Callable[[float], None]
+    jitter: Callable[[], float]
+    watchdog: WatchdogFactory
+
+    @classmethod
+    def of(cls, kwargs: AdapterKwargs) -> Seams:
+        return cls(
+            clock=kwargs.get("clock", time.perf_counter),
+            sleep=kwargs.get("sleep", time.sleep),
+            jitter=kwargs.get("jitter", random.random),
+            watchdog=kwargs.get("watchdog", timer_watchdog),
+        )
+
+
+class WatchedClient:
+    def __init__(
+        self,
+        transport: httpx.BaseTransport | None,
+        timeout: httpx.Timeout,
+        watchdog: WatchdogFactory,
+    ) -> None:
+        self._transport = transport
+        self._timeout = timeout
+        self._watchdog = watchdog
+        self._closed = False
+        self._client = self._new()
+
+    @contextmanager
+    def attempt(self, seconds: float, message: str) -> Iterator[httpx.Client]:
+        if self._client.is_closed and not self._closed:
+            self._client = self._new()
+        client = self._client
+        fired = threading.Event()
+
+        def fire() -> None:
+            fired.set()
+            client.close()
+
+        alarm = self._watchdog(seconds, fire)
+        try:
+            yield client
+        except Exception as exc:
+            if fired.is_set():
+                raise _interrupted(exc, message) from exc
+            raise
+        finally:
+            alarm.cancel()
+
+    def close(self) -> None:
+        self._closed = True
+        self._client.close()
+
+    def _new(self) -> httpx.Client:
+        return httpx.Client(transport=self._transport, timeout=self._timeout)
+
+
+def _interrupted(exc: Exception, message: str) -> ReplyError:
+    if isinstance(exc, ReplyError):
+        return ReplyError(message, exc.raw, exc.body)
+    return ReplyError(message)
 
 
 class NotDelivered(Exception):

@@ -104,8 +104,8 @@ def main(
     Args:
         argv: Command line arguments without the program name.
         transport: Optional httpx transport, used to test without a network.
-        adapter_kwargs: Optional ``clock``, ``sleep`` and ``jitter`` for the adapter, used to
-            test without real waiting.
+        adapter_kwargs: Optional ``clock``, ``sleep``, ``jitter`` and ``watchdog`` for the
+            adapter, used to test without real waiting.
 
     Returns:
         0 for go, 1 for no-go, 2 for insufficient evidence and 3 for errors.

@@ -67,3 +67,37 @@ def test_endless_error_body_stops_at_the_deadline_or_cap_and_keeps_the_status(bu
     fake.sends("x" * 1024, 2000, status=500, gap_s=gap_s)
     r = adapter.send(TURN_CONTEXT)
     assert (r.error, len(r.body)) == ("agent returned HTTP 500", kib * 1024)
+
+
+TOTAL_TIMEOUT = {"json": "timeout after 7.0s", "sse": "stream exceeded 7s"}
+
+
+def test_watchdog_is_armed_with_total_and_cancelled_on_every_attempt(build):
+    fake, adapter = build(retry={"retries": 1, "backoff_s": 0}, wait={"total_s": 7})
+    fake.refuses_first(1)
+    adapter.send(TURN_CONTEXT)
+    assert fake.watchdog.armed == [7, 7] and fake.watchdog.cancelled == 2
+
+
+def test_watchdog_interrupts_a_blocked_read_with_the_total_timeout(build, kind):
+    fake, adapter = build(wait={"total_s": 7})
+    fake.stalls()
+    r = adapter.send(TURN_CONTEXT)
+    assert (r.answer, r.error) == (None, TOTAL_TIMEOUT[kind])
+    assert fake.watchdog.cancelled == 1
+
+
+def test_watchdog_while_connecting_is_not_retried(build, kind):
+    fake, adapter = build(retry={"retries": 2, "backoff_s": 0}, wait={"total_s": 7})
+    fake.stalls(while_connecting=True)
+    r = adapter.send(TURN_CONTEXT)
+    assert (r.error, r.retries, len(fake.requests)) == (TOTAL_TIMEOUT[kind], [], 1)
+
+
+def test_adapter_works_again_after_the_watchdog_fired(build):
+    fake, adapter = build(wait={"total_s": 7})
+    fake.stalls()
+    adapter.send(TURN_CONTEXT)
+    fake.fails(500, "boom")
+    r = adapter.send(TURN_CONTEXT)
+    assert (r.error, r.body) == ("agent returned HTTP 500", "boom")

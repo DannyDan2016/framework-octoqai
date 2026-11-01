@@ -1,6 +1,7 @@
 """Agent adapters and the port they implement."""
 
-from octoqai.agents.factory import AdapterKwargs, adapter_for
+from octoqai.agents._delivery import AdapterKwargs, Watchdog
+from octoqai.agents.factory import adapter_for
 from octoqai.agents.http_json import HttpAgentAdapter
 from octoqai.agents.port import AgentPort, AgentReply
 from octoqai.agents.sse import SseAgentAdapter
@@ -13,6 +14,7 @@ __all__ = [
     "HttpAgentAdapter",
     "SseAgentAdapter",
     "SseEvent",
+    "Watchdog",
     "adapter_for",
     "parse_sse",
 ]

@@ -240,3 +240,21 @@ def test_adapter_for_picks_the_transport_from_the_config():
     assert isinstance(json_adapter, HttpAgentAdapter)
     sse_adapter.close()
     json_adapter.close()
+
+
+def test_watchdog_mid_stream_keeps_the_received_fragments(sse):
+    r = send(sse.stalls_after("Hola"), wait={"total_s": 7})
+    assert r.error == "stream exceeded 7s"
+    assert r.fragments == ['{"delta": "Hola"}'] and r.answer == "Hola"
+
+
+def test_watchdog_keeps_the_pending_event(sse):
+    r = send(sse.stalls_after("Ho", partial='data: {"delta": "la"}'), wait={"total_s": 7})
+    assert r.error == "stream exceeded 7s"
+    assert r.fragments == ['{"delta": "Ho"}', '{"delta": "la"}'] and r.answer == "Hola"
+
+
+def test_read_timeout_keeps_the_pending_event_and_names_the_deadline(sse):
+    r = send(sse.cuts_after(partial='data: {"delta": "a"}'), wait={"idle_s": 4, "total_s": 9})
+    assert r.error == "no stream fragment within 9s"
+    assert r.fragments == ['{"delta": "a"}']

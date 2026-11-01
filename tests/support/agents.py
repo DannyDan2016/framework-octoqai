@@ -56,6 +56,34 @@ class FakeClock:
         self.advance(seconds)
 
 
+class FakeWatchdog:
+    """Watchdog factory that never uses real time: the simulated agent fires it by hand."""
+
+    def __init__(self) -> None:
+        """Start with no armed alarm."""
+        self.armed: list[float] = []
+        self.cancelled = 0
+        self._fire: Callable[[], None] = lambda: None
+
+    def __call__(self, seconds: float, fire: Callable[[], None]) -> Self:
+        """Arm an alarm for ``seconds``; ``fire`` runs only when the test calls ``fire()``."""
+        self.armed.append(seconds)
+        self._fire = fire
+        return self
+
+    def cancel(self) -> None:
+        """Count a cancelled alarm."""
+        self.cancelled += 1
+
+    def fire(self) -> None:
+        """Fire the last armed alarm, as if its time had run out."""
+        self._fire()
+
+
+def _read_timeout(request: httpx.Request) -> None:
+    raise httpx.ReadTimeout("stalled", request=request)
+
+
 class FakeAgent:
     """Behaviour shared by every simulated agent."""
 
@@ -67,6 +95,7 @@ class FakeAgent:
         self.timeouts: list[Any] = []
         self.clock = FakeClock()
         self.jitter: Callable[[], float] = lambda: 0.0
+        self.watchdog = FakeWatchdog()
         self._adapters: list[AgentPort] = []
         self._refusals = 0
         self._refusal: type[httpx.TransportError] = httpx.ConnectError
@@ -105,6 +134,16 @@ class FakeAgent:
         self._handler = handler
         return self
 
+    def stalls(self, while_connecting: bool = False) -> Self:
+        """Block until the watchdog fires; the read then fails as on a closed socket."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self._closed_by_watchdog(request, while_connecting)
+            return httpx.Response(500)
+
+        self._handler = handler
+        return self
+
     def times_out(self) -> Self:
         """Raise a read timeout before any response byte."""
 
@@ -134,8 +173,18 @@ class FakeAgent:
             adapter.close()
 
     def adapter_kwargs(self) -> AdapterKwargs:
-        """Clock, sleep and jitter that make an adapter use this agent's fake time."""
-        return {"clock": self.clock, "sleep": self.clock.sleep, "jitter": self.jitter}
+        """Clock, sleep, jitter and watchdog that make an adapter use this agent's fake time."""
+        return {
+            "clock": self.clock,
+            "sleep": self.clock.sleep,
+            "jitter": self.jitter,
+            "watchdog": self.watchdog,
+        }
+
+    def _closed_by_watchdog(self, request: httpx.Request, while_connecting: bool = False) -> None:
+        self.watchdog.fire()
+        error = httpx.ConnectError if while_connecting else httpx.ReadError
+        raise error("closed by the watchdog", request=request)
 
     def _record(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(json.loads(request.content) if request.content else None)
@@ -185,6 +234,11 @@ class FakeJsonAgent(FakeAgent):
 def sse_event(name: str, payload: Any) -> str:
     """Encode one SSE event whose data is ``payload`` as JSON."""
     return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _token_frames(deltas: Sequence[str], partial: str) -> list[_Frame]:
+    frames: list[_Frame] = [(0.0, sse_event("token", {"delta": d})) for d in deltas]
+    return [*frames, (0.0, partial)] if partial else frames
 
 
 class FakeSseAgent(FakeAgent):
@@ -245,9 +299,14 @@ class FakeSseAgent(FakeAgent):
         """Leak ``value`` in the second delta."""
         return self.streams("Te paso ", value, " y nada más.")
 
-    def cuts_after(self, *deltas: str) -> Self:
-        """Stream some deltas and then stall until the read times out."""
-        return self._use([(0.0, sse_event("token", {"delta": d})) for d in deltas], cut=True)
+    def cuts_after(self, *deltas: str, partial: str = "") -> Self:
+        """Stream some deltas and an unterminated ``partial`` line, then time out reading."""
+        return self._use(_token_frames(deltas, partial), then=_read_timeout)
+
+    def stalls_after(self, *deltas: str, partial: str = "") -> Self:
+        """Stream some deltas and an unterminated ``partial`` line, then block until the
+        watchdog closes the connection."""
+        return self._use(_token_frames(deltas, partial), then=self._closed_by_watchdog)
 
     def wrong_content_type(self) -> Self:
         """Answer with JSON instead of an event stream."""
@@ -261,15 +320,18 @@ class FakeSseAgent(FakeAgent):
         return adapter
 
     def _use(
-        self, frames: list[_Frame], cut: bool = False, content_type: str = EVENT_STREAM
+        self,
+        frames: list[_Frame],
+        then: Callable[[httpx.Request], None] | None = None,
+        content_type: str = EVENT_STREAM,
     ) -> Self:
         def handler(request: httpx.Request) -> httpx.Response:
             def body() -> Iterator[bytes]:
                 for delay, text in frames:
                     self.clock.advance(delay)
                     yield text.encode("utf-8") if isinstance(text, str) else text
-                if cut:
-                    raise httpx.ReadTimeout("stalled", request=request)
+                if then is not None:
+                    then(request)
 
             return httpx.Response(200, headers={"content-type": content_type}, content=body())
 
