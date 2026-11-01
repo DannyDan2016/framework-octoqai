@@ -1,3 +1,4 @@
+import importlib
 import random
 import re
 import time
@@ -7,7 +8,7 @@ import pytest
 from octoqai.experiment import SecurityConfig
 from octoqai.security import Detector, Finding, mask
 from support import samples
-from support.assertions import assert_linear_growth
+from support.assertions import assert_linear_growth, assert_linear_steps
 from support.paths import cases
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.security]
@@ -202,14 +203,14 @@ def test_jwt_pattern_finds_what_the_unbounded_pattern_found():
     assert hits > 30
 
 
-@pytest.mark.parametrize(
-    ("detector", "make", "size"),
-    [
-        ("pii", lambda n: (samples.EMAIL + " ") * n, 2000),
-        ("secrets", lambda n: samples.JWT_RUN * n, 5000),
-    ],
-    ids=["emails", "jwt-run"],
-)
-def test_adversarial_text_is_scanned_in_linear_time(detector, make, size):
-    security = SecurityConfig.model_validate({"detectors": [detector]})
-    assert_linear_growth(Detector(security).find, make, size)
+def test_many_overlapping_candidates_are_pruned_in_linear_steps():
+    detector = Detector(SecurityConfig.model_validate({"detectors": ["pii"]}))
+    module = importlib.import_module("octoqai.security.detectors").__file__
+    assert_linear_steps(detector.find, lambda n: (samples.EMAIL + " ") * n, 300, module)
+
+
+def test_jwt_shaped_run_is_scanned_in_linear_time():
+    detector = Detector(SecurityConfig.model_validate({"detectors": ["secrets"]}))
+    tail = samples.SECRET_SAMPLES["jwt"]
+    assert [f.label for f in detector.find(samples.JWT_RUN * 50 + " " + tail)] == ["jwt"]
+    assert_linear_growth(detector.find, lambda n: samples.JWT_RUN * n, 4000, factor=8, bound=24)

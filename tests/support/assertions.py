@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import re
+import sys
 import time
 from collections.abc import Callable, Sequence
+from types import FrameType
+from typing import Any
 
 import pytest
 
@@ -97,3 +100,43 @@ def assert_canary_hidden(canary: str, *texts: str) -> None:
             assert canary.casefold() not in form.casefold(), f"{canary!r} leaked into an output"
         reply = AgentReply(text, None, None, 1.0, None)
         assert scan_reply(detector, reply, []) == [], f"{canary!r} hidden in an output"
+
+
+def line_events(run: Callable[[str], object], text: str, module_file: str) -> int:
+    """Count the Python lines executed in ``module_file`` while ``run(text)`` runs.
+
+    The count is deterministic: it does not depend on the speed or the load of the machine.
+    """
+    count = 0
+
+    def trace(frame: FrameType, event: str, arg: Any) -> Callable[..., Any] | None:
+        nonlocal count
+        if frame.f_code.co_filename != module_file:
+            return None
+        if event == "line":
+            count += 1
+        return trace
+
+    previous = sys.gettrace()
+    sys.settrace(trace)
+    try:
+        run(text)
+    finally:
+        sys.settrace(previous)
+    return count
+
+
+def assert_linear_steps(
+    run: Callable[[str], object],
+    make: Callable[[int], str],
+    size: int,
+    module_file: str,
+) -> None:
+    """Check that the lines run in ``module_file`` grow less than 5 times for a 4 times input.
+
+    A quadratic loop grows 16 times; the check never reads a clock.
+    """
+    small = line_events(run, make(size), module_file)
+    large = line_events(run, make(size * 4), module_file)
+    ratio = large / max(small, 1)
+    assert ratio < 5, f"steps grew {ratio:.1f}x ({small} to {large}) for a 4x larger input"

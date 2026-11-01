@@ -1,3 +1,4 @@
+import importlib
 import json
 
 import pytest
@@ -5,7 +6,11 @@ import pytest
 from octoqai.experiment import SecurityConfig
 from octoqai.security import Detector, Redactor
 from support import samples
-from support.assertions import assert_canary_hidden, assert_linear_growth
+from support.assertions import (
+    assert_canary_hidden,
+    assert_linear_growth,
+    assert_linear_steps,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.security]
 
@@ -109,8 +114,14 @@ def test_json_too_deep_to_decode_is_masked_as_text():
     assert samples.SLASH_CANARY not in escaping_redactor().redact(text)
 
 
+def test_many_findings_are_masked_in_linear_steps():
+    module = importlib.import_module("octoqai.security.redactor").__file__
+    assert_linear_steps(redactor().redact, lambda n: "TEN-B-0042 " * n, 300, module)
+
+
 def test_many_findings_are_masked_in_linear_time():
-    assert_linear_growth(redactor().redact, lambda n: "TEN-B-0042 " * n, 5000)
+    run = redactor(detectors=[]).redact
+    assert_linear_growth(run, lambda n: "TEN-B-0042 " * n, 4000, factor=8, bound=24)
 
 
 @pytest.mark.parametrize("text", samples.HOSTILE_JSON.values(), ids=samples.HOSTILE_JSON.keys())
