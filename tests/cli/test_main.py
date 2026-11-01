@@ -1,12 +1,16 @@
 import importlib
+import json
 
 import pytest
 
+from octoqai.agents import AgentReply
+from octoqai.experiment import SecurityConfig
+from octoqai.security import Detector, scan_reply
 from support.agents import FakeSseAgent
 from support.assertions import assert_exit, assert_not_in_outputs
 from support.builders import turn, write_data_set, write_env_file
 from support.paths import EXAMPLES
-from support.samples import HOSTILE_JSON
+from support.samples import ESCAPED_KEY_ANSWER, HOSTILE_JSON
 
 pytestmark = [pytest.mark.integration, pytest.mark.regression]
 
@@ -301,3 +305,18 @@ def test_hostile_json_with_a_leak_still_writes_the_report_and_is_no_go(
     assert "Traceback" not in result.err
     assert all(v["leaks"] for v in result.report()["variants"])
     assert_not_in_outputs("TEN-B-0042", result.out, result.err, result.report_text())
+
+
+@pytest.mark.security
+def test_value_hidden_in_an_escaped_json_key_never_reaches_the_report(
+    experiment, tmp_path, run_cli, fake_agent
+):
+    canary = "TEN-B-0042"
+    experiment.security(canaries=[{"value": canary}])
+    path = str(experiment.case("c1", turn("Hola", {"contains": "."})).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent.answers(ESCAPED_KEY_ANSWER))
+    assert_exit(result.code, 1)
+    text = result.report_text()
+    detector = Detector(SecurityConfig.model_validate({"canaries": [{"value": canary}]}))
+    assert scan_reply(detector, AgentReply(text, None, None, 1.0, None), []) == []
+    assert_not_in_outputs(canary, result.out, result.err, text, json.dumps(json.loads(text)))

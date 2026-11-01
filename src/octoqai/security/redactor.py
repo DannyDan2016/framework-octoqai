@@ -64,7 +64,9 @@ class Redactor:
         Overlapping findings are merged into one span whose placeholder comes from the
         highest-priority kind: canary, secret, environment value, personal data. JSON text
         with a finding in any decoded string is decoded, redacted and written again without
-        escapes, so a unicode escape or an escaped slash cannot hide a value.
+        escapes, so a unicode escape or an escaped slash cannot hide a value. When the
+        result still hides a value in some decoded string, such as a key that is itself
+        escaped JSON, the whole text becomes ``REDACTED``.
 
         Args:
             text: The text to clean.
@@ -79,7 +81,9 @@ class Redactor:
             cleaned = self.redact_tree(decoded)
         except RecursionError:
             return REDACTED
-        return self._mask(json.dumps(cleaned, ensure_ascii=False))
+        masked = self._mask(json.dumps(cleaned, ensure_ascii=False))
+        rest = decode_json(masked)
+        return REDACTED if rest is not None and self._hides(rest) else masked
 
     def _hides(self, decoded: Any) -> bool:
         return any(self._detector.candidates(leaf) for leaf in string_leaves(decoded))

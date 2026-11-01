@@ -40,3 +40,4 @@ HOSTILE_JSON = {
     "huge-int": '{"answer": ' + "1" * 5000 + ', "x": "TEN-B-0042"}',
     "too-deep": "[" * 100_000 + '"TEN-B-0042"' + "]" * 100_000,
 }
+ESCAPED_KEY_ANSWER = '{"' + '\\"TEN' + "\\\\u002dB-0042" + '\\"": 1}'

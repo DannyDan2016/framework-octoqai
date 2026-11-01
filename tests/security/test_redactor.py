@@ -2,8 +2,9 @@ import json
 
 import pytest
 
+from octoqai.agents import AgentReply
 from octoqai.experiment import SecurityConfig
-from octoqai.security import Detector, Redactor
+from octoqai.security import Detector, Redactor, scan_reply
 from support import samples
 from support.assertions import assert_linear_growth
 
@@ -116,3 +117,13 @@ def test_many_findings_are_masked_in_linear_time():
 @pytest.mark.parametrize("text", samples.HOSTILE_JSON.values(), ids=samples.HOSTILE_JSON.keys())
 def test_hostile_json_is_masked_as_text(text):
     assert redactor().redact(text) == text.replace("TEN-B-0042", "[canary:cuenta-b]")
+
+
+def _canary_leaks(text):
+    detector = Detector(SecurityConfig.model_validate({"canaries": [{"value": "TEN-B-0042"}]}))
+    return scan_reply(detector, AgentReply(text, None, None, 1.0, None), [])
+
+
+def test_value_hidden_in_an_escaped_json_key_is_never_left():
+    assert _canary_leaks(samples.ESCAPED_KEY_ANSWER)
+    assert _canary_leaks(redactor().redact(samples.ESCAPED_KEY_ANSWER)) == []
