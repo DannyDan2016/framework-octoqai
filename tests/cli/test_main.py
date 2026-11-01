@@ -243,3 +243,32 @@ def test_unreachable_error_never_prints_canary(experiment, tmp_path, run_cli, fa
     assert_exit(result.code, 3)
     assert "unreachable" in result.err
     assert_not_in_outputs(canary, result.out, result.err, result.report_text())
+
+
+@pytest.mark.security
+def test_unexpected_error_never_prints_canary(
+    experiment, tmp_path, run_cli, fake_agent, monkeypatch
+):
+    canary = "TEN-B-0042"
+
+    def boom(*args, **kwargs):
+        raise RuntimeError(f"kaboom {canary}")
+
+    monkeypatch.setattr(importlib.import_module("octoqai.cli.main"), "run_experiment", boom)
+    experiment.security(canaries=[{"value": canary}])
+    path = str(experiment.case("c1", turn("Hola", {"contains": "."})).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent)
+    assert_exit(result.code, 3)
+    assert "kaboom [canary:canary-1]" in result.err
+    assert_not_in_outputs(canary, result.out, result.err)
+
+
+@pytest.mark.security
+def test_config_error_after_loading_never_prints_canary(experiment, tmp_path, run_cli):
+    canary = "TEN_B_0042"
+    experiment.agent(response={"answer": f"$.{canary}["}).security(canaries=[{"value": canary}])
+    path = str(experiment.case("c1", turn("Hola", {"contains": "."})).write(tmp_path))
+    result = run_cli("run", path)
+    assert_exit(result.code, 3)
+    assert "invalid JSONPath" in result.err
+    assert_not_in_outputs(canary, result.out, result.err)

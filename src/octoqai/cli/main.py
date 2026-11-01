@@ -11,7 +11,7 @@ import httpx
 from octoqai import __version__
 from octoqai.agents import AdapterKwargs, adapter_for
 from octoqai.errors import ConfigError
-from octoqai.experiment import load_experiment
+from octoqai.experiment import Experiment, load_experiment
 from octoqai.reports import write_json
 from octoqai.running import RunResult, run_experiment
 from octoqai.security import Redactor
@@ -71,6 +71,23 @@ def _run(
     adapter_kwargs: AdapterKwargs,
 ) -> int:
     exp = load_experiment(args.experiment, env=args.env)
+    redactor = Redactor.for_report(exp.security, exp.redacted_values)
+    try:
+        return _execute(args, exp, redactor, transport, adapter_kwargs)
+    except ConfigError as exc:
+        print(redactor.redact(f"Config error: {exc}"), file=sys.stderr)
+    except Exception as exc:
+        print(redactor.redact(f"Error: {type(exc).__name__}: {exc}"), file=sys.stderr)
+    return EXIT_ERROR
+
+
+def _execute(
+    args: argparse.Namespace,
+    exp: Experiment,
+    redactor: Redactor,
+    transport: httpx.BaseTransport | None,
+    adapter_kwargs: AdapterKwargs,
+) -> int:
     if args.tags:
         exp = exp.select(args.tags)
     out: Path = args.out
@@ -84,7 +101,6 @@ def _run(
     write_json(run, verdict, report)
     if _unreachable(run):
         first = next(turn.reply.error for turn in run.trials[0].turns if turn.reply.error)
-        redactor = Redactor.for_report(exp.security, exp.redacted_values)
         message = redactor.redact(f"Error: agent unreachable in every trial ({first}).")
         print(f"{message} Report: {report}", file=sys.stderr)
         return EXIT_ERROR
