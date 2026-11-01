@@ -1,6 +1,7 @@
 import pytest
 
-from octoqai.experiment import Experiment
+from octoqai.experiment import Experiment, SecurityConfig
+from octoqai.security import Detector, scan_reply
 from support.agents import TURN_CONTEXT, FakeJsonAgent, FakeSseAgent
 from support.builders import ExperimentBuilder
 from support.samples import NON_ASCII_CANARY
@@ -126,3 +127,14 @@ def test_error_body_is_decoded_with_its_declared_charset(build):
     fake.fails(500, NON_ASCII_CANARY, charset="iso-8859-1")
     r = adapter.send(TURN_CONTEXT)
     assert (r.error, r.body) == ("agent returned HTTP 500", NON_ASCII_CANARY)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("charset", ["idna", "punycode"])
+def test_error_body_with_an_unusable_charset_is_kept_as_utf8(build, charset):
+    fake, adapter = build()
+    fake.fails(500, "dato TEN-B-0042", charset=charset, encoding="ascii")
+    r = adapter.send(TURN_CONTEXT)
+    detector = Detector(SecurityConfig.model_validate({"canaries": [{"value": "TEN-B-0042"}]}))
+    assert (r.error, r.body) == ("agent returned HTTP 500", "dato TEN-B-0042")
+    assert [leak.location for leak in scan_reply(detector, r, [])] == ["body"]

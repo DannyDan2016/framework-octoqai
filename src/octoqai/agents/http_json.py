@@ -86,7 +86,7 @@ class HttpAgentAdapter:
         retries: list[str] = []
         starts: list[float] = []
         try:
-            content = with_retries(
+            content, charset = with_retries(
                 lambda: self._post(body, starts),
                 self._cfg.retry,
                 self._sleep,
@@ -98,9 +98,14 @@ class HttpAgentAdapter:
         except ReplyError as exc:
             return self._failure(exc, starts[-1], retries)
         start = starts[-1]
+        try:
+            payload = self._decode(content)
+        except ReplyError as exc:
+            exc.body = text_of(content, charset)
+            return self._failure(exc, start, retries)
         text = text_of(content)
         try:
-            reply = self._map_payload(self._decode(content), self._elapsed_ms(start))
+            reply = self._map_payload(payload, self._elapsed_ms(start))
         except ReplyError as exc:
             exc.body = text
             return self._failure(exc, start, retries)
@@ -125,7 +130,7 @@ class HttpAgentAdapter:
             retries=retries,
         )
 
-    def _post(self, body: Any, starts: list[float]) -> bytes:
+    def _post(self, body: Any, starts: list[float]) -> tuple[bytes, str]:
         starts.append(self._clock())
         with self._http.attempt(self._wait.total_s, self._timeout) as client:
             request = client.build_request(
@@ -134,7 +139,8 @@ class HttpAgentAdapter:
             with classify_delivery(self._wait, self._timeout):
                 response = client.send(request, stream=True)
                 try:
-                    return self._read(response, starts[-1])
+                    content = self._read(response, starts[-1])
+                    return content, response.charset_encoding or "utf-8"
                 finally:
                     response.close()
 

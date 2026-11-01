@@ -214,3 +214,11 @@ def test_partial_body_cut_mid_read_is_kept_and_scanned(agent_cfg, fake_agent, ti
     detector = Detector(SecurityConfig.model_validate({"canaries": [{"value": NON_ASCII_CANARY}]}))
     assert (r.error, r.body) == ("timeout after 7.0s", partial)
     assert [leak.location for leak in scan_reply(detector, r, [])] == ["body"]
+
+
+@pytest.mark.security
+def test_non_json_success_body_is_decoded_with_its_declared_charset(agent_cfg, fake_agent):
+    content = NON_ASCII_CANARY.encode("iso-8859-1")
+    fake_agent.returns(content, content_type="text/html; charset=iso-8859-1")
+    r = fake_agent.adapter(agent_cfg).send(TURN_CONTEXT)
+    assert (r.error, r.body) == ("agent response is not valid JSON", NON_ASCII_CANARY)

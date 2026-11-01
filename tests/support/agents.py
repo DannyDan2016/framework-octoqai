@@ -117,13 +117,22 @@ class FakeAgent:
         """Backoff sleeps requested by the adapter."""
         return self.clock.sleeps
 
-    def fails(self, status: int, body: str = "", charset: str | None = None) -> Self:
-        """Answer every turn with an HTTP error status, its body encoded in ``charset``."""
+    def fails(
+        self,
+        status: int,
+        body: str = "",
+        charset: str | None = None,
+        encoding: str | None = None,
+    ) -> Self:
+        """Answer every turn with an HTTP error status that declares ``charset``.
+
+        The body is encoded with ``encoding``, by default the declared ``charset``.
+        """
         if charset is None:
             self._handler = lambda request: httpx.Response(status, text=body)
             return self
         headers = {"content-type": f"text/plain; charset={charset}"}
-        content = body.encode(charset)
+        content = body.encode(encoding or charset)
         self._handler = lambda request: httpx.Response(status, headers=headers, content=content)
         return self
 
@@ -273,9 +282,10 @@ class FakeJsonAgent(FakeAgent):
         self._handler = lambda request: httpx.Response(200, json=payload)
         return self
 
-    def returns(self, content: bytes, status: int = 200) -> Self:
-        """Answer every turn with a raw body, e.g. invalid JSON."""
-        self._handler = lambda request: httpx.Response(status, content=content)
+    def returns(self, content: bytes, status: int = 200, content_type: str | None = None) -> Self:
+        """Answer every turn with a raw body, e.g. invalid JSON, and an optional content type."""
+        headers = {} if content_type is None else {"content-type": content_type}
+        self._handler = lambda request: httpx.Response(status, headers=headers, content=content)
         return self
 
     def adapter(self, cfg: AgentConfig) -> HttpAgentAdapter:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import random
 import threading
 import time
@@ -19,6 +20,7 @@ JITTER_SPREAD = 0.25
 HTTP_ERROR_MIN = 400
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_ERROR_BODY_BYTES = 64 * 1024
+NOT_CHARSETS = frozenset({"idna", "punycode", "unicode-escape", "raw-unicode-escape", "undefined"})
 
 
 class Watchdog(Protocol):
@@ -202,9 +204,11 @@ def client_timeout(wait: EffectiveWait, read_s: float) -> httpx.Timeout:
 
 def text_of(data: bytes, encoding: str = "utf-8") -> str:
     try:
-        return data.decode(encoding, errors="replace")
-    except LookupError:
-        return data.decode("utf-8", errors="replace")
+        if codecs.lookup(encoding).name not in NOT_CHARSETS:
+            return data.decode(encoding, errors="replace")
+    except (LookupError, UnicodeError):
+        pass
+    return data.decode("utf-8", errors="replace")
 
 
 def read_bounded(
