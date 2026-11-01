@@ -30,7 +30,7 @@ TURN_CONTEXT = {
 EVENT_STREAM = "text/event-stream"
 DONE = "data: [DONE]\n\n"
 
-_Frame = tuple[float, str]
+_Frame = tuple[float, str | bytes]
 _Handler = Callable[[httpx.Request], httpx.Response]
 
 
@@ -80,6 +80,29 @@ class FakeAgent:
     def fails(self, status: int, body: str = "") -> Self:
         """Answer every turn with an HTTP error status."""
         self._handler = lambda request: httpx.Response(status, text=body)
+        return self
+
+    def sends(
+        self,
+        chunk: str,
+        times: int,
+        *,
+        status: int = 200,
+        gap_s: float = 0.0,
+        content_type: str = "text/plain",
+    ) -> Self:
+        """Answer with ``chunk`` repeated ``times``; the fake clock advances ``gap_s`` per chunk."""
+        data = chunk.encode("utf-8")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            def body() -> Iterator[bytes]:
+                for _ in range(times):
+                    self.clock.advance(gap_s)
+                    yield data
+
+            return httpx.Response(status, headers={"content-type": content_type}, content=body())
+
+        self._handler = handler
         return self
 
     def times_out(self) -> Self:
@@ -244,7 +267,7 @@ class FakeSseAgent(FakeAgent):
             def body() -> Iterator[bytes]:
                 for delay, text in frames:
                     self.clock.advance(delay)
-                    yield text.encode("utf-8")
+                    yield text.encode("utf-8") if isinstance(text, str) else text
                 if cut:
                     raise httpx.ReadTimeout("stalled", request=request)
 

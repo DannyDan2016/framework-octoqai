@@ -59,3 +59,11 @@ def test_never_retries_once_the_agent_may_have_the_request(build, behaviour):
     r = adapter.send(TURN_CONTEXT)
     assert r.error is not None and r.retries == []
     assert len(fake.requests) == 1 and fake.sleeps == []
+
+
+@pytest.mark.parametrize(("gap_s", "kib"), [(1.0, 5), (0.0, 64)], ids=["deadline", "cap"])
+def test_endless_error_body_stops_at_the_deadline_or_cap_and_keeps_the_status(build, gap_s, kib):
+    fake, adapter = build(wait={"total_s": 5})
+    fake.sends("x" * 1024, 2000, status=500, gap_s=gap_s)
+    r = adapter.send(TURN_CONTEXT)
+    assert (r.error, len(r.body)) == ("agent returned HTTP 500", kib * 1024)

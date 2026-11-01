@@ -13,9 +13,13 @@ import httpx
 
 from octoqai.agents._delivery import (
     HTTP_ERROR_MIN,
+    MAX_ERROR_BODY_BYTES,
     NotDelivered,
     classify_delivery,
     client_timeout,
+    read_bounded,
+    read_capped,
+    text_of,
     with_retries,
 )
 from octoqai.agents._mapping import (
@@ -61,6 +65,7 @@ class HttpAgentAdapter:
         self._clock = clock
         self._sleep = sleep
         self._jitter = jitter
+        self._timeout = f"timeout after {self._wait.total_s}s"
         self._client = httpx.Client(
             transport=transport, timeout=client_timeout(self._wait, read_s=self._wait.total_s)
         )
@@ -80,7 +85,7 @@ class HttpAgentAdapter:
         retries: list[str] = []
         starts: list[float] = []
         try:
-            response = with_retries(
+            content = with_retries(
                 lambda: self._post(body, starts),
                 self._cfg.retry,
                 self._sleep,
@@ -92,12 +97,13 @@ class HttpAgentAdapter:
         except ReplyError as exc:
             return self._failure(exc, starts[-1], retries)
         start = starts[-1]
+        text = text_of(content)
         try:
-            reply = self._map_payload(self._decode(response), self._elapsed_ms(start))
+            reply = self._map_payload(self._decode(content), self._elapsed_ms(start))
         except ReplyError as exc:
-            exc.body = response.text
+            exc.body = text
             return self._failure(exc, start, retries)
-        return dataclasses.replace(reply, body=response.text, retries=retries)
+        return dataclasses.replace(reply, body=text, retries=retries)
 
     def close(self) -> None:
         """Release the underlying HTTP connections."""
@@ -118,21 +124,44 @@ class HttpAgentAdapter:
             retries=retries,
         )
 
-    def _post(self, body: Any, starts: list[float]) -> httpx.Response:
+    def _post(self, body: Any, starts: list[float]) -> bytes:
+        request = self._client.build_request(
+            self._cfg.method, self._cfg.url, json=body, headers=self._cfg.headers
+        )
         starts.append(self._clock())
-        with classify_delivery(self._wait, f"timeout after {self._wait.total_s}s"):
-            return self._client.request(
-                self._cfg.method, self._cfg.url, json=body, headers=self._cfg.headers
-            )
+        with classify_delivery(self._wait, self._timeout):
+            response = self._client.send(request, stream=True)
+            try:
+                return self._read(response, starts[-1])
+            finally:
+                response.close()
+
+    def _read(self, response: httpx.Response, start: float) -> bytes:
+        if response.status_code >= HTTP_ERROR_MIN:
+            body = read_capped(response.iter_bytes(), lambda: self._expired(start))
+            raise ReplyError(f"agent returned HTTP {response.status_code}", body=body)
+        kept = bytearray()
+        try:
+            for chunk in read_bounded(response.iter_bytes(), lambda: self._deadline(start)):
+                kept += chunk
+        except ReplyError as exc:
+            exc.body = text_of(bytes(kept[:MAX_ERROR_BODY_BYTES]))
+            raise
+        return bytes(kept)
+
+    def _expired(self, start: float) -> bool:
+        return self._clock() - start > self._wait.total_s
+
+    def _deadline(self, start: float) -> None:
+        if self._expired(start):
+            raise ReplyError(self._timeout)
 
     @staticmethod
-    def _decode(response: httpx.Response) -> Any:
-        if response.status_code >= HTTP_ERROR_MIN:
-            raise ReplyError(f"agent returned HTTP {response.status_code}", body=response.text)
+    def _decode(content: bytes) -> Any:
         try:
-            return response.json()
+            return json.loads(content)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise ReplyError("agent response is not valid JSON", body=response.text) from exc
+            raise ReplyError("agent response is not valid JSON") from exc
 
     def _map_payload(self, payload: Any, latency_ms: float) -> AgentReply:
         answer = first_match(self._answer, payload)

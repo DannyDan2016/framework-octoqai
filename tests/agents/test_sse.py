@@ -5,7 +5,7 @@ import pytest
 from octoqai.agents import HttpAgentAdapter, SseAgentAdapter, adapter_for
 from octoqai.errors import ConfigError
 from octoqai.experiment import Experiment
-from support.agents import DONE, TURN_CONTEXT, FakeSseAgent, sse_event
+from support.agents import DONE, EVENT_STREAM, TURN_CONTEXT, FakeSseAgent, sse_event
 from support.builders import ExperimentBuilder
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
@@ -188,6 +188,49 @@ def test_dataless_blocks_cannot_outlive_the_total_deadline(sse, field):
     r = send(sse, wait={"total_s": 5})
     assert r.error == "no stream fragment within 5s"
     assert sse.clock.now <= 6
+
+
+def test_frames_without_a_line_break_are_capped_by_total_and_keep_their_data(sse):
+    sse.script((3.0, sse_event("token", {"delta": "a"})), (1.0, "data: x"), *[(1.0, "x")] * 100)
+    r = send(sse, wait={"total_s": 5})
+    assert r.error == "stream exceeded 5s"
+    assert r.fragments == ['{"delta": "a"}', "xx"] and sse.clock.now == 6
+
+
+def test_wrong_content_type_body_is_capped_and_kept(sse):
+    r = send(sse.sends("x" * 1024, 2000, content_type="text/html"))
+    assert r.error == "expected text/event-stream, got text/html"
+    assert len(r.body) == 64 * 1024
+
+
+def test_stream_over_the_byte_cap_is_an_error(sse):
+    r = send(sse.sends(": " + "x" * (2**20 - 3) + "\n", 17, content_type=EVENT_STREAM))
+    assert r.error == "stream exceeded 16777216 bytes"
+
+
+def test_stream_over_the_byte_cap_keeps_the_pending_data(sse):
+    r = send(sse.script((0.0, "data: a"), *[(0.0, "x" * 2**20)] * 17))
+    assert r.error == "stream exceeded 16777216 bytes"
+    assert len(r.fragments) == 1 and r.fragments[0].startswith("axx")
+
+
+def test_end_of_stream_after_a_deadline_is_an_error(sse):
+    sse.script((1.0, sse_event("token", {"delta": "a"})), (10.0, ""))
+    r = send(sse, wait={"total_s": 5})
+    assert r.error == "stream idle for more than 5s" and r.answer == "a"
+
+
+def test_line_break_split_across_chunks_is_a_single_break(sse):
+    sse.script((0.0, "event: token\r"), (0.0, '\ndata: {"delta": "a"}\r\n\r\n'))
+    r = send(sse, stream={"delta": "$.delta", "event": "token"})
+    assert (r.answer, r.error) == ("a", None)
+
+
+def test_multibyte_character_split_across_chunks_is_kept(sse):
+    data = 'data: {"delta": "ñ"}\n\n'.encode()
+    cut = data.index(b"\xb1")
+    r = send(sse.script((0.0, data[:cut]), (0.0, data[cut:])))
+    assert (r.answer, r.error) == ("ñ", None)
 
 
 def test_adapter_for_picks_the_transport_from_the_config():

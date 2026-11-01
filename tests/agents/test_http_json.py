@@ -188,3 +188,15 @@ def test_final_failure_latency_starts_at_the_last_attempt(agent_cfg, fake_agent)
     r = fake_agent.times_out().refuses_first(1).adapter(cfg).send(TURN_CONTEXT)
     assert r.error.startswith("timeout") and r.latency_ms == 0
     assert fake_agent.sleeps == [0.5]
+
+
+def test_endless_body_is_capped_by_the_total_deadline_and_kept(agent_cfg, fake_agent):
+    cfg = _with(agent_cfg, wait=WaitPolicy(total_s=4))
+    r = fake_agent.sends("x" * 1024, 2000, gap_s=1.0).adapter(cfg).send(TURN_CONTEXT)
+    assert (r.error, len(r.body)) == ("timeout after 4.0s", 4 * 1024)
+    assert fake_agent.clock.now == 5
+
+
+def test_body_over_the_byte_cap_is_an_error(agent_cfg, fake_agent):
+    r = fake_agent.sends("x" * 2**20, 17).adapter(agent_cfg).send(TURN_CONTEXT)
+    assert r.error == "stream exceeded 16777216 bytes"

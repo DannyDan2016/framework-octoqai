@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import codecs
 import json
 import random
+import re
 import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
@@ -14,8 +16,11 @@ import httpx
 from octoqai.agents._delivery import (
     HTTP_ERROR_MIN,
     NotDelivered,
+    TooLarge,
     classify_delivery,
     client_timeout,
+    read_bounded,
+    read_capped,
     transport_failure,
     with_retries,
 )
@@ -32,6 +37,8 @@ from octoqai.errors import ConfigError
 from octoqai.experiment import AgentConfig, StreamConfig, render
 
 EVENT_STREAM = "text/event-stream"
+_CR = "\r"
+_LINE_BREAK = re.compile(r"\r\n|\r|\n")
 
 
 @dataclass
@@ -56,6 +63,41 @@ class _Block:
 
     def reset(self) -> None:
         self.lines.clear()
+
+
+class _Splitter:
+    def __init__(self) -> None:
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._parts: list[str] = []
+        self._held = ""
+
+    @property
+    def pending(self) -> str:
+        return "".join(self._parts)
+
+    def feed(self, chunk: bytes) -> list[str]:
+        return self._split(self._decoder.decode(chunk))
+
+    def flush(self) -> list[str]:
+        lines = self._split(self._decoder.decode(b"", final=True))
+        rest = self.pending
+        if self._held or rest:
+            lines.append(rest)
+        self._parts, self._held = [], ""
+        return lines
+
+    def _split(self, text: str) -> list[str]:
+        if not text:
+            return []
+        joined = self._held + text
+        self._held = _CR if joined.endswith(_CR) else ""
+        pieces = _LINE_BREAK.split(joined.removesuffix(_CR) if self._held else joined)
+        if len(pieces) == 1:
+            self._parts.append(pieces[0])
+            return []
+        lines = ["".join([*self._parts, pieces[0]]), *pieces[1:-1]]
+        self._parts = [pieces[-1]]
+        return lines
 
 
 class SseAgentAdapter:
@@ -146,7 +188,9 @@ class SseAgentAdapter:
     def _consume(self, response: httpx.Response, state: _Stream) -> None:
         try:
             self._check_response(response, state)
-            for event in parse_sse(self._watched(response.iter_lines(), state)):
+            block = _Block()
+            lines = self._lines(response, block, state)
+            for event in parse_sse(self._watched(lines, block, state)):
                 if self._on_event(event, state):
                     return
         except httpx.TimeoutException as exc:
@@ -154,10 +198,22 @@ class SseAgentAdapter:
         except httpx.HTTPError as exc:
             raise transport_failure(exc) from exc
 
-    def _watched(self, lines: Iterable[str], state: _Stream) -> Iterator[str]:
-        block = _Block()
+    def _lines(self, response: httpx.Response, block: _Block, state: _Stream) -> Iterator[str]:
+        splitter = _Splitter()
+        chunks = read_bounded(
+            response.iter_bytes(), lambda: self._guard(block, state, splitter.pending)
+        )
+        try:
+            for chunk in chunks:
+                yield from splitter.feed(chunk)
+        except TooLarge:
+            self._keep(block, splitter.pending, self._clock(), state)
+            raise
+        yield from splitter.flush()
+
+    def _watched(self, lines: Iterable[str], block: _Block, state: _Stream) -> Iterator[str]:
         for raw in lines:
-            text = raw.removesuffix("\r")
+            text = raw.removesuffix(_CR)
             block.add(text)
             self._guard(block, state)
             if not text:
@@ -165,14 +221,18 @@ class SseAgentAdapter:
             yield raw
         self._guard(block, state)
 
-    def _guard(self, block: _Block, state: _Stream) -> None:
+    def _guard(self, block: _Block, state: _Stream, partial: str = "") -> None:
         now = self._clock()
         error = self._check_deadlines(now, state)
         if error is None:
             return
+        self._keep(block, partial, now, state)
+        raise ReplyError(error)
+
+    def _keep(self, block: _Block, partial: str, now: float, state: _Stream) -> None:
+        block.add(partial)
         for event in self._events(block):
             self._record(event, now, state)
-        raise ReplyError(error)
 
     def _events(self, block: _Block) -> list[SseEvent]:
         events = parse_sse([*block.lines, ""])
@@ -186,11 +246,9 @@ class SseAgentAdapter:
             error = f"expected {EVENT_STREAM}, got {content_type}"
         else:
             return
-        try:
-            response.read()
-        except httpx.HTTPError:
-            raise ReplyError(error) from None
-        state.body = response.text
+        state.body = read_capped(
+            response.iter_bytes(), lambda: self._check_deadlines(self._clock(), state) is not None
+        )
         raise ReplyError(error)
 
     def _on_event(self, event: SseEvent, state: _Stream) -> bool:
