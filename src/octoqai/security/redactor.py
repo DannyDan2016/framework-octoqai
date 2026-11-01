@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from typing import Any
 
 from octoqai.experiment import SecurityConfig
+from octoqai.security._json_text import decode_json, string_leaves
 from octoqai.security.detectors import PRIORITY, Detector, Finding
 
 REDACTED = "[redacted]"
@@ -60,7 +62,9 @@ class Redactor:
         """Replace the union of all findings in ``text`` with placeholders.
 
         Overlapping findings are merged into one span whose placeholder comes from the
-        highest-priority kind: canary, secret, environment value, personal data.
+        highest-priority kind: canary, secret, environment value, personal data. JSON text
+        with a finding in any decoded string is decoded, redacted and written again without
+        escapes, so a unicode escape or an escaped slash cannot hide a value.
 
         Args:
             text: The text to clean.
@@ -68,6 +72,19 @@ class Redactor:
         Returns:
             The text with every sensitive span masked.
         """
+        decoded = decode_json(text)
+        if decoded is None or not self._hides(decoded):
+            return self._mask(text)
+        try:
+            cleaned = self.redact_tree(decoded)
+        except RecursionError:
+            return REDACTED
+        return self._mask(json.dumps(cleaned, ensure_ascii=False))
+
+    def _hides(self, decoded: Any) -> bool:
+        return any(self._detector.candidates(leaf) for leaf in string_leaves(decoded))
+
+    def _mask(self, text: str) -> str:
         groups = _merged(self._detector.candidates(text))
         for group in reversed(groups):
             lead = min(group, key=lambda f: (PRIORITY[f.kind], f.start, f.start - f.end))

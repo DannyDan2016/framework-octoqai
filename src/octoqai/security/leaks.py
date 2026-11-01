@@ -6,6 +6,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
 from octoqai.agents.port import AgentReply
+from octoqai.security._json_text import decode_json, string_leaves
 from octoqai.security.detectors import Detector, mask
 
 
@@ -19,13 +20,24 @@ class Leak:
     masked: str
 
 
+def _with_leaves(location: str, text: str) -> Iterator[tuple[str, str]]:
+    yield location, text
+    decoded = decode_json(text)
+    if decoded is not None:
+        for leaf in string_leaves(decoded):
+            yield location, leaf
+
+
 def _texts(reply: AgentReply) -> Iterator[tuple[str, str]]:
     for index, fragment in enumerate(reply.fragments, start=1):
-        yield f"fragment {index}", fragment
+        yield from _with_leaves(f"fragment {index}", fragment)
     if reply.answer is not None:
-        yield "answer", reply.answer
+        yield from _with_leaves("answer", reply.answer)
     if reply.body is not None:
-        yield "body", reply.body
+        yield from _with_leaves("body", reply.body)
+    if reply.raw is not None:
+        for leaf in string_leaves(reply.raw):
+            yield "body", leaf
 
 
 def scan_reply(detector: Detector, reply: AgentReply, user_messages: Sequence[str]) -> list[Leak]:
@@ -33,7 +45,8 @@ def scan_reply(detector: Detector, reply: AgentReply, user_messages: Sequence[st
 
     Args:
         detector: The detector built from the experiment security configuration.
-        reply: The agent reply, scanned as fragments, then answer, then body.
+        reply: The agent reply, scanned as fragments, then answer, then body; JSON text
+            is also decoded and every string in it scanned, so escapes cannot hide a value.
         user_messages: Every user message of the conversation up to this turn.
 
     Returns:

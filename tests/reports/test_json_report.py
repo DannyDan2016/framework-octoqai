@@ -134,3 +134,14 @@ def test_report_masks_canary_in_error_and_check_messages(tmp_path):
     assert canary not in str(data)
     assert "[canary:canary-1]" in turn_data["error"]
     assert "[canary:canary-1]" in turn_data["checks"][0]["detail"]
+
+
+@pytest.mark.security
+def test_report_masks_a_canary_hidden_by_json_escapes(tmp_path):
+    canary = samples.NON_ASCII_CANARY
+    run, verdict = _secure_run(json.dumps({"dbg": canary}), {"canaries": [{"value": canary}]})
+    write_json(run, verdict, tmp_path / "r.json")
+    text = (tmp_path / "r.json").read_text(encoding="utf-8")
+    data = json.loads(text)
+    assert "contrase" not in text and "[canary:canary-1]" in data["trials"][0]["turns"][0]["answer"]
+    assert data["trials"][0]["leaks"] == 1

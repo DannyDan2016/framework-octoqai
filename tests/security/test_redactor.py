@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from octoqai.experiment import SecurityConfig
@@ -65,3 +67,42 @@ def test_report_redactor_ignores_allow_patterns():
 
 def test_touching_spans_are_not_merged():
     assert redactor(["abcd", "efgh"]).redact("abcdefgh") == "[redacted][redacted]"
+
+
+def escaping_redactor():
+    canaries = [
+        {"value": samples.NON_ASCII_CANARY, "label": "acento"},
+        {"value": samples.SLASH_CANARY, "label": "barra"},
+    ]
+    return Redactor(Detector(SecurityConfig.model_validate({"canaries": canaries})))
+
+
+def test_values_hidden_by_json_escapes_are_masked():
+    text = json.dumps({"a": samples.NON_ASCII_CANARY, "b": samples.SLASH_CANARY})
+    text = text.replace("/", "\\/")
+    result = escaping_redactor().redact(text)
+    assert json.loads(result) == {"a": "[canary:acento]", "b": "[canary:barra]"}
+
+
+def test_credentials_url_with_escaped_slashes_is_masked():
+    result = escaping_redactor().redact('{"u": "' + samples.ESCAPED_DATABASE_URL + '"}')
+    assert "hunter2" not in result and "[secret:url with credentials]" in result
+
+
+def test_json_without_findings_keeps_its_text():
+    text = '{"a":1,  "b": "sin datos"}'
+    assert escaping_redactor().redact(text) == text
+
+
+def test_json_too_deep_to_redact_is_redacted_whole(monkeypatch):
+    def too_deep(self, obj):
+        raise RecursionError
+
+    monkeypatch.setattr(Redactor, "redact_tree", too_deep)
+    text = json.dumps({"a": samples.NON_ASCII_CANARY})
+    assert escaping_redactor().redact(text) == "[redacted]"
+
+
+def test_json_too_deep_to_decode_is_masked_as_text():
+    text = "[" * 100_000 + samples.SLASH_CANARY + "]" * 100_000
+    assert samples.SLASH_CANARY not in escaping_redactor().redact(text)
