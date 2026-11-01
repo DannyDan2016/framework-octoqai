@@ -221,8 +221,7 @@ def test_non_json_success_body_is_decoded_with_its_declared_charset(agent_cfg, f
     content = NON_ASCII_CANARY.encode("iso-8859-1")
     fake_agent.returns(content, content_type="text/html; charset=iso-8859-1")
     r = fake_agent.adapter(agent_cfg).send(TURN_CONTEXT)
-    assert r.error == "agent response is not valid JSON"
-    assert r.body.split("\n")[0] == NON_ASCII_CANARY
+    assert (r.error, r.body) == ("agent response is not valid JSON", NON_ASCII_CANARY)
 
 
 def _canary_locations(reply, value):
@@ -255,3 +254,15 @@ def test_partial_body_is_decoded_with_its_declared_charset(
     r = fake_agent.adapter(cfg).send(TURN_CONTEXT)
     assert r.error == "timeout after 7.0s"
     assert _canary_locations(r, value) == ["body"]
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("charset", ["iso-8859-1", "utf-16"], ids=["declared", "mismatched"])
+def test_non_json_success_body_with_an_escaped_canary_is_scanned_in_every_decode(
+    agent_cfg, fake_agent, charset
+):
+    content = '{"e": "\\u0054EN-B-0042 \u00e9"}'.encode("iso-8859-1")
+    fake_agent.returns(content, content_type=f"text/plain; charset={charset}")
+    r = fake_agent.adapter(agent_cfg).send(TURN_CONTEXT)
+    assert r.error == "agent response is not valid JSON"
+    assert _canary_locations(r, "TEN-B-0042") == ["body"]

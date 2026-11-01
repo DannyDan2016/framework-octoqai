@@ -53,6 +53,7 @@ class _Stream:
     first_at: float | None = None
     last_at: float | None = None
     body: str | None = None
+    alt_body: str | None = None
 
 
 @dataclass
@@ -245,11 +246,13 @@ class SseAgentAdapter:
             error = f"expected {EVENT_STREAM}, got {content_type}"
         else:
             return
-        state.body = read_capped(
+        body = read_capped(
             response.iter_bytes(),
             lambda: self._check_deadlines(self._clock(), state) is not None,
             response.charset_encoding or "utf-8",
         )
+        if body is not None:
+            state.body, state.alt_body = body.text, body.alt
         raise AgentAnswered(error)
 
     def _on_event(self, event: SseEvent, state: _Stream) -> bool:
@@ -319,4 +322,5 @@ class SseAgentAdapter:
             fragments=state.fragments,
             body=state.body,
             retries=retries,
+            alt_body=state.alt_body,
         )

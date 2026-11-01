@@ -33,8 +33,9 @@ def _texts(reply: AgentReply) -> Iterator[tuple[str, str]]:
         yield from _with_leaves(f"fragment {index}", fragment)
     if reply.answer is not None:
         yield from _with_leaves("answer", reply.answer)
-    if reply.body is not None:
-        yield from _with_leaves("body", reply.body)
+    for body in (reply.body, reply.alt_body):
+        if body is not None:
+            yield from _with_leaves("body", body)
     if reply.raw is not None:
         for leaf in string_leaves(reply.raw):
             yield "body", leaf
@@ -45,8 +46,9 @@ def scan_reply(detector: Detector, reply: AgentReply, user_messages: Sequence[st
 
     Args:
         detector: The detector built from the experiment security configuration.
-        reply: The agent reply, scanned as fragments, then answer, then body; JSON text
-            is also decoded and every string in it scanned, so escapes cannot hide a value.
+        reply: The agent reply, scanned as fragments, then answer, then each decode of the
+            body; JSON text is also decoded and every string in it scanned, so escapes cannot
+            hide a value.
         user_messages: Every user message of the conversation up to this turn.
 
     Returns:

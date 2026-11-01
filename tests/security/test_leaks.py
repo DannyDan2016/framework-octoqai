@@ -121,3 +121,10 @@ def test_non_json_text_is_scanned_raw_only():
 def test_deeply_nested_json_does_not_break_the_scan():
     body = "[" * 100_000 + "]" * 100_000
     assert found(reply(body=body)) == []
+
+
+@pytest.mark.parametrize("body", ["line one\nline two", '{"e": "\\u0054EN-B-0042"}'])
+def test_each_decode_of_the_body_is_scanned_alone_and_counted_once(body):
+    alt = '{"e": "\\u0054EN-B-0042"}'
+    r = AgentReply(None, None, None, 1.0, "agent returned HTTP 500", body=body, alt_body=alt)
+    assert [leak.location for leak in scan_reply(DETECTOR, r, [])] == ["body"]

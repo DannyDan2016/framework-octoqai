@@ -13,14 +13,16 @@ from octoqai.agents._delivery import (
     MAX_ERROR_BODY_BYTES,
     AdapterKwargs,
     AgentAnswered,
+    Decoded,
     NotDelivered,
     Seams,
     WatchedClient,
     classify_delivery,
     client_timeout,
+    decode_body,
+    keep_body,
     read_bounded,
     read_capped,
-    text_of,
     transport_failure,
     with_retries,
 )
@@ -37,8 +39,8 @@ from octoqai.errors import ConfigError
 from octoqai.experiment import AgentConfig, render
 
 
-def _kept_text(kept: bytearray, encoding: str) -> str:
-    return text_of(bytes(kept[:MAX_ERROR_BODY_BYTES]), encoding)
+def _kept_body(kept: bytearray, encoding: str) -> Decoded:
+    return decode_body(bytes(kept[:MAX_ERROR_BODY_BYTES]), encoding)
 
 
 class HttpAgentAdapter:
@@ -101,9 +103,8 @@ class HttpAgentAdapter:
         try:
             payload = self._decode(content)
         except ReplyError as exc:
-            exc.body = text_of(content, charset)
-            return self._failure(exc, start, retries)
-        text = text_of(content)
+            return self._failure(keep_body(exc, decode_body(content, charset)), start, retries)
+        text = decode_body(content).text
         try:
             reply = self._map_payload(payload, self._elapsed_ms(start))
         except ReplyError as exc:
@@ -128,6 +129,7 @@ class HttpAgentAdapter:
             exc.raw,
             body=exc.body,
             retries=retries,
+            alt_body=exc.alt_body,
         )
 
     def _post(self, body: Any, starts: list[float]) -> tuple[bytes, str]:
@@ -148,16 +150,17 @@ class HttpAgentAdapter:
         charset = response.charset_encoding or "utf-8"
         if response.status_code >= HTTP_ERROR_MIN:
             body = read_capped(response.iter_bytes(), lambda: self._expired(start), charset)
-            raise AgentAnswered(f"agent returned HTTP {response.status_code}", body=body)
+            raise keep_body(AgentAnswered(f"agent returned HTTP {response.status_code}"), body)
         kept = bytearray()
         try:
             for chunk in read_bounded(response.iter_bytes(), lambda: self._deadline(start)):
                 kept += chunk
         except ReplyError as exc:
-            exc.body = _kept_text(kept, charset)
+            keep_body(exc, _kept_body(kept, charset))
             raise
         except httpx.HTTPError as exc:
-            raise ReplyError(self._read_error(exc), body=_kept_text(kept, charset)) from exc
+            error = ReplyError(self._read_error(exc))
+            raise keep_body(error, _kept_body(kept, charset)) from exc
         return bytes(kept)
 
     def _read_error(self, exc: httpx.HTTPError) -> str:

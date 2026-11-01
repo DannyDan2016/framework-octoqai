@@ -18,11 +18,18 @@ MISSING = object()
 
 
 class ReplyError(Exception):
-    def __init__(self, error: str, raw: Any = None, body: str | None = None) -> None:
+    def __init__(
+        self,
+        error: str,
+        raw: Any = None,
+        body: str | None = None,
+        alt_body: str | None = None,
+    ) -> None:
         super().__init__(error)
         self.error = error
         self.raw = raw
         self.body = body
+        self.alt_body = alt_body
 
 
 @contextmanager

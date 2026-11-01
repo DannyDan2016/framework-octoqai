@@ -8,7 +8,11 @@ from typing import Any, Protocol
 
 @dataclass
 class AgentReply:
-    """What the agent answered to one turn."""
+    """What the agent answered to one turn.
+
+    ``body`` is the raw body decoded with its declared charset; when its UTF-8 decode is a
+    different text, that text is kept in ``alt_body`` so that both are scanned for leaks.
+    """
 
     answer: str | None
     tool_calls: list[str] | None
@@ -20,6 +24,7 @@ class AgentReply:
     fragments: list[str] = field(default_factory=list)
     body: str | None = None
     retries: list[str] = field(default_factory=list)
+    alt_body: str | None = None
 
 
 class AgentPort(Protocol):

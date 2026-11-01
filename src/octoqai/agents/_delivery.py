@@ -136,7 +136,7 @@ class WatchedClient:
 
 def _interrupted(exc: Exception, message: str) -> ReplyError:
     if isinstance(exc, ReplyError):
-        return ReplyError(message, exc.raw, exc.body)
+        return ReplyError(message, exc.raw, exc.body, exc.alt_body)
     return ReplyError(message)
 
 
@@ -211,12 +211,24 @@ def _declared_text(data: bytes, encoding: str) -> str | None:
     return None
 
 
-def text_of(data: bytes, encoding: str = "utf-8") -> str:
+@dataclass(frozen=True)
+class Decoded:
+    text: str
+    alt: str | None = None
+
+
+def decode_body(data: bytes, encoding: str = "utf-8") -> Decoded:
     utf8 = data.decode("utf-8", errors="replace")
     declared = _declared_text(data, encoding)
     if declared is None or declared == utf8:
-        return utf8
-    return f"{declared}\n{utf8}"
+        return Decoded(utf8)
+    return Decoded(declared, utf8)
+
+
+def keep_body(exc: ReplyError, body: Decoded | None) -> ReplyError:
+    exc.body = None if body is None else body.text
+    exc.alt_body = None if body is None else body.alt
+    return exc
 
 
 def read_bounded(
@@ -236,7 +248,7 @@ def read_capped(
     expired: Callable[[], bool],
     encoding: str = "utf-8",
     cap: int = MAX_ERROR_BODY_BYTES,
-) -> str | None:
+) -> Decoded | None:
     kept = bytearray()
 
     def check() -> None:
@@ -251,4 +263,4 @@ def read_capped(
     except (_Expired, httpx.HTTPError):
         if not kept:
             return None
-    return text_of(bytes(kept), encoding)
+    return decode_body(bytes(kept), encoding)
