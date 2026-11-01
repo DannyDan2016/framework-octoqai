@@ -21,6 +21,7 @@ from octoqai.agents._delivery import (
     read_bounded,
     read_capped,
     text_of,
+    transport_failure,
     with_retries,
 )
 from octoqai.agents._mapping import (
@@ -34,6 +35,10 @@ from octoqai.agents._mapping import (
 from octoqai.agents.port import AgentReply
 from octoqai.errors import ConfigError
 from octoqai.experiment import AgentConfig, render
+
+
+def _kept_text(kept: bytearray) -> str:
+    return text_of(bytes(kept[:MAX_ERROR_BODY_BYTES]))
 
 
 class HttpAgentAdapter:
@@ -142,9 +147,16 @@ class HttpAgentAdapter:
             for chunk in read_bounded(response.iter_bytes(), lambda: self._deadline(start)):
                 kept += chunk
         except ReplyError as exc:
-            exc.body = text_of(bytes(kept[:MAX_ERROR_BODY_BYTES]))
+            exc.body = _kept_text(kept)
             raise
+        except httpx.HTTPError as exc:
+            raise ReplyError(self._read_error(exc), body=_kept_text(kept)) from exc
         return bytes(kept)
+
+    def _read_error(self, exc: httpx.HTTPError) -> str:
+        if isinstance(exc, httpx.TimeoutException):
+            return self._timeout
+        return transport_failure(exc).error
 
     def _expired(self, start: float) -> bool:
         return self._clock() - start > self._wait.total_s

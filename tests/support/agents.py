@@ -134,21 +134,30 @@ class FakeAgent:
         self._handler = handler
         return self
 
-    def stalls(self, while_connecting: bool = False, status: int | None = None) -> Self:
+    def stalls(
+        self,
+        while_connecting: bool = False,
+        status: int | None = None,
+        body: str = "boom",
+        timeout: bool = False,
+    ) -> Self:
         """Block until the watchdog fires; the read then fails as on a closed socket.
 
-        With ``status``, the agent first answers that status and the body ``boom``, then blocks.
+        With ``status``, the agent first answers that status and ``body``, then blocks; with
+        ``timeout`` the blocked read times out instead of being closed by the watchdog.
         """
 
         def handler(request: httpx.Request) -> httpx.Response:
             if status is None:
                 self._closed_by_watchdog(request, while_connecting)
 
-            def body() -> Iterator[bytes]:
-                yield b"boom"
+            def content() -> Iterator[bytes]:
+                yield body.encode("utf-8")
+                if timeout:
+                    _read_timeout(request)
                 self._closed_by_watchdog(request)
 
-            return httpx.Response(status or 500, content=body())
+            return httpx.Response(status or 500, content=content())
 
         self._handler = handler
         return self

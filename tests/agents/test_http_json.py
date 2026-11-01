@@ -2,9 +2,11 @@ import pytest
 
 from octoqai.agents import AgentReply, HttpAgentAdapter
 from octoqai.errors import ConfigError
-from octoqai.experiment import AgentConfig, RetryPolicy, WaitPolicy
+from octoqai.experiment import AgentConfig, RetryPolicy, SecurityConfig, WaitPolicy
+from octoqai.security import Detector, scan_reply
 from support.agents import RESPONSE_MAP, TURN_CONTEXT
 from support.builders import DEFAULT_URL
+from support.samples import NON_ASCII_CANARY
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
@@ -200,3 +202,15 @@ def test_endless_body_is_capped_by_the_total_deadline_and_kept(agent_cfg, fake_a
 def test_body_over_the_byte_cap_is_an_error(agent_cfg, fake_agent):
     r = fake_agent.sends("x" * 2**20, 17).adapter(agent_cfg).send(TURN_CONTEXT)
     assert r.error == "stream exceeded 16777216 bytes"
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("timeout", [False, True], ids=["watchdog", "read-timeout"])
+def test_partial_body_cut_mid_read_is_kept_and_scanned(agent_cfg, fake_agent, timeout):
+    cfg = _with(agent_cfg, wait=WaitPolicy(total_s=7))
+    partial = '{"answer": "ok", "dbg": "' + NON_ASCII_CANARY
+    fake_agent.stalls(status=200, body=partial, timeout=timeout)
+    r = fake_agent.adapter(cfg).send(TURN_CONTEXT)
+    detector = Detector(SecurityConfig.model_validate({"canaries": [{"value": NON_ASCII_CANARY}]}))
+    assert (r.error, r.body) == ("timeout after 7.0s", partial)
+    assert [leak.location for leak in scan_reply(detector, r, [])] == ["body"]
