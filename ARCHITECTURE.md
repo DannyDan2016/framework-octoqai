@@ -50,6 +50,28 @@ returning an `AgentReply`. An **adapter** is a class that fulfils a port using r
 example `HttpAgentAdapter`. The runner receives a port, so a new transport never changes the core,
 and tests can pass any object with the same methods.
 
+## Time and size limits of an agent call
+
+Both adapters share these rules (`agents/_delivery.py`):
+
+- `wait.total_s` is a wall-clock cap on one attempt, from sending the request to the last byte
+  read. It is enforced twice. Every chunk read checks the deadlines (`first_fragment_s`,
+  `idle_s`, `total_s`) against the injected clock before the chunk is buffered, so a body that
+  never sends a line break cannot outlive them. A watchdog, a daemon `threading.Timer` by
+  default and injectable as `AdapterKwargs["watchdog"]`, closes the HTTP client when `total_s`
+  elapses, so a read blocked inside httpx (for example headers sent one byte at a time) also ends
+  with the usual total timeout. It is armed for each attempt, cancelled in `finally`, and a firing
+  while connecting is never retried.
+- Backoff between retries is outside `total_s`: each attempt gets its own `total_s`, so one turn
+  can last up to `(retries + 1) * total_s` plus the backoff sleeps, at most
+  `backoff_s * (2**retries - 1)` (jitter only shortens them). Latency and TTFT never include
+  backoff.
+- A response is capped at 16 MiB and fails with `stream exceeded 16777216 bytes`. Error bodies and
+  bodies with the wrong content type are read under the same deadlines and kept up to 64 KiB so
+  they can be scanned; the HTTP status stays the error.
+- Data received before a deadline, the cap or a read failure is kept: the SSE adapter turns the
+  pending event, including an unterminated line, into a fragment, so it is scanned for leaks.
+
 ## Public API
 
 Every package exports its public names in `__init__.py` and lists them in `__all__`. Other packages
@@ -81,11 +103,13 @@ tests/
 - **Tabular data** goes in the package's `data/*.yaml`, one row per case with an `id`. Secret and
   token samples are never written in YAML: they are built by concatenation in Python so the
   hygiene checks do not flag the repository.
-- **Simulated agents:** use `FakeJsonAgent` (`answers`, `replies`, `returns`, `fails`, `times_out`,
-  `refuses`, `refuses_first`, `requests`, `headers`) or `FakeSseAgent` (`streams`, `emits`, `leaks`,
-  `cuts_after`, `wrong_content_type`), never an ad hoc `httpx.MockTransport` inside a test. Time
-  comes from `FakeClock`, so deadlines and backoff never sleep for real; simulated agents fix
-  `jitter` to 0 (change it with `fake.jitter`).
+- **Simulated agents:** use `FakeJsonAgent` (`answers`, `replies`, `returns`) or `FakeSseAgent`
+  (`streams`, `emits`, `script`, `heartbeats`, `leaks`, `cuts_after`, `stalls_after`,
+  `wrong_content_type`); both also offer `fails`, `sends`, `stalls`, `times_out`, `refuses`,
+  `refuses_first`, `requests` and `headers`. Never use an ad hoc `httpx.MockTransport` inside a
+  test. Time comes from `FakeClock`, so deadlines and backoff never sleep for real; simulated
+  agents fix `jitter` to 0 (change it with `fake.jitter`) and inject a `FakeWatchdog` that the
+  agent fires by hand (`stalls`), so no test depends on wall-clock time.
 - **End-to-end:** `tests/e2e/` starts `toy_sse_agent.py` (standard library only, `127.0.0.1` only)
   through the `toy_sse_agent_url` fixture. The fixture waits for the `PORT <n>` line the agent prints
   (a signal, never a sleep) and fails at once with the agent's stderr if it does not arrive. To try
@@ -136,7 +160,9 @@ pytest -m security -q         secrets, hygiene and headers
    detector whatever `security.detectors` says, ignores `security.allow` (both only decide what
    counts as a leak, never what the report may show) and masks the union of overlapping findings.
    `redact_tree` redacts values, not dict keys; no report key is controlled by the agent, so
-   a new key must never be built from agent output.
+   a new key must never be built from agent output. JSON text with a finding in a decoded
+   string is decoded, redacted and written again without escapes, so unicode escapes or
+   escaped slashes cannot hide a value; leak scanning decodes JSON the same way.
 3. Never include headers or environment values.
 4. Add `tests/reports/test_<format>.py`, with a `security` test that no secret leaks.
 
