@@ -2,7 +2,14 @@ import pytest
 
 from octoqai.experiment import Experiment, SecurityConfig
 from octoqai.security import Detector, scan_reply
-from support.agents import TURN_CONTEXT, FakeJsonAgent, FakeSseAgent
+from support.agents import (
+    DONE,
+    EVENT_STREAM,
+    TURN_CONTEXT,
+    FakeJsonAgent,
+    FakeSseAgent,
+    sse_event,
+)
 from support.builders import ExperimentBuilder
 from support.samples import NON_ASCII_CANARY
 
@@ -175,3 +182,57 @@ def test_json_error_body_with_an_escaped_canary_is_scanned_in_every_decode(build
     r = adapter.send(TURN_CONTEXT)
     leaks = scan_reply(_canary_detector("TEN-B-0042"), r, [])
     assert [leak.location for leak in leaks] == ["body"]
+
+
+CONTENT_TYPES = {"json": "application/json", "sse": EVENT_STREAM}
+OK_BODIES = {
+    "json": b'{"answer": "ok"}',
+    "sse": (sse_event("token", {"delta": "ok"}) + DONE).encode("utf-8"),
+}
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Accept-Encoding": "gzip"}, {"accept-encoding": "br, gzip"}],
+    ids=["default", "user-gzip", "user-lowercase"],
+)
+def test_every_attempt_asks_for_an_uncompressed_response(build, headers):
+    fake, adapter = build(headers=headers, retry={"retries": 1, "backoff_s": 0})
+    fake.refuses_first(1)
+    adapter.send(TURN_CONTEXT)
+    assert [h.get_list("accept-encoding") for h in fake.headers] == [["identity"], ["identity"]]
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    ("encoding", "shown"),
+    [
+        ("gzip", "gzip"),
+        ("gzip, gzip", "gzip, gzip"),
+        ("br", "br"),
+        ("deflate", "deflate"),
+        ("identity, GZIP", "gzip"),
+        ("x-TEN-B-0042", "other"),
+        (", ".join(["gzip"] * 50), "gzip, gzip, gzip, ..."),
+    ],
+    ids=["gzip", "chained", "br", "deflate", "mixed", "unknown", "many"],
+)
+@pytest.mark.parametrize("status", [200, 500])
+def test_compressed_response_is_refused_unread_and_not_retried(
+    build, kind, encoding, shown, status
+):
+    fake, adapter = build(retry={"retries": 2, "backoff_s": 0})
+    fake.encodes(encoding, content_type=CONTENT_TYPES[kind], status=status)
+    r = adapter.send(TURN_CONTEXT)
+    assert r.error == f"agent response uses unsupported content-encoding {shown}"
+    assert (r.answer, r.body, r.retries, len(fake.requests)) == (None, None, [], 1)
+    assert fake.body_reads == 0
+
+
+@pytest.mark.parametrize("encoding", ["identity", "Identity", ""])
+def test_identity_response_is_read(build, kind, encoding):
+    fake, adapter = build()
+    fake.encodes(encoding, OK_BODIES[kind], CONTENT_TYPES[kind])
+    r = adapter.send(TURN_CONTEXT)
+    assert (r.answer, r.error) == ("ok", None)

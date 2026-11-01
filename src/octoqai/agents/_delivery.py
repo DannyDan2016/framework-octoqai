@@ -9,18 +9,21 @@ import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Protocol, TypedDict
+from typing import Any, Protocol, TypedDict
 
 import httpx
 
 from octoqai.agents._mapping import ReplyError
-from octoqai.experiment import EffectiveWait, RetryPolicy
+from octoqai.experiment import AgentConfig, EffectiveWait, RetryPolicy
 
 JITTER_SPREAD = 0.25
 HTTP_ERROR_MIN = 400
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_ERROR_BODY_BYTES = 64 * 1024
 NOT_CHARSETS = frozenset({"idna", "punycode", "unicode-escape", "raw-unicode-escape", "undefined"})
+IDENTITY = "identity"
+KNOWN_ENCODINGS = frozenset({"gzip", "x-gzip", "deflate", "br", "zstd", "compress", "x-compress"})
+MAX_SHOWN_ENCODINGS = 3
 
 
 class Watchdog(Protocol):
@@ -156,6 +159,30 @@ class AgentAnswered(ReplyError):
 
 class _Expired(Exception):
     pass
+
+
+def agent_request(client: httpx.Client, cfg: AgentConfig, body: Any) -> httpx.Request:
+    request = client.build_request(cfg.method, cfg.url, json=body, headers=cfg.headers)
+    request.headers["Accept-Encoding"] = IDENTITY
+    return request
+
+
+def _shown_encodings(codings: list[str]) -> str:
+    shown = [c if c in KNOWN_ENCODINGS else "other" for c in codings[:MAX_SHOWN_ENCODINGS]]
+    if len(codings) > MAX_SHOWN_ENCODINGS:
+        shown.append("...")
+    return ", ".join(shown)
+
+
+def reject_encoded(response: httpx.Response) -> None:
+    codings = [
+        coding.strip().lower()
+        for coding in response.headers.get_list("content-encoding", split_commas=True)
+    ]
+    unsupported = [coding for coding in codings if coding not in ("", IDENTITY)]
+    if unsupported:
+        shown = _shown_encodings(unsupported)
+        raise AgentAnswered(f"agent response uses unsupported content-encoding {shown}")
 
 
 def not_delivered(exc: httpx.TransportError, wait: EffectiveWait) -> NotDelivered:

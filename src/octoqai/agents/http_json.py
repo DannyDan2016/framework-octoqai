@@ -17,12 +17,14 @@ from octoqai.agents._delivery import (
     NotDelivered,
     Seams,
     WatchedClient,
+    agent_request,
     classify_delivery,
     client_timeout,
     decode_body,
     keep_body,
     read_bounded,
     read_capped,
+    reject_encoded,
     transport_failure,
     with_retries,
 )
@@ -44,7 +46,12 @@ def _kept_body(kept: bytearray, encoding: str) -> Decoded:
 
 
 class HttpAgentAdapter:
-    """Send rendered requests to an agent exposed over HTTP JSON."""
+    """Send rendered requests to an agent exposed over HTTP JSON.
+
+    Every attempt sends ``Accept-Encoding: identity``, replacing any value set in the
+    configured headers. A response with any other ``Content-Encoding`` is refused without
+    reading its body, so a compressed body can never expand past the size cap.
+    """
 
     def __init__(
         self,
@@ -135,9 +142,7 @@ class HttpAgentAdapter:
     def _post(self, body: Any, starts: list[float]) -> tuple[bytes, str]:
         starts.append(self._clock())
         with self._http.attempt(self._wait.total_s, self._timeout) as client:
-            request = client.build_request(
-                self._cfg.method, self._cfg.url, json=body, headers=self._cfg.headers
-            )
+            request = agent_request(client, self._cfg, body)
             with classify_delivery(self._wait, self._timeout):
                 response = client.send(request, stream=True)
                 try:
@@ -147,6 +152,7 @@ class HttpAgentAdapter:
                     response.close()
 
     def _read(self, response: httpx.Response, start: float) -> bytes:
+        reject_encoded(response)
         charset = response.charset_encoding or "utf-8"
         if response.status_code >= HTTP_ERROR_MIN:
             body = read_capped(response.iter_bytes(), lambda: self._expired(start), charset)

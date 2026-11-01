@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Self
@@ -29,6 +30,7 @@ TURN_CONTEXT = {
 
 EVENT_STREAM = "text/event-stream"
 DONE = "data: [DONE]\n\n"
+GZIP_BOMB = gzip.compress(bytes(4 * 2**20), 9)
 
 _Frame = tuple[float, str | bytes]
 _Handler = Callable[[httpx.Request], httpx.Response]
@@ -107,6 +109,7 @@ class FakeAgent:
         self.jitter: Callable[[], float] = lambda: 0.0
         self.watchdog = FakeWatchdog()
         self.closes = 0
+        self.body_reads = 0
         self._adapters: list[AgentPort] = []
         self._refusals = 0
         self._refusal: type[httpx.TransportError] = httpx.ConnectError
@@ -187,6 +190,29 @@ class FakeAgent:
                 self._closed_by_watchdog(request)
 
             return httpx.Response(status or 500, headers=headers, content=content())
+
+        self._handler = handler
+        return self
+
+    def encodes(
+        self,
+        encoding: str,
+        content: bytes = GZIP_BOMB,
+        content_type: str = "application/json",
+        status: int = 200,
+    ) -> Self:
+        """Answer with ``Content-Encoding: encoding``; the body defaults to a small gzip bomb.
+
+        Reading the body is counted in ``body_reads``, so a test can prove it was never read.
+        """
+        headers = {"content-type": content_type, "content-encoding": encoding}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            def body() -> Iterator[bytes]:
+                self.body_reads += 1
+                yield content
+
+            return httpx.Response(status, headers=headers, content=body())
 
         self._handler = handler
         return self

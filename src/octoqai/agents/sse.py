@@ -19,10 +19,12 @@ from octoqai.agents._delivery import (
     Seams,
     TooLarge,
     WatchedClient,
+    agent_request,
     classify_delivery,
     client_timeout,
     read_bounded,
     read_capped,
+    reject_encoded,
     transport_failure,
     with_retries,
 )
@@ -104,7 +106,12 @@ class _Splitter:
 
 
 class SseAgentAdapter:
-    """Send rendered requests to an agent that answers with server-sent events."""
+    """Send rendered requests to an agent that answers with server-sent events.
+
+    Every attempt sends ``Accept-Encoding: identity``, replacing any value set in the
+    configured headers. A response with any other ``Content-Encoding`` is refused without
+    reading its body, so a compressed stream can never expand past the size cap.
+    """
 
     def __init__(
         self,
@@ -178,9 +185,7 @@ class SseAgentAdapter:
                 response.close()
 
     def _open(self, client: httpx.Client, body: Any, state: _Stream) -> httpx.Response:
-        request = client.build_request(
-            self._cfg.method, self._cfg.url, json=body, headers=self._cfg.headers
-        )
+        request = agent_request(client, self._cfg, body)
         state.start = self._clock()
         with classify_delivery(self._wait, self._no_fragment(self._read_s)):
             return client.send(request, stream=True)
@@ -239,6 +244,7 @@ class SseAgentAdapter:
         return [event for event in events if event.data != self._stream.done]
 
     def _check_response(self, response: httpx.Response, state: _Stream) -> None:
+        reject_encoded(response)
         content_type = response.headers.get("content-type", "")
         if response.status_code >= HTTP_ERROR_MIN:
             error = f"agent returned HTTP {response.status_code}"
