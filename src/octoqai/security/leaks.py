@@ -6,7 +6,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
 from octoqai.agents.port import AgentReply
-from octoqai.security._json_text import decode_json, string_leaves
+from octoqai.security._json_text import decode_json, plain_forms, string_leaves
 from octoqai.security.detectors import Detector, mask
 
 
@@ -21,11 +21,13 @@ class Leak:
 
 
 def _with_leaves(location: str, text: str) -> Iterator[tuple[str, str]]:
-    yield location, text
+    for form in plain_forms(text):
+        yield location, form
     decoded = decode_json(text)
     if decoded is not None:
         for leaf in string_leaves(decoded):
-            yield location, leaf
+            for form in plain_forms(leaf):
+                yield location, form
 
 
 def _texts(reply: AgentReply) -> Iterator[tuple[str, str]]:
@@ -38,7 +40,8 @@ def _texts(reply: AgentReply) -> Iterator[tuple[str, str]]:
             yield from _with_leaves("body", body)
     if reply.raw is not None:
         for leaf in string_leaves(reply.raw):
-            yield "body", leaf
+            for form in plain_forms(leaf):
+                yield "body", form
 
 
 def scan_reply(detector: Detector, reply: AgentReply, user_messages: Sequence[str]) -> list[Leak]:
@@ -47,8 +50,9 @@ def scan_reply(detector: Detector, reply: AgentReply, user_messages: Sequence[st
     Args:
         detector: The detector built from the experiment security configuration.
         reply: The agent reply, scanned as fragments, then answer, then each decode of the
-            body; JSON text is also decoded and every string in it scanned, so escapes cannot
-            hide a value.
+            body; JSON text is also decoded and every string in it scanned, and every text
+            and string is scanned again with its JSON escapes undone, so escapes cannot hide a
+            value even in text that is not valid JSON.
         user_messages: Every user message of the conversation up to this turn.
 
     Returns:

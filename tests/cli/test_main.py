@@ -3,10 +3,15 @@ import importlib
 import pytest
 
 from support.agents import FakeJsonAgent, FakeSseAgent
-from support.assertions import assert_canary_hidden, assert_exit, assert_not_in_outputs
+from support.assertions import (
+    assert_canary_hidden,
+    assert_exit,
+    assert_not_in_outputs,
+    assert_value_hidden,
+)
 from support.builders import turn, write_data_set, write_env_file
 from support.paths import EXAMPLES
-from support.samples import ESCAPED_KEY_ANSWERS, HOSTILE_JSON
+from support.samples import ESCAPED_KEY_ANSWERS, ESCAPED_LEAKS, ESCAPED_WRAPPERS, HOSTILE_JSON
 
 pytestmark = [pytest.mark.integration, pytest.mark.regression]
 
@@ -324,3 +329,29 @@ def test_value_hidden_in_an_escaped_json_key_never_reaches_the_report(
     text = result.report_text()
     answers = [t["turns"][0]["answer"] for t in result.report()["trials"]]
     assert_canary_hidden(canary, result.out, result.err, text, *answers)
+
+
+UNESCAPE = importlib.import_module("octoqai.security._json_text").unescape
+REPORTED_LEAKS = {
+    f"{wrapper}-{secret}": ESCAPED_LEAKS[f"{wrapper}-{secret}"]
+    for wrapper in ESCAPED_WRAPPERS
+    for secret in ("canary-dash", "email", "credential-url")
+}
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("leak", REPORTED_LEAKS.values(), ids=REPORTED_LEAKS.keys())
+def test_escaped_value_in_an_answer_that_is_not_json_is_no_go_and_never_reported(
+    experiment, tmp_path, run_cli, fake_agent, leak
+):
+    value, answer, kind = leak
+    experiment.security(canaries=[{"value": "TEN-B-0042"}]).trials(1)
+    path = str(experiment.case("c1", turn("Hola", {"contains": "."})).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent.answers(answer))
+    assert_exit(result.code, 1)
+    trials = result.report()["trials"]
+    assert all(kind in [leak["kind"] for leak in t["turns"][0]["leaks"]] for t in trials)
+    text = result.report_text()
+    answers = [t["turns"][0]["answer"] for t in trials]
+    unescaped = [UNESCAPE(form) for form in (text, *answers)]
+    assert_value_hidden(value, result.out, result.err, text, *answers, *unescaped)

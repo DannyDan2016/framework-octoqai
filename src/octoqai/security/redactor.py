@@ -7,7 +7,7 @@ from collections.abc import Iterator, Sequence
 from typing import Any
 
 from octoqai.experiment import SecurityConfig
-from octoqai.security._json_text import decode_json, string_leaves
+from octoqai.security._json_text import decode_json, plain_forms, string_leaves, unescape
 from octoqai.security.detectors import PRIORITY, Detector, Finding
 
 REDACTED = "[redacted]"
@@ -78,7 +78,9 @@ class Redactor:
         escapes, so a unicode escape or an escaped slash cannot hide a value. Keys are not
         rewritten, so when any key of that JSON hides a value, even as nested escaped JSON,
         the whole text becomes ``REDACTED``; the decision is taken on the decoded tree and
-        never depends on the masked text still being valid JSON.
+        never depends on the masked text still being valid JSON. Any other text whose JSON
+        escapes hide a value is masked with those escapes undone, and becomes ``REDACTED`` when
+        undoing them once still leaves an escaped value.
 
         Args:
             text: The text to clean.
@@ -88,17 +90,32 @@ class Redactor:
         """
         decoded = decode_json(text)
         if decoded is None or not self._hides(decoded):
-            return self._mask(text)
+            return self._mask_escaped(text)
         if any(self._hides(key) for key in _keys(decoded)):
             return REDACTED
         try:
             cleaned = self.redact_tree(decoded)
         except RecursionError:
             return REDACTED
-        return self._mask(json.dumps(cleaned, ensure_ascii=False))
+        return self._mask_escaped(json.dumps(cleaned, ensure_ascii=False))
 
     def _hides(self, decoded: Any) -> bool:
-        return any(self._detector.candidates(leaf) for leaf in string_leaves(decoded))
+        return any(
+            self._detector.candidates(form)
+            for leaf in string_leaves(decoded)
+            for form in plain_forms(leaf)
+        )
+
+    def _mask_escaped(self, text: str) -> str:
+        masked = self._mask(text)
+        if not self._shows(masked):
+            return masked
+        masked = self._mask(unescape(text))
+        return REDACTED if self._shows(masked) else masked
+
+    def _shows(self, masked: str) -> bool:
+        plain = unescape(masked)
+        return plain != masked and bool(self._detector.candidates(plain))
 
     def _mask(self, text: str) -> str:
         parts: list[str] = []

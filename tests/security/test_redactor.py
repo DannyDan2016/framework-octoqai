@@ -10,6 +10,7 @@ from support.assertions import (
     assert_canary_hidden,
     assert_linear_growth,
     assert_linear_steps,
+    assert_value_hidden,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.security]
@@ -138,3 +139,42 @@ def test_value_hidden_in_an_escaped_json_key_is_never_left(answer):
     cleaned = redactor().redact(answer)
     report = json.dumps({"answer": cleaned}, ensure_ascii=False)
     assert_canary_hidden("TEN-B-0042", cleaned, report, json.loads(report)["answer"])
+
+
+def leaky_redactor():
+    canaries = [
+        {"value": "TEN-B-0042", "label": "cuenta-b"},
+        {"value": samples.SLASH_CANARY, "label": "barra"},
+    ]
+    return Redactor.for_report(SecurityConfig.model_validate({"canaries": canaries}), [])
+
+
+UNESCAPE = importlib.import_module("octoqai.security._json_text").unescape
+
+
+@pytest.mark.parametrize(
+    ("value", "text", "kind"), samples.ESCAPED_LEAKS.values(), ids=samples.ESCAPED_LEAKS.keys()
+)
+def test_escaped_value_in_text_that_is_not_json_never_survives(value, text, kind):
+    cleaned = leaky_redactor().redact(text)
+    report = json.dumps({"answer": cleaned}, ensure_ascii=False)
+    assert_value_hidden(value, cleaned, UNESCAPE(cleaned), report, UNESCAPE(report))
+
+
+def test_escaped_value_in_prose_is_masked_with_its_placeholder():
+    _, text, _ = samples.ESCAPED_LEAKS["prose-canary-dash"]
+    assert leaky_redactor().redact(text) == "dato [canary:cuenta-b] fin"
+
+
+def test_value_still_escaped_after_one_unescape_makes_the_text_redacted_whole():
+    _, text, _ = samples.ESCAPED_LEAKS["prose-canary-dash"]
+    assert leaky_redactor().redact(text + " " + text.replace("\\", "\\\\")) == "[redacted]"
+
+
+def test_text_with_escapes_and_no_secret_is_unchanged():
+    assert leaky_redactor().redact(samples.CLEAN_ESCAPED) == samples.CLEAN_ESCAPED
+
+
+def test_escaped_findings_are_masked_in_linear_steps():
+    module = importlib.import_module("octoqai.security.redactor").__file__
+    assert_linear_steps(redactor().redact, lambda n: "TEN\\u002dB-0042 " * n, 300, module)

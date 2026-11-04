@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import time
@@ -100,6 +101,35 @@ def assert_canary_hidden(canary: str, *texts: str) -> None:
             assert canary.casefold() not in form.casefold(), f"{canary!r} leaked into an output"
         reply = AgentReply(text, None, None, 1.0, None)
         assert scan_reply(detector, reply, []) == [], f"{canary!r} hidden in an output"
+
+
+def _strings(text: str) -> list[str]:
+    try:
+        stack: list[Any] = [json.loads(text)]
+    except (ValueError, RecursionError):
+        return [text]
+    found = [text]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            stack.extend(part for pair in item.items() for part in pair)
+        elif isinstance(item, list):
+            stack.extend(item)
+        elif isinstance(item, str):
+            found.append(item)
+    return found
+
+
+def assert_value_hidden(value: str, *texts: str) -> None:
+    """Check that ``value`` is in no text: raw, in any string of its JSON, or unescaped by hand.
+
+    Each text and every string or key of it, when it is JSON, is also unescaped a few times,
+    so a value behind JSON escapes in text that is not valid JSON is still caught.
+    """
+    for text in texts:
+        for string in _strings(text):
+            for form in _unescaped(string):
+                assert value.casefold() not in form.casefold(), f"{value!r} leaked into an output"
 
 
 def line_events(run: Callable[[str], object], text: str, module_file: str) -> int:

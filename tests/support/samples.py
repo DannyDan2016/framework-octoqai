@@ -49,3 +49,24 @@ ESCAPED_KEY_ANSWERS = {
     "credential-key": json.dumps({ESCAPED_KEY: 1, WEAK_CREDENTIAL: 2}),
     "credential-value": json.dumps({ESCAPED_KEY: 1, "x": WEAK_CREDENTIAL}),
 }
+ESCAPED_SECRETS = {
+    "canary-dash": ("TEN-B-0042", "TEN" + "\\" + "u002dB-0042", "canary"),
+    "canary-quoted": ("TEN-B-0042", '\\"' + "\\" + 'u0054EN-B-0042\\"', "canary"),
+    "canary-slash": (SLASH_CANARY, SLASH_CANARY.replace("/", "\\/"), "canary"),
+    "email": (EMAIL, EMAIL.replace("@", "\\" + "u0040"), "pii"),
+    "credential-url": ("hunter2", ESCAPED_DATABASE_URL, "secret"),
+    "credential-assignment": ("hunter22", "password" + "\\" + "u003dhunter22", "secret"),
+}
+ESCAPED_WRAPPERS = {
+    "trailing-garbage": '{"a": "' + "{}" + '"} xx',
+    "truncated": '{"a": "' + "{}",
+    "huge-int": '{"n": ' + "1" * 5000 + ', "a": "' + "{}" + '"}',
+    "too-deep": "[" * 100_000 + '"' + "{}" + '"' + "]" * 100_000,
+    "prose": "dato " + "{}" + " fin",
+}
+ESCAPED_LEAKS = {
+    f"{wrapper}-{secret}": (value, shape.replace("{}", escaped), kind)
+    for wrapper, shape in ESCAPED_WRAPPERS.items()
+    for secret, (value, escaped, kind) in ESCAPED_SECRETS.items()
+}
+CLEAN_ESCAPED = r"linea\nuna \u00f1and\u00fa \/ruta\/ \"citado\" \\ \ud83d\ude00 fin \u"

@@ -134,3 +134,37 @@ def test_each_decode_of_the_body_is_scanned_alone_and_counted_once(body):
 def test_hostile_json_is_scanned_as_text(text):
     leaks = scan_reply(DETECTOR, reply(answer=text, fragments=[text], body=text), [])
     assert [(leak.label, leak.location) for leak in leaks] == [("cuenta-b", "fragment 1")]
+
+
+LEAKY = Detector(
+    SecurityConfig.model_validate(
+        {
+            "canaries": [
+                {"value": CANARY, "label": "cuenta-b"},
+                {"value": samples.SLASH_CANARY, "label": "barra"},
+            ]
+        }
+    )
+)
+
+
+@pytest.mark.parametrize(
+    ("value", "text", "kind"), samples.ESCAPED_LEAKS.values(), ids=samples.ESCAPED_LEAKS.keys()
+)
+def test_escaped_value_in_text_that_is_not_json_is_found_once(value, text, kind):
+    leaks = scan_reply(LEAKY, reply(answer=text, fragments=[text], body=text), [])
+    assert [leak.kind for leak in leaks].count(kind) == 1
+    assert {leak.location for leak in leaks} == {"fragment 1"}
+
+
+def test_escaped_value_in_the_second_decode_of_the_body_is_found():
+    _, text, _ = samples.ESCAPED_LEAKS["trailing-garbage-canary-dash"]
+    r = AgentReply(None, None, None, 1.0, "agent returned HTTP 500", body="boom", alt_body=text)
+    assert [(leak.label, leak.location) for leak in scan_reply(LEAKY, r, [])] == [
+        ("cuenta-b", "body")
+    ]
+
+
+def test_text_with_escapes_and_no_secret_has_no_leak():
+    text = samples.CLEAN_ESCAPED
+    assert scan_reply(LEAKY, reply(answer=text, fragments=[text], body=text), []) == []
