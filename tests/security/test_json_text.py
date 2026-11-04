@@ -48,3 +48,8 @@ def test_unescape_does_not_reuse_an_escaped_backslash():
 @pytest.mark.parametrize("unit", ["\\u0041", "\\", "\\ud83d\\ude00"])
 def test_unescape_runs_in_linear_steps(unit):
     assert_linear_steps(unescape, lambda n: unit * n, 300, JSON_TEXT.__file__)
+
+
+def test_linear_steps_check_fails_loudly_on_a_module_that_never_runs():
+    with pytest.raises(AssertionError, match="not_a_module.py"):
+        assert_linear_steps(unescape, lambda n: "x" * n, 300, "not_a_module.py")

@@ -56,8 +56,8 @@ def assert_linear_growth(
 ) -> None:
     """Check that ``run`` on an input ``factor`` times larger costs less than ``bound`` times more.
 
-    Each size keeps its best of three timings, so a pause of the machine cannot fail the check,
-    while a quadratic cost grows ``factor ** 2`` times and does.
+    Each size keeps its best of three timings, so a pause of the machine is unlikely to fail
+    the check, although a long one still can, while a quadratic cost grows ``factor ** 2`` times.
     """
     small, large = make(size), make(size * factor)
 
@@ -167,6 +167,7 @@ def assert_linear_steps(
     A quadratic loop grows 16 times; the check never reads a clock.
     """
     small = line_events(run, make(size), module_file)
+    assert small > 0, f"no line of {module_file} ran: the module path is wrong"
     large = line_events(run, make(size * 4), module_file)
-    ratio = large / max(small, 1)
+    ratio = large / small
     assert ratio < 5, f"steps grew {ratio:.1f}x ({small} to {large}) for a 4x larger input"
