@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+from octoqai.db.port import QueryResult
 
 BANK_SCHEMA = (
     "CREATE TABLE ajustes (id INTEGER PRIMARY KEY, tenant TEXT NOT NULL, "
@@ -53,3 +56,13 @@ class SqliteFile:
                 )
         finally:
             connection.close()
+
+
+def result(*rows: Sequence[Any], error: str | None = None) -> QueryResult:
+    """Build a ``QueryResult`` with columns ``c0``, ``c1``... sized by the first row."""
+    width = len(rows[0]) if rows else 0
+    return QueryResult(
+        columns=tuple(f"c{index}" for index in range(width)),
+        rows=tuple(tuple(row) for row in rows),
+        error=error,
+    )

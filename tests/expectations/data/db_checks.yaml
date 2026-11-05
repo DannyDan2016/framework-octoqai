@@ -1,0 +1,89 @@
+- id: row-count-pass
+  check: {expect: {row_count: 1}}
+  after: {rows: [[1]]}
+  passed: true
+  detail: "db 'x': 1 row(s) (expected 1)"
+
+- id: row-count-fail
+  check: {expect: {row_count: 1}}
+  after: {rows: []}
+  passed: false
+  detail: "db 'x': 0 row(s) (expected 1)"
+
+- id: value-matches
+  check: {expect: {value: aprobado}}
+  after: {rows: [[aprobado]]}
+  passed: true
+  detail: "db 'x': value matches"
+
+- id: value-without-rows-fails
+  check: {expect: {value: aprobado}}
+  after: {rows: []}
+  passed: false
+  detail: "db 'x': query returned no rows"
+
+- id: value-differs
+  check: {expect: {value: aprobado}}
+  after: {rows: [[rechazado]]}
+  passed: false
+  detail: "db 'x': value differs from expected"
+
+- id: rows-match
+  check: {expect: {rows: [["001", 10]]}}
+  after: {rows: [["001", 10]]}
+  passed: true
+  detail: "db 'x': rows match"
+
+- id: rows-order-matters
+  check: {expect: {rows: [["001", 10], ["002", 5]]}}
+  after: {rows: [["002", 5], ["001", 10]]}
+  passed: false
+  detail: "db 'x': rows differ (got 2, expected 2)"
+
+- id: delta-pass
+  check: {expect: {delta: 1}}
+  before: {rows: [[3]]}
+  after: {rows: [[4]]}
+  passed: true
+  detail: "db 'x': changed by 1 (expected 1)"
+
+- id: delta-fail
+  check: {expect: {delta: 1}}
+  before: {rows: [[3]]}
+  after: {rows: [[3]]}
+  passed: false
+  detail: "db 'x': changed by 0 (expected 1)"
+
+- id: delta-not-numeric-not-evaluable
+  check: {expect: {delta: 1}}
+  before: {rows: [[a]]}
+  after: {rows: [[b]]}
+  passed: null
+  detail: "db 'x': delta needs a number in the first column"
+
+- id: unchanged-pass
+  check: {expect: {unchanged: true}}
+  before: {rows: [[1, A]]}
+  after: {rows: [[1, A]]}
+  passed: true
+  detail: "db 'x': unchanged"
+
+- id: unchanged-fail
+  check: {expect: {unchanged: true}}
+  before: {rows: [[1, A]]}
+  after: {rows: [[1, A], [2, B]]}
+  passed: false
+  detail: "db 'x': changed"
+
+- id: after-error-not-evaluable
+  check: {expect: {row_count: 1}}
+  after: {rows: [], error: "OperationalError: no such table: ajustes"}
+  passed: null
+  detail: "db 'x': database error: OperationalError: no such table: ajustes"
+
+- id: before-error-not-evaluable
+  check: {expect: {delta: 1}}
+  before: {rows: [], error: "OperationalError: database is locked"}
+  after: {rows: [[1]]}
+  passed: null
+  detail: "db 'x': database error: OperationalError: database is locked"
