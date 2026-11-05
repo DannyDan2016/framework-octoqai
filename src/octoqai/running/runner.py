@@ -5,13 +5,14 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from octoqai.agents.port import AgentPort, AgentReply
 from octoqai.db.port import DatabasePort
-from octoqai.expectations import CheckResult, evaluate
-from octoqai.experiment import Case, Experiment, HookStage, Variant
+from octoqai.expectations import FORBIDDEN_KIND, CheckResult, evaluate
+from octoqai.experiment import Case, Experiment, HookStage, Turn, Variant
 from octoqai.hooks.port import HookResult, LifecyclePort
+from octoqai.running._database import DbProbe
 from octoqai.security import Detector, Leak, scan_reply
 
 Outcome = Literal["pass", "fail", "not_evaluable"]
@@ -37,10 +38,11 @@ class TrialResult:
     turns: list[TurnResult]
     hooks: list[HookResult] = field(default_factory=list)
     setup_error: str | None = None
+    db_checks: list[CheckResult] = field(default_factory=list)
 
     @property
     def _checks(self) -> list[CheckResult]:
-        return [check for turn in self.turns for check in turn.checks]
+        return [check for turn in self.turns for check in turn.checks] + self.db_checks
 
     @property
     def outcome(self) -> Outcome:
@@ -88,10 +90,18 @@ class TrialResult:
         return sum(values) / len(values) if values else None
 
     @property
+    def forbidden_count(self) -> int:
+        """Number of forbidden database changes, each counted once per trial."""
+        return sum(1 for c in self._checks if c.kind == FORBIDDEN_KIND and c.passed is False)
+
+    @property
     def other_hard_violation(self) -> bool:
-        """Whether a hard expectation other than a leak failed on a real agent answer."""
+        """Whether a hard expectation other than a leak or forbidden change failed."""
         return any(
-            c.hard and c.passed is False and not c.agent_error and c.kind != "leak"
+            c.hard
+            and c.passed is False
+            and not c.agent_error
+            and c.kind not in ("leak", FORBIDDEN_KIND)
             for c in self._checks
         )
 
@@ -145,32 +155,44 @@ def _leak_check(leak: Leak) -> CheckResult:
     )
 
 
-def _play(session: _Session, variant: Variant, case: Case) -> list[TurnResult]:
-    agent, exp = session.agent, session.exp
+def _play_turn(
+    session: _Session,
+    probe: DbProbe,
+    request: dict[str, Any],
+    turn: Turn,
+    said: list[str],
+) -> TurnResult:
+    probe.before_turn(turn)
+    reply = session.agent.send(request)
+    said.append(turn.user)
+    leaks = scan_reply(session.detector, reply, said)
+    checks = [evaluate(e, reply) for e in turn.expect] + [_leak_check(x) for x in leaks]
+    checks += probe.after_turn(turn, reply, len(said))
+    return TurnResult(turn.user, reply, checks, leaks)
+
+
+def _play(session: _Session, probe: DbProbe, variant: Variant, case: Case) -> list[TurnResult]:
+    exp = session.exp
     said: list[str] = []
     conversation_id = str(uuid.uuid4())
     history: list[dict[str, str]] = []
     turns: list[TurnResult] = []
     for turn_index, turn in enumerate(case.turns):
-        reply = agent.send(
-            {
-                "message": turn.user,
-                "conversation_id": conversation_id,
-                "turn_index": turn_index,
-                "history": [dict(item) for item in history],
-                "variant": dict(variant.params),
-                "data": exp.data_values,
-                "env": exp.environment,
-            }
-        )
-        said.append(turn.user)
-        leaks = scan_reply(session.detector, reply, said)
-        checks = [evaluate(e, reply) for e in turn.expect] + [_leak_check(x) for x in leaks]
-        turns.append(TurnResult(turn.user, reply, checks, leaks))
-        if reply.error is not None:
+        request = {
+            "message": turn.user,
+            "conversation_id": conversation_id,
+            "turn_index": turn_index,
+            "history": [dict(item) for item in history],
+            "variant": dict(variant.params),
+            "data": exp.data_values,
+            "env": exp.environment,
+        }
+        result = _play_turn(session, probe, request, turn, said)
+        turns.append(result)
+        if result.reply.error is not None:
             break
         history.append({"role": "user", "content": turn.user})
-        history.append({"role": "assistant", "content": reply.answer or ""})
+        history.append({"role": "assistant", "content": result.reply.answer or ""})
     return turns
 
 
@@ -182,12 +204,16 @@ def _run_trial(session: _Session, variant: Variant, case: Case, index: int) -> T
     before = session.hooks.run("before_trial")
     setup_error = _first_failure(before)
     turns: list[TurnResult] = []
+    db_checks: list[CheckResult] = []
     try:
         if setup_error is None:
-            turns = _play(session, variant, case)
+            probe = DbProbe(session.db, session.exp, case)
+            turns = _play(session, probe, variant, case)
+            failure = next((t.reply.error for t in turns if t.reply.error), None)
+            db_checks = probe.finish(failure)
     finally:
         after = session.hooks.run("after_trial")
-    return TrialResult(variant.name, case.id, index, turns, before + after, setup_error)
+    return TrialResult(variant.name, case.id, index, turns, before + after, setup_error, db_checks)
 
 
 def _run_all(session: _Session) -> list[TrialResult]:
