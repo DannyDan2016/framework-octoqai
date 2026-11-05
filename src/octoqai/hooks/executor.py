@@ -89,7 +89,7 @@ class HookExecutor:
             )
         except subprocess.TimeoutExpired:
             return f"timed out after {timeout:g}s"
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             return f"cannot start {Path(argv[0]).name!r}: {type(exc).__name__}"
         if completed.returncode != 0:
             return f"exited with code {completed.returncode}"
@@ -109,6 +109,8 @@ class HookExecutor:
             return f"timed out after {timeout:g}s"
         except httpx.TransportError as exc:
             return f"cannot connect: {type(exc).__name__}"
+        except (httpx.RequestError, httpx.InvalidURL, ValueError, TypeError) as exc:
+            return f"cannot send: {type(exc).__name__}"
         if not response.is_success:
             return f"HTTP {response.status_code}"
         return None

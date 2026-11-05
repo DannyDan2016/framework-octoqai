@@ -1,3 +1,4 @@
+import datetime
 import subprocess
 
 import pytest
@@ -111,3 +112,32 @@ def test_sql_hook_reports_the_database_error():
         "before_trial"
     )
     assert (outcome.ok, outcome.error) == (False, "OperationalError: database is locked")
+
+
+@pytest.mark.parametrize(
+    ("hook", "error"),
+    [
+        ({"http": {"url": "http://a.local:xx/"}}, "cannot send: InvalidURL"),
+        (
+            {"http": {"url": "http://hooks.local/x", "body": datetime.date(2026, 1, 1)}},
+            "cannot send: TypeError",
+        ),
+    ],
+    ids=["invalid-url", "unserializable-body"],
+)
+def test_http_hook_that_cannot_be_sent_is_a_failed_result(fake_agent, hook, error):
+    [outcome] = executor({"before_run": [hook]}, agent=fake_agent).run("before_run")
+    assert (outcome.ok, outcome.error, fake_agent.requests) == (False, error, [])
+
+
+def test_after_stage_continues_after_a_hook_that_cannot_be_sent(fake_agent):
+    stages = {
+        "after_run": [{"http": {"url": "http://a.local:xx/"}}, {"http": {"url": "http://a.local/"}}]
+    }
+    results = executor(stages, agent=fake_agent).run("after_run")
+    assert [r.ok for r in results] == [False, True]
+
+
+def test_sql_hook_without_database_fails():
+    [outcome] = executor({"before_run": [{"sql": ["DELETE FROM ajustes"]}]}).run("before_run")
+    assert (outcome.ok, outcome.error) == (False, "no database configured")

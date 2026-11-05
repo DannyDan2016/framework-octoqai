@@ -23,3 +23,11 @@ def test_metacharacters_reach_the_process_literally(tmp_path):
     code = "import sys, pathlib; pathlib.Path('arg.txt').write_text(sys.argv[1])"
     assert run_real(tmp_path, code, "a && echo pwned | more").ok
     assert (tmp_path / "arg.txt").read_text() == "a && echo pwned | more"
+
+
+@pytest.mark.security
+def test_argument_the_os_rejects_is_a_failed_result_without_its_content(tmp_path):
+    outcome = run_real(tmp_path, "pass", "secret\x00value")
+    assert not outcome.ok
+    assert outcome.error.startswith("cannot start") and outcome.error.endswith(": ValueError")
+    assert "secret" not in outcome.error
