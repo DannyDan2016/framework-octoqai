@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -97,6 +98,11 @@ def _rate_status(
     return "insufficient", reasons
 
 
+def _mean(values: Iterable[float]) -> float:
+    items = list(values)
+    return sum(items) / len(items) if items else 0.0
+
+
 def _summarize(
     name: str, baseline: bool, trials: list[TrialResult], threshold: float
 ) -> VariantSummary:
@@ -128,8 +134,8 @@ def _summarize(
         n_not_evaluable=n_not_evaluable,
         pass_rate=pass_rate,
         ci95=(lo, hi),
-        pass_at_k=sum(map(pass_at_k, case_outcomes)) / len(case_outcomes),
-        pass_hat_k=sum(map(pass_hat_k, case_outcomes)) / len(case_outcomes),
+        pass_at_k=_mean(map(pass_at_k, case_outcomes)),
+        pass_hat_k=_mean(map(pass_hat_k, case_outcomes)),
         hard_violations=hard,
         mean_tokens=sum(tokens) / len(tokens) if tokens else None,
         mean_latency_ms=sum(t.latency_ms for t in ran) / len(ran) if ran else 0.0,

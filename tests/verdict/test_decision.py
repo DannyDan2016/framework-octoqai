@@ -185,3 +185,11 @@ def test_trial_skipped_by_a_failed_reset_blocks_go():
     summary = decide(run).variants[0]
     assert summary.status == "insufficient" and summary.n_not_evaluable == 1
     assert summary.mean_latency_ms == 20.0
+
+
+def test_a_variant_that_never_ran_is_insufficient_and_empty():
+    run = make_run({"base": all_pass(30, 5), "cand": all_pass(30, 5)}, baseline="base")
+    run.trials = [t for t in run.trials if t.variant == "base"]
+    summary = next(s for s in decide(run).variants if s.name == "cand")
+    assert summary.status == "insufficient" and summary.n_evaluable == 0
+    assert summary.mean_latency_ms == 0.0 and summary.mean_tokens is None
