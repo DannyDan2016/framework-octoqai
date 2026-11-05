@@ -2,6 +2,7 @@ import importlib
 
 import pytest
 
+from support import samples
 from support.agents import FakeJsonAgent, FakeSseAgent
 from support.assertions import (
     assert_canary_hidden,
@@ -10,6 +11,7 @@ from support.assertions import (
     assert_value_hidden,
 )
 from support.builders import turn, write_data_set, write_env_file
+from support.hooks import FakeCommands
 from support.paths import EXAMPLES
 from support.samples import ESCAPED_KEY_ANSWERS, ESCAPED_LEAKS, ESCAPED_WRAPPERS, HOSTILE_JSON
 
@@ -355,3 +357,136 @@ def test_escaped_value_in_an_answer_that_is_not_json_is_no_go_and_never_reported
     answers = [t["turns"][0]["answer"] for t in trials]
     unescaped = [UNESCAPE(form) for form in (text, *answers)]
     assert_value_hidden(value, result.out, result.err, text, *answers, *unescaped)
+
+
+@pytest.fixture
+def db_experiment(experiment, tmp_path, sqlite_db, monkeypatch):
+    monkeypatch.setenv("DB_URL", sqlite_db.url)
+
+    def _write(forbidden=(), **hooks):
+        experiment.database(forbidden=forbidden).hooks(
+            before_trial=[{"sql": ["DELETE FROM ajustes"]}], **hooks
+        ).trials(2)
+        experiment.case(
+            "c1",
+            turn(
+                "Crea un ajuste",
+                db=[
+                    {
+                        "id": "creado",
+                        "query": "SELECT count(*) FROM ajustes",
+                        "expect": {"delta": 1},
+                    }
+                ],
+            ),
+        )
+        return str(experiment.write(tmp_path))
+
+    return _write
+
+
+@pytest.mark.smoke
+def test_database_checks_pass_end_to_end(db_experiment, run_cli, fake_agent, sqlite_db):
+    result = run_cli(
+        "run", db_experiment(), agent=fake_agent.answers("ok.").effect(lambda _: sqlite_db.insert())
+    )
+    assert result.code != 3, result.err
+    assert all(t["outcome"] == "pass" for t in result.report()["trials"])
+    assert "forbidden=0" in result.out
+
+
+@pytest.mark.security
+def test_forbidden_change_exits_no_go(db_experiment, run_cli, fake_agent, sqlite_db):
+    forbidden = [{"id": "no-tocar-b", "query": "SELECT count(*) FROM ajustes WHERE tenant = 'B'"}]
+    path = db_experiment(forbidden=forbidden)
+    result = run_cli(
+        "run", path, agent=fake_agent.answers("ok.").effect(lambda _: sqlite_db.insert(tenant="B"))
+    )
+    assert_exit(result.code, 1)
+    assert "forbidden=2" in result.out
+    assert result.report()["variants"][0]["reasons"][0] == "2 forbidden database change(s)"
+
+
+@pytest.mark.security
+def test_forbidden_change_before_an_agent_error_is_no_go_not_unreachable(
+    db_experiment, run_cli, fake_agent, sqlite_db
+):
+    forbidden = [{"id": "no-tocar-b", "query": "SELECT count(*) FROM ajustes WHERE tenant = 'B'"}]
+    path = db_experiment(forbidden=forbidden)
+    result = run_cli(
+        "run", path, agent=fake_agent.fails(500).effect(lambda _: sqlite_db.insert(tenant="B"))
+    )
+    assert_exit(result.code, 1)
+    assert "unreachable" not in result.err
+
+
+@pytest.mark.security
+def test_database_url_is_never_written(db_experiment, run_cli, fake_agent, sqlite_db):
+    result = run_cli("run", db_experiment(), agent=fake_agent.answers("ok."))
+    assert_not_in_outputs(sqlite_db.url, result.out, result.err, result.report_text())
+
+
+@pytest.mark.security
+def test_invalid_database_url_never_prints_the_password(experiment, tmp_path, run_cli, monkeypatch):
+    monkeypatch.setenv("DB_URL", samples.DB_URL_WITH_PASSWORD)
+    path = str(experiment.database().write(tmp_path))
+    result = run_cli("run", path)
+    assert_exit(result.code, 3)
+    assert_not_in_outputs(samples.DB_PASSWORD, result.out, result.err)
+
+
+def test_failed_before_run_exits_3_without_running_trials(
+    experiment, tmp_path, run_cli, fake_agent
+):
+    path = str(experiment.hooks(before_run=[{"command": ["python", "prepara.py"]}]).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent, commands=FakeCommands().exits(1))
+    assert_exit(result.code, 3)
+    assert "before_run[0] (command) exited with code 1" in result.err
+    assert fake_agent.requests == []
+
+
+def test_reset_failing_in_every_trial_exits_3(experiment, tmp_path, run_cli, fake_agent):
+    path = str(experiment.hooks(before_trial=[{"command": ["python", "reset.py"]}]).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent, commands=FakeCommands().exits(2))
+    assert_exit(result.code, 3)
+    assert "before_trial hook failed in every trial" in result.err
+    assert fake_agent.requests == []
+
+
+def test_failed_reset_then_agent_errors_report_the_agent_error(
+    experiment, tmp_path, run_cli, fake_agent
+):
+    hooks = {"before_trial": [{"command": ["python", "reset.py"]}]}
+    path = str(experiment.hooks(**hooks).trials(2).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent.fails(500), commands=FakeCommands().exits(1, 0))
+    assert_exit(result.code, 3)
+    assert "agent unreachable in every trial (agent returned HTTP 500" in result.err
+    assert "StopIteration" not in result.err
+
+
+def test_after_run_failure_exits_3_with_a_warning(experiment, tmp_path, run_cli, fake_agent):
+    path = str(experiment.hooks(after_run=[{"command": ["python", "limpia.py"]}]).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent.answers("ok."), commands=FakeCommands().exits(1))
+    assert_exit(result.code, 3)
+    assert "Warning: hook after_run[0] (command) exited with code 1" in result.err
+    assert result.report()["hooks"][-1]["ok"] is False
+
+
+def test_after_run_failure_keeps_a_no_go(thirty_cases, experiment, run_cli, fake_agent):
+    experiment.hooks(after_run=[{"command": ["python", "limpia.py"]}])
+    fake_agent.answers("conciliado con datos de TENANT-B")
+    result = run_cli("run", thirty_cases(), agent=fake_agent, commands=FakeCommands().exits(1))
+    assert_exit(result.code, 1)
+    assert "Warning: hook after_run[0] (command) exited with code 1" in result.err
+
+
+@pytest.mark.security
+def test_hook_env_values_are_never_printed(experiment, tmp_path, run_cli, fake_agent, monkeypatch):
+    monkeypatch.setenv("TENANT_TOKEN", "tt-55443322")
+    path = str(
+        experiment.hooks(before_run=[{"command": ["python", "x.py", "${TENANT_TOKEN}"]}]).write(
+            tmp_path
+        )
+    )
+    result = run_cli("run", path, agent=fake_agent, commands=FakeCommands().exits(1))
+    assert_not_in_outputs("tt-55443322", result.out, result.err)

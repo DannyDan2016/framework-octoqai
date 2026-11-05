@@ -43,6 +43,10 @@ def _trial(trial: TrialResult) -> dict[str, Any]:
         "latency_ms": trial.latency_ms,
         "leaks": trial.leak_count,
         "ttft_ms": trial.ttft_ms,
+        "forbidden_crud": trial.forbidden_count,
+        "setup_error": trial.setup_error,
+        "hooks": [asdict(hook) for hook in trial.hooks],
+        "db_checks": [asdict(check) for check in trial.db_checks],
         "turns": [_turn(turn) for turn in trial.turns],
     }
 
@@ -72,6 +76,8 @@ def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
             "variants": [v.model_dump() for v in exp.variants],
         },
         "environment": exp.environment,
+        "database": exp.database is not None,
+        "hooks": [asdict(hook) for hook in run.hooks],
         "tags": exp.selected_tags,
         "started_at": run.started_at,
         "finished_at": run.finished_at,

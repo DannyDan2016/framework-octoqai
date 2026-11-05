@@ -17,9 +17,11 @@ import pytest
 
 from octoqai.cli import main
 from octoqai.db import SqlDatabase
-from support.agents import FakeAgent, FakeJsonAgent
+from octoqai.hooks import HookKwargs
+from support.agents import FakeAgent, FakeClock, FakeJsonAgent
 from support.builders import ExperimentBuilder
 from support.databases import BANK_SCHEMA, SqliteFile
+from support.hooks import FakeCommands
 from support.paths import TOY_SSE_AGENT
 
 
@@ -84,14 +86,27 @@ def out_dir(tmp_path: Path) -> Path:
 def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., CliRun]:
     """Run the CLI in process; ``run`` commands write their reports to ``out_dir``."""
 
-    def _run(*args: str, agent: FakeAgent | None = None) -> CliRun:
+    def _run(
+        *args: str,
+        agent: FakeAgent | None = None,
+        commands: FakeCommands | None = None,
+        hook_agent: FakeJsonAgent | None = None,
+    ) -> CliRun:
         argv = list(args)
+        hook_kwargs = HookKwargs()
+        if commands is not None:
+            hook_kwargs["run_command"] = commands
+        if hook_agent is not None:
+            hook_kwargs["transport"] = hook_agent.transport()
+        if hook_kwargs:
+            hook_kwargs["clock"] = FakeClock()
         if argv[:1] == ["run"]:
             argv += ["--out", str(out_dir)]
         code = main(
             argv,
             transport=agent.transport() if agent else None,
             adapter_kwargs=agent.adapter_kwargs() if agent else None,
+            hook_kwargs=hook_kwargs,
         )
         captured = capsys.readouterr()
         return CliRun(code, captured.out, captured.err, out_dir)

@@ -4,20 +4,31 @@ from __future__ import annotations
 
 import argparse
 import sys
+from contextlib import ExitStack, closing
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 
 from octoqai import __version__
 from octoqai.agents import AdapterKwargs, adapter_for
+from octoqai.db import SqlDatabase
 from octoqai.errors import ConfigError
 from octoqai.experiment import Experiment, load_experiment
+from octoqai.hooks import HookEnvironment, HookExecutor, HookKwargs
 from octoqai.reports import write_json
-from octoqai.running import RunResult, run_experiment
+from octoqai.running import RunResult, hook_error, run_experiment
 from octoqai.security import Redactor
 from octoqai.verdict import EXIT_CODES, Verdict, decide
 
 EXIT_ERROR = 3
+
+
+@dataclass(frozen=True)
+class _Seams:
+    transport: httpx.BaseTransport | None
+    adapter: AdapterKwargs
+    hooks: HookKwargs
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -48,7 +59,7 @@ def _print_summary(verdict: Verdict) -> None:
         print(
             f"{summary.name:<20} {summary.status:<12} "
             f"pass_rate={summary.pass_rate:.2f} [{lo:.2f}, {hi:.2f}] "
-            f"leaks={summary.leaks}"
+            f"leaks={summary.leaks} forbidden={summary.forbidden_crud}"
         )
     for comparison in verdict.comparisons:
         lo, hi = comparison.ci95
@@ -61,19 +72,35 @@ def _print_summary(verdict: Verdict) -> None:
     print(f"VERDICT: {verdict.status} (recommended: {verdict.recommended})")
 
 
-def _unreachable(run: RunResult) -> bool:
-    return all(t.agent_error and t.leak_count == 0 for t in run.trials)
+def _never_ran(run: RunResult) -> bool:
+    return all(
+        (t.agent_error or t.setup_error) and t.leak_count == 0 and t.forbidden_count == 0
+        for t in run.trials
+    )
 
 
-def _run(
-    args: argparse.Namespace,
-    transport: httpx.BaseTransport | None,
-    adapter_kwargs: AdapterKwargs,
-) -> int:
+def _never_ran_message(run: RunResult) -> str:
+    if all(t.setup_error for t in run.trials):
+        first_setup = next(t.setup_error for t in run.trials)
+        return f"Error: before_trial hook failed in every trial ({first_setup})."
+    first = next(turn.reply.error for t in run.trials for turn in t.turns if turn.reply.error)
+    return f"Error: agent unreachable in every trial ({first})."
+
+
+def _exit_code(run: RunResult, verdict: Verdict, redactor: Redactor) -> int:
+    failed = [r for r in run.hooks if r.stage == "after_run" and not r.ok]
+    if not failed:
+        return EXIT_CODES[verdict.status]
+    for result in failed:
+        print(redactor.redact(f"Warning: hook {hook_error(result)}"), file=sys.stderr)
+    return 1 if verdict.status == "no-go" else EXIT_ERROR
+
+
+def _run(args: argparse.Namespace, seams: _Seams) -> int:
     exp = load_experiment(args.experiment, env=args.env)
     redactor = Redactor.for_report(exp.security, exp.redacted_values)
     try:
-        return _execute(args, exp, redactor, transport, adapter_kwargs)
+        return _execute(args, exp, redactor, seams)
     except ConfigError as exc:
         print(redactor.redact(f"Config error: {exc}"), file=sys.stderr)
     except Exception as exc:
@@ -81,32 +108,37 @@ def _run(
     return EXIT_ERROR
 
 
-def _execute(
-    args: argparse.Namespace,
-    exp: Experiment,
-    redactor: Redactor,
-    transport: httpx.BaseTransport | None,
-    adapter_kwargs: AdapterKwargs,
-) -> int:
+def _open_and_run(exp: Experiment, seams: _Seams) -> RunResult:
+    with ExitStack() as stack:
+        db = None
+        if exp.database is not None:
+            db = stack.enter_context(closing(SqlDatabase(exp.database.url)))
+        environment = HookEnvironment(db, exp.base_dir, exp.hook_env)
+        hooks = stack.enter_context(closing(HookExecutor(exp.hooks, environment, **seams.hooks)))
+        adapter = stack.enter_context(
+            closing(adapter_for(exp.agent, seams.transport, **seams.adapter))
+        )
+        return run_experiment(exp, adapter, db=db, hooks=hooks)
+
+
+def _execute(args: argparse.Namespace, exp: Experiment, redactor: Redactor, seams: _Seams) -> int:
     if args.tags:
         exp = exp.select(args.tags)
     out: Path = args.out
-    adapter = adapter_for(exp.agent, transport, **adapter_kwargs)
-    try:
-        run = run_experiment(exp, adapter)
-    finally:
-        adapter.close()
+    run = _open_and_run(exp, seams)
+    if run.setup_error:
+        print(redactor.redact(f"Error: {run.setup_error}. No trial was run."), file=sys.stderr)
+        return EXIT_ERROR
     verdict = decide(run)
     report = out / "report.json"
     write_json(run, verdict, report)
-    if _unreachable(run):
-        first = next(turn.reply.error for turn in run.trials[0].turns if turn.reply.error)
-        message = redactor.redact(f"Error: agent unreachable in every trial ({first}).")
+    if _never_ran(run):
+        message = redactor.redact(_never_ran_message(run))
         print(f"{message} Report: {report}", file=sys.stderr)
         return EXIT_ERROR
     _print_summary(verdict)
     print(f"Report: {report}")
-    return EXIT_CODES[verdict.status]
+    return _exit_code(run, verdict, redactor)
 
 
 def main(
@@ -114,6 +146,7 @@ def main(
     transport: httpx.BaseTransport | None = None,
     *,
     adapter_kwargs: AdapterKwargs | None = None,
+    hook_kwargs: HookKwargs | None = None,
 ) -> int:
     """Run the CLI and return the process exit code.
 
@@ -122,6 +155,8 @@ def main(
         transport: Optional httpx transport, used to test without a network.
         adapter_kwargs: Optional ``clock``, ``sleep``, ``jitter`` and ``watchdog`` for the
             adapter, used to test without real waiting.
+        hook_kwargs: Optional ``transport``, ``run_command`` and ``clock`` for the hook
+            executor, used to test without a network or real processes.
 
     Returns:
         0 for go, 1 for no-go, 2 for insufficient evidence and 3 for errors.
@@ -135,7 +170,9 @@ def main(
         parser.print_usage(sys.stderr)
         return EXIT_ERROR
     try:
-        return _run(args, transport, adapter_kwargs or AdapterKwargs())
+        return _run(
+            args, _Seams(transport, adapter_kwargs or AdapterKwargs(), hook_kwargs or HookKwargs())
+        )
     except ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
     except Exception as exc:

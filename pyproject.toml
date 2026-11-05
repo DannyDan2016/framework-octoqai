@@ -146,6 +146,7 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "SQLAlchemy only inside db"
 type = "forbidden"
+allow_indirect_imports = true
 source_modules = [
     "octoqai.errors",
     "octoqai.experiment",

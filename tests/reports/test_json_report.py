@@ -10,6 +10,7 @@ from support import samples
 from support.agents import FakeJsonAgent, FakeSseAgent
 from support.assertions import assert_not_in_outputs
 from support.builders import ExperimentBuilder, turn
+from support.hooks import RecordingHooks
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
@@ -145,3 +146,23 @@ def test_report_masks_a_canary_hidden_by_json_escapes(tmp_path):
     data = json.loads(text)
     assert "contrase" not in text and "[canary:canary-1]" in data["trials"][0]["turns"][0]["answer"]
     assert data["trials"][0]["leaks"] == 1
+
+
+def test_report_lists_hooks_database_checks_and_counters(sqlite_db, sql_database, fake_agent):
+    check = {"id": "total", "query": "SELECT count(*) FROM ajustes", "expect": {"value": 0}}
+    builder = ExperimentBuilder().database(url=sqlite_db.url).trials(1)
+    exp = Experiment.model_validate(
+        builder.case("c1", turn("Hola", {"contains": "."}), db=[check]).build()
+    )
+    run = run_experiment(
+        exp, fake_agent.answers("ok.").adapter(exp.agent), db=sql_database, hooks=RecordingHooks()
+    )
+    report = build_report(run, decide(run))
+    trial = report["trials"][0]
+    assert report["database"] is True
+    assert [h["stage"] for h in report["hooks"]] == ["before_run", "after_run"]
+    assert [h["stage"] for h in trial["hooks"]] == ["before_trial", "after_trial"]
+    assert trial["db_checks"][0]["detail"] == "db 'total': value matches"
+    assert trial["forbidden_crud"] == 0 and trial["setup_error"] is None
+    assert report["variants"][0]["forbidden_crud"] == 0
+    assert sqlite_db.url not in str(report)
