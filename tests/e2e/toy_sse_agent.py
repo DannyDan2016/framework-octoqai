@@ -2,17 +2,41 @@
 
 import argparse
 import json
+import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LEAKING = ["Los datos son ", "CANARY-7f3a9c2e", "."]
 CLEAN = ["Extracto conciliado: ", "0,00 de diferencia."]
 
 
+def write_rows(db_path, message):
+    rows = []
+    if "crea un ajuste" in message:
+        rows.append(("A", "001", 10))
+    if "otro tenant" in message:
+        rows.append(("B", "900", 99))
+    if not rows:
+        return
+    connection = sqlite3.connect(db_path)
+    try:
+        with connection:
+            connection.executemany(
+                "INSERT INTO ajustes (tenant, cuenta, importe) VALUES (?, ?, ?)", rows
+            )
+    finally:
+        connection.close()
+
+
 class Handler(BaseHTTPRequestHandler):
+    db_path = None
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
-        deltas = LEAKING if "otro tenant" in str(body.get("message", "")) else CLEAN
+        message = str(body.get("message", ""))
+        if self.db_path:
+            write_rows(self.db_path, message)
+        deltas = LEAKING if "otro tenant" in message else CLEAN
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -37,7 +61,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--db")
     args = parser.parse_args()
+    Handler.db_path = args.db
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"PORT {server.server_address[1]}", flush=True)
     server.serve_forever()

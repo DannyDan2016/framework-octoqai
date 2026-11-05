@@ -9,3 +9,4 @@ octoqai-out/
 !.env.example
 dist/
 build/
+examples/**/*.db

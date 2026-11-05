@@ -151,11 +151,10 @@ def _close_pipes(process: subprocess.Popen[str]) -> None:
             pipe.close()
 
 
-@pytest.fixture
-def toy_sse_agent_url() -> Iterator[str]:
-    """URL of the toy SSE agent on 127.0.0.1; fails fast if it never announces its port."""
+def _launch(*args: str) -> Iterator[str]:
+    """Run the toy SSE agent with ``args`` and yield its URL; fail fast without a port."""
     process = subprocess.Popen(
-        [sys.executable, str(TOY_SSE_AGENT), "--port", "0"],
+        [sys.executable, str(TOY_SSE_AGENT), "--port", "0", *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -171,3 +170,17 @@ def toy_sse_agent_url() -> Iterator[str]:
         if process.poll() is None:
             _stop(process)
         _close_pipes(process)
+
+
+@pytest.fixture
+def toy_sse_agent_url() -> Iterator[str]:
+    """URL of the toy SSE agent on 127.0.0.1; fails fast if it never announces its port."""
+    yield from _launch()
+
+
+@pytest.fixture
+def toy_db_agent(tmp_path: Path) -> Iterator[tuple[str, Path]]:
+    """URL of the toy SSE agent writing to ``<tmp_path>/app.db``, and the database path."""
+    db_path = tmp_path / "app.db"
+    for url in _launch("--db", str(db_path)):
+        yield url, db_path

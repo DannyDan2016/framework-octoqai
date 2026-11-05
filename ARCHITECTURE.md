@@ -119,6 +119,14 @@ tests/
   (a signal, never a sleep) and fails at once with the agent's stderr if it does not arrive. To try
   it by hand: `python tests/e2e/toy_sse_agent.py --port 8000`, then
   `octoqai run examples/streaming/experiment.yaml`.
+- **Database end-to-end:** `toy_db_agent` starts the same agent with `--db <tmp_path>/app.db` and
+  returns its URL and the database path. With `--db`, a message containing `crea un ajuste` inserts
+  `('A', '001', 10)` into `ajustes` and one containing `otro tenant` inserts `('B', '900', 99)`
+  (the forbidden CRUD of the example); the agent commits and closes the connection before it replies.
+  `examples/database/reset_db.py` is the real `before_trial` hook. To try it by hand, from the repo
+  root: `python tests/e2e/toy_sse_agent.py --port 8000 --db examples/database/conciliaciones.db`;
+  in another terminal, inside `examples/database`: `copy .env.example .env`, then
+  `octoqai run experiment.yaml`.
 - **Hooks and databases:** `FakeCommands` stands in for the process runner (`exits`, `times_out`, `missing`) and never starts a process; `RecordingHooks` is a `LifecyclePort` that records stages and fails the ones it is told to; `FakeDatabase` is a `DatabasePort` that records the statements; `sqlite_db` and `sql_database` give a real SQLite file in `tmp_path`. Http hooks are tested against `FakeJsonAgent` as the endpoint.
 - **Experiments:** build them with `ExperimentBuilder` and `turn(...)`, or the `experiment` fixture.
 - **CLI:** use the `run_cli` fixture; it returns the exit code, captured output and report.
@@ -170,6 +178,25 @@ pytest -m security -q         secrets, hygiene and headers
    escaped slashes cannot hide a value; leak scanning decodes JSON the same way.
 3. Never include headers or environment values.
 4. Add `tests/reports/test_<format>.py`, with a `security` test that no secret leaks.
+
+### Add a database check
+
+1. Add the literal to `DbExpectKind` and its value validator in `experiment/model.py`.
+2. Write the function in `expectations/db_checks.py`. When the data needed is missing, return
+   `None` (not evaluable), never a pass.
+3. Never put a value read from the database in the detail: only counts, deltas and match/differs.
+4. Add rows to `tests/expectations/data/db_checks.yaml` and error rows to
+   `tests/experiment/data/db_errors.yaml`.
+
+### Add a hook kind
+
+1. Add the field to `Hook` in `experiment/model.py` and its validation.
+2. Add the method to `HookExecutor`. Commands run without a shell and their output is discarded;
+   never capture it.
+3. Test it with a fake (`FakeCommands`, `FakeJsonAgent`, `FakeDatabase`), never with a real process.
+
+A relative SQLite path resolves against the directory `octoqai` runs from, while hooks run in the
+experiment's folder; run from that folder or use an absolute path.
 
 ### Add a CLI option
 

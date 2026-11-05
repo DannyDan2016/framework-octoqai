@@ -573,3 +573,16 @@ def test_reset_failing_in_some_trials_is_never_a_go(experiment, tmp_path, run_cl
     )
     assert result.code in (1, 2)
     assert "VERDICT: go" not in result.out
+
+
+def test_database_example_runs_against_a_fake_agent(run_cli, monkeypatch, sqlite_db):
+    monkeypatch.setenv("DB_URL", sqlite_db.url)
+    result = run_cli(
+        "run",
+        str(EXAMPLES / "database" / "experiment.yaml"),
+        "--tags",
+        "smoke",
+        agent=FakeSseAgent().streams("Ajuste creado."),
+        commands=FakeCommands(),
+    )
+    assert result.code != 3, result.err
