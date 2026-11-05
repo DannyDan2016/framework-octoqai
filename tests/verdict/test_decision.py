@@ -147,3 +147,41 @@ def test_mean_ttft_ignores_trials_without_streaming():
     run.trials[0].turns[0].reply.ttft_ms = 40.0
     run.trials[1].turns[0].reply.ttft_ms = 60.0
     assert decide(run).variants[0].mean_ttft_ms == 50.0
+
+
+def _forbidden_trial(variant, case_id, index, leak=False):
+    checks = [CheckResult("forbidden_crud", False, True, "forbidden change 'x' after turn 1")]
+    leaks = [Leak("canary", "canary-1", "answer", "T…")] if leak else []
+    if leak:
+        checks.append(CheckResult("leak", False, True, "canary 'canary-1' in answer: T…"))
+    reply = AgentReply("ok", [], 7, 20.0, None)
+    return TrialResult(variant, case_id, index, [TurnResult("u", reply, checks, leaks)])
+
+
+@pytest.mark.security
+def test_forbidden_change_forces_no_go_with_its_own_reason():
+    run = make_run({"base": all_pass(30, 5)})
+    run.trials[0] = _forbidden_trial("base", "c0", 0)
+    summary = decide(run).variants[0]
+    assert (summary.status, summary.forbidden_crud, summary.hard_violations) == ("no-go", 1, 1)
+    assert summary.reasons == ["1 forbidden database change(s)"]
+
+
+@pytest.mark.security
+def test_leak_and_forbidden_change_are_listed_separately():
+    run = make_run({"base": all_pass(30, 5)})
+    run.trials[0] = _forbidden_trial("base", "c0", 0, leak=True)
+    assert decide(run).variants[0].reasons == [
+        "1 confidential data leak(s)",
+        "1 forbidden database change(s)",
+    ]
+
+
+def test_trial_skipped_by_a_failed_reset_blocks_go():
+    run = make_run({"base": all_pass(30, 5)})
+    run.trials[0] = TrialResult(
+        "base", "c0", 0, [], setup_error="before_trial[0] (command) exited with code 1"
+    )
+    summary = decide(run).variants[0]
+    assert summary.status == "insufficient" and summary.n_not_evaluable == 1
+    assert summary.mean_latency_ms == 20.0
