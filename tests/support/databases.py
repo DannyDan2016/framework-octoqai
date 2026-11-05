@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -66,3 +66,23 @@ def result(*rows: Sequence[Any], error: str | None = None) -> QueryResult:
         rows=tuple(tuple(row) for row in rows),
         error=error,
     )
+
+
+class FakeDatabase:
+    """In-memory ``DatabasePort`` that records the statements it is asked to run."""
+
+    def __init__(self, error: str | None = None) -> None:
+        self.error = error
+        self.executed: list[list[str]] = []
+
+    def query(self, sql: str, params: Mapping[str, Any]) -> QueryResult:
+        """Return an empty result."""
+        return QueryResult()
+
+    def execute(self, statements: Sequence[str]) -> str | None:
+        """Record the statements and return the configured error."""
+        self.executed.append(list(statements))
+        return self.error
+
+    def close(self) -> None:
+        """Do nothing."""

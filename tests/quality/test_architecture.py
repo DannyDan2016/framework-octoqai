@@ -9,6 +9,7 @@ import pytest
 
 import octoqai
 from support.paths import REPO_ROOT as ROOT
+from support.paths import SRC
 
 pytestmark = pytest.mark.quality
 
@@ -35,3 +36,19 @@ def test_every_package_exports_public_api():
         assert exported, f"{name} does not declare __all__"
         missing = [item for item in exported if not hasattr(module, item)]
         assert missing == [], f"{name}.__all__ lists missing names: {missing}"
+
+
+@pytest.mark.security
+def test_only_hooks_start_processes():
+    offenders = [
+        str(p.relative_to(SRC))
+        for p in SRC.rglob("*.py")
+        if "subprocess" in p.read_text(encoding="utf-8") and p.parent.name != "hooks"
+    ]
+    assert offenders == []
+
+
+@pytest.mark.security
+def test_no_shell_in_source():
+    needle = "shell" + "=True"
+    assert [p.name for p in SRC.rglob("*.py") if needle in p.read_text(encoding="utf-8")] == []

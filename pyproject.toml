@@ -86,14 +86,14 @@ layers = [
     "octoqai.verdict",
     "octoqai.running",
     "octoqai.expectations | octoqai.security",
-    "octoqai.agents",
+    "octoqai.agents | octoqai.hooks",
     "octoqai.db",
     "octoqai.stats | octoqai.experiment",
     "octoqai.errors",
 ]
 
 [[tool.importlinter.contracts]]
-name = "httpx only inside agents and cli"
+name = "httpx only inside agents, hooks and cli"
 type = "forbidden"
 source_modules = [
     "octoqai.errors",
@@ -123,6 +123,7 @@ forbidden_modules = [
     "octoqai.agents.sse",
     "octoqai.agents.factory",
     "octoqai.db.sql",
+    "octoqai.hooks.executor",
 ]
 
 [[tool.importlinter.contracts]]
@@ -132,6 +133,7 @@ source_modules = ["octoqai.stats"]
 forbidden_modules = [
     "octoqai.experiment",
     "octoqai.agents",
+    "octoqai.hooks",
     "octoqai.db",
     "octoqai.expectations",
     "octoqai.security",
@@ -149,6 +151,7 @@ source_modules = [
     "octoqai.experiment",
     "octoqai.stats",
     "octoqai.agents",
+    "octoqai.hooks",
     "octoqai.expectations",
     "octoqai.security",
     "octoqai.running",
