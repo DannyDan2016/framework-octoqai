@@ -87,12 +87,16 @@ def _never_ran_message(run: RunResult) -> str:
     return f"Error: agent unreachable in every trial ({first})."
 
 
-def _exit_code(run: RunResult, verdict: Verdict, redactor: Redactor) -> int:
+def _warn_failed_cleanup(run: RunResult, redactor: Redactor) -> bool:
     failed = [r for r in run.hooks if r.stage == "after_run" and not r.ok]
-    if not failed:
-        return EXIT_CODES[verdict.status]
     for result in failed:
         print(redactor.redact(f"Warning: hook {hook_error(result)}"), file=sys.stderr)
+    return bool(failed)
+
+
+def _exit_code(verdict: Verdict, cleanup_failed: bool) -> int:
+    if not cleanup_failed:
+        return EXIT_CODES[verdict.status]
     return 1 if verdict.status == "no-go" else EXIT_ERROR
 
 
@@ -126,6 +130,7 @@ def _execute(args: argparse.Namespace, exp: Experiment, redactor: Redactor, seam
         exp = exp.select(args.tags)
     out: Path = args.out
     run = _open_and_run(exp, seams)
+    cleanup_failed = _warn_failed_cleanup(run, redactor)
     if run.setup_error:
         print(redactor.redact(f"Error: {run.setup_error}. No trial was run."), file=sys.stderr)
         return EXIT_ERROR
@@ -138,7 +143,7 @@ def _execute(args: argparse.Namespace, exp: Experiment, redactor: Redactor, seam
         return EXIT_ERROR
     _print_summary(verdict)
     print(f"Report: {report}")
-    return _exit_code(run, verdict, redactor)
+    return _exit_code(verdict, cleanup_failed)
 
 
 def main(

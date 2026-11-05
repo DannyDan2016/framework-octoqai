@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, make_url
-from sqlalchemy.exc import ArgumentError, NoSuchModuleError, SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError
 
 from octoqai.db.port import QueryResult
 from octoqai.errors import ConfigError
@@ -62,7 +62,7 @@ class SqlDatabase:
         """
         try:
             self._engine = create_engine(url, hide_parameters=True)
-        except (ArgumentError, NoSuchModuleError, ImportError):
+        except Exception:
             raise ConfigError(
                 "database.url is not a valid SQLAlchemy URL or its driver is not installed"
             ) from None

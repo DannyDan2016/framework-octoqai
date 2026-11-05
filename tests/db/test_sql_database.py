@@ -75,3 +75,12 @@ def test_invalid_url_is_config_error_without_echo():
         r"database\.url is not a valid SQLAlchemy URL",
         absent=[samples.DB_PASSWORD, "db.example"],
     )
+
+
+@pytest.mark.security
+def test_malformed_port_is_config_error_without_echo():
+    assert_config_error(
+        lambda: SqlDatabase(samples.DB_URL_BAD_PORT),
+        r"database\.url is not a valid SQLAlchemy URL",
+        absent=[samples.DB_PASSWORD, "db.example", "dbhost"],
+    )

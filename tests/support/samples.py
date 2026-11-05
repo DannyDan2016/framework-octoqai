@@ -73,4 +73,5 @@ CLEAN_ESCAPED = r"linea\nuna \u00f1and\u00fa \/ruta\/ \"citado\" \\ \ud83d\ude00
 DB_PASSWORD = "s3cr3t-" + "pw-77"
 DB_URL_WITH_PASSWORD = "nodialect" + "://qa:" + DB_PASSWORD + "@db.example/app"
 DB_URL_PARTIAL_VARIABLE = "postgresql" + "://qa:" + DB_PASSWORD + "@db.example/${DB_NAME}"
+DB_URL_BAD_PORT = "postgresql" + "://qa:p@x:" + DB_PASSWORD + "@db.example:5432/app"
 PG_URL_WITH_PASSWORD = "postgresql" + "://qa:" + DB_PASSWORD + "@db.example/app"

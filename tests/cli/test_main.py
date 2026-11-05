@@ -490,3 +490,86 @@ def test_hook_env_values_are_never_printed(experiment, tmp_path, run_cli, fake_a
     )
     result = run_cli("run", path, agent=fake_agent, commands=FakeCommands().exits(1))
     assert_not_in_outputs("tt-55443322", result.out, result.err)
+
+
+@pytest.mark.security
+def test_malformed_database_url_never_prints_the_password(
+    experiment, tmp_path, run_cli, monkeypatch
+):
+    monkeypatch.setenv("DB_URL", samples.DB_URL_BAD_PORT)
+    path = str(experiment.database().write(tmp_path))
+    result = run_cli("run", path)
+    assert_exit(result.code, 3)
+    assert_not_in_outputs(samples.DB_PASSWORD, result.out, result.err)
+    assert_not_in_outputs("db.example", result.out, result.err)
+
+
+def test_failed_before_run_still_reports_a_failed_after_run(
+    experiment, tmp_path, run_cli, fake_agent
+):
+    hooks = {
+        "before_run": [{"command": ["python", "prepara.py"]}],
+        "after_run": [{"command": ["python", "limpia.py"]}],
+    }
+    path = str(experiment.hooks(**hooks).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent, commands=FakeCommands().exits(1))
+    assert_exit(result.code, 3)
+    assert "before_run[0] (command) exited with code 1" in result.err
+    assert "Warning: hook after_run[0] (command) exited with code 1" in result.err
+
+
+def test_after_run_failure_is_warned_when_every_trial_fails_to_reset(
+    experiment, tmp_path, run_cli, fake_agent
+):
+    hooks = {
+        "before_trial": [{"command": ["python", "reset.py"]}],
+        "after_run": [{"command": ["python", "limpia.py"]}],
+    }
+    path = str(experiment.hooks(**hooks).write(tmp_path))
+    result = run_cli("run", path, agent=fake_agent, commands=FakeCommands().exits(1))
+    assert_exit(result.code, 3)
+    assert "Warning: hook after_run[0] (command) exited with code 1" in result.err
+
+
+@pytest.fixture
+def token_experiment(experiment, tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_TOKEN", "tt-55443322")
+
+    def _write(stage):
+        hook = {stage: [{"command": ["${TENANT_TOKEN}"]}]}
+        return str(experiment.hooks(**hook).write(tmp_path))
+
+    return _write
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("stage", ["before_run", "before_trial", "after_run"])
+def test_hook_errors_never_print_the_expanded_token(stage, token_experiment, run_cli, fake_agent):
+    path = token_experiment(stage)
+    result = run_cli("run", path, agent=fake_agent, commands=FakeCommands().missing())
+    assert_exit(result.code, 3)
+    assert "cannot start" in result.err
+    assert_not_in_outputs("tt-55443322", result.out, result.err)
+
+
+def test_go_with_a_failed_after_run_exits_3(thirty_cases, experiment, run_cli, fake_agent):
+    experiment.hooks(after_run=[{"command": ["python", "limpia.py"]}])
+    result = run_cli(
+        "run",
+        thirty_cases(),
+        agent=fake_agent.answers("conciliado"),
+        commands=FakeCommands().exits(1),
+    )
+    assert_exit(result.code, 3)
+    assert "VERDICT: go" in result.out
+
+
+def test_reset_failing_in_some_trials_is_never_a_go(experiment, tmp_path, run_cli, fake_agent):
+    hooks = {"before_trial": [{"command": ["python", "reset.py"]}]}
+    experiment.hooks(**hooks).trials(4).case("c1", turn("Hola", {"contains": "."}))
+    path = str(experiment.write(tmp_path))
+    result = run_cli(
+        "run", path, agent=fake_agent.answers("ok."), commands=FakeCommands().exits(1, 0, 0, 0)
+    )
+    assert result.code in (1, 2)
+    assert "VERDICT: go" not in result.out
