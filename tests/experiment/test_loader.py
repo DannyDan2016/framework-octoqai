@@ -340,3 +340,47 @@ def test_database_forbidden_params_render_data_values(experiment, tmp_path):
         experiment.write(tmp_path), env="qa", process_env={"DB_URL": "sqlite:///a.db"}
     )
     assert exp.database.forbidden[0].params == {"c": "001"}
+
+
+@pytest.mark.security
+def test_secret_with_template_syntax_reaches_params_intact_and_is_not_printed(experiment, tmp_path):
+    secret = "tok-{{ x }}-end"
+    check = {
+        "id": "x",
+        "query": "SELECT count(*) FROM ajustes WHERE cuenta = :c",
+        "params": {"c": "${CHECK_KEY}"},
+        "expect": {"value": 1},
+    }
+    forbidden = [{"id": "f", "query": "SELECT 1 WHERE :c = 'z'", "params": {"c": "${CHECK_KEY}"}}]
+    path = (
+        experiment.database(forbidden=forbidden)
+        .case("c1", turn("Hola", db=[check]))
+        .write(tmp_path)
+    )
+    exp = load_experiment(path, process_env={"DB_URL": "sqlite:///x.db", "CHECK_KEY": secret})
+    assert exp.cases[0].turns[0].db[0].params == {"c": secret}
+    assert exp.database.forbidden[0].params == {"c": secret}
+    assert secret in exp.redacted_values
+
+
+@pytest.mark.security
+def test_repr_hides_queries_params_and_hook_actions(experiment, tmp_path):
+    check = {
+        "id": "x",
+        "query": "SELECT count(*) FROM ajustes WHERE cuenta = :c",
+        "params": {"c": "${CHECK_KEY}"},
+        "expect": {"value": 1},
+    }
+    experiment.database().hooks(
+        before_trial=[{"sql": ["DELETE FROM ajustes WHERE cuenta = 'hk-sql-77'"]}],
+        after_run=[
+            {"command": ["python", "limpia.py", "hk-cmd-77"]},
+            {"http": {"url": "http://hooks.local/hk-url-77"}},
+        ],
+    ).case("c1", turn("Hola", db=[check]))
+    env = {"DB_URL": "sqlite:///x.db", "CHECK_KEY": "hk-param-77"}
+    exp = load_experiment(experiment.write(tmp_path), process_env=env)
+    exp = exp.model_copy(update={"data_values": {"k": "hk-data-77"}})
+    text = repr(exp)
+    for hidden in ("hk-sql-77", "hk-cmd-77", "hk-url-77", "hk-param-77", "hk-data-77"):
+        assert hidden not in text

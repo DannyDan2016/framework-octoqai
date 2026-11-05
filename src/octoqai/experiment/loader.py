@@ -68,14 +68,13 @@ def load_experiment(
     _expand_security(data, variables)
     _expand_database(data, variables)
     _expand_hooks(data, variables)
-    _expand_check_params(data, variables)
     exp = _validate(data)
     values: dict[str, Any] = {}
     if exp.data is not None:
         values = _expand_values(
             load_data_set(path.parent, exp.data, exp.environments, env), variables
         )
-    exp = _render_cases(exp, _template_context(values, env))
+    exp = _render_cases(exp, _template_context(values, env), variables)
     return exp.model_copy(
         update={
             "data_values": values,
@@ -94,43 +93,48 @@ def _template_context(values: dict[str, Any], env: str | None) -> dict[str, Any]
     return context
 
 
-def _render_cases(exp: Experiment, context: dict[str, Any]) -> Experiment:
-    update: dict[str, Any] = {"cases": [_render_case(case, context) for case in exp.cases]}
+def _render_cases(exp: Experiment, context: dict[str, Any], variables: _Variables) -> Experiment:
+    update: dict[str, Any] = {
+        "cases": [_render_case(case, context, variables) for case in exp.cases]
+    }
     if exp.database is not None:
-        forbidden = _render_params(exp.database.forbidden, context)
+        forbidden = _render_params(exp.database.forbidden, context, variables)
         update["database"] = exp.database.model_copy(update={"forbidden": forbidden})
     return exp.model_copy(update=update)
 
 
-def _render_case(case: Case, context: dict[str, Any]) -> Case:
+def _render_case(case: Case, context: dict[str, Any], variables: _Variables) -> Case:
     turns: list[Turn] = []
     for index, turn in enumerate(case.turns):
         try:
-            turns.append(_render_turn(turn, context))
+            turns.append(_render_turn(turn, context, variables))
         except ConfigError as exc:
             raise ConfigError(f"cases[{case.id}].turns[{index}]: {exc}") from None
     return case.model_copy(
         update={
             "turns": turns,
-            "db": _render_params(case.db, context),
-            "forbidden": _render_params(case.forbidden, context),
+            "db": _render_params(case.db, context, variables),
+            "forbidden": _render_params(case.forbidden, context, variables),
         }
     )
 
 
 def _render_params[C: (DbCheck, ForbiddenChange)](
-    items: list[C], context: dict[str, Any]
+    items: list[C], context: dict[str, Any], variables: _Variables
 ) -> list[C]:
-    return [item.model_copy(update={"params": render(item.params, context)}) for item in items]
+    return [
+        item.model_copy(update={"params": _expand_values(render(item.params, context), variables)})
+        for item in items
+    ]
 
 
-def _render_turn(turn: Turn, context: dict[str, Any]) -> Turn:
+def _render_turn(turn: Turn, context: dict[str, Any], variables: _Variables) -> Turn:
     expect = [_render_expectation(item, context) for item in turn.expect]
     return turn.model_copy(
         update={
             "user": render_text(turn.user, context),
             "expect": expect,
-            "db": _render_params(turn.db, context),
+            "db": _render_params(turn.db, context, variables),
         }
     )
 
@@ -218,31 +222,12 @@ def _expand_database(data: dict[str, Any], variables: _Variables) -> None:
             "database.url must come from an environment variable, e.g. ${DB_URL}: "
             "never write credentials in the experiment"
         )
-    data["database"] = _expand_values(database, variables)
+    database["url"] = variables.expand(url)
 
 
 def _expand_hooks(data: dict[str, Any], variables: _Variables) -> None:
     if "hooks" in data:
         data["hooks"] = _expand_values(data["hooks"], variables)
-
-
-def _expand_check_params(data: dict[str, Any], variables: _Variables) -> None:
-    cases = data.get("cases")
-    for case in cases if isinstance(cases, list) else []:
-        if not isinstance(case, dict):
-            continue
-        _expand_params(case.get("db"), variables)
-        _expand_params(case.get("forbidden"), variables)
-        turns = case.get("turns")
-        for turn in turns if isinstance(turns, list) else []:
-            if isinstance(turn, dict):
-                _expand_params(turn.get("db"), variables)
-
-
-def _expand_params(checks: Any, variables: _Variables) -> None:
-    for check in checks if isinstance(checks, list) else []:
-        if isinstance(check, dict) and "params" in check:
-            check["params"] = _expand_values(check["params"], variables)
 
 
 def _expand_values(value: Any, variables: _Variables) -> Any:

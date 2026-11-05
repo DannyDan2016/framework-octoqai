@@ -103,3 +103,67 @@
     database: {url: "${DB_URL}", forbidden: [{id: f, query: SELECT 1}]}
     cases: [{id: c1, turns: [{user: Hola}]}]
   fragments: [has no expectation, it would always pass]
+
+- id: check-query-env-placeholder
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: "SELECT count(*) FROM ajustes WHERE tenant = '${TENANT}'", expect: {value: 1}}]}]}]
+  fragments: ["db check 'x': query cannot use placeholders; pass values through params"]
+
+- id: check-query-data-placeholder
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: "SELECT count(*) FROM ajustes WHERE tenant = '{{ data.tenant }}'", expect: {value: 1}}]}]}]
+  fragments: ["db check 'x': query cannot use placeholders; pass values through params"]
+
+- id: case-check-query-placeholder
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, expect: [{contains: "."}]}], db: [{id: x, query: "SELECT '{{ data.tenant }}'", expect: {value: 1}}]}]
+  fragments: ["db check 'x': query cannot use placeholders"]
+
+- id: case-forbidden-query-env-placeholder
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, expect: [{contains: "."}]}], forbidden: [{id: f, query: "SELECT count(*) FROM ajustes WHERE tenant = '${TENANT}'"}]}]
+  fragments: ["db check 'f': query cannot use placeholders; pass values through params"]
+
+- id: case-forbidden-query-data-placeholder
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, expect: [{contains: "."}]}], forbidden: [{id: f, query: "SELECT count(*) FROM ajustes WHERE tenant = '{{ data.tenant }}'"}]}]
+  fragments: ["db check 'f': query cannot use placeholders"]
+
+- id: global-forbidden-query-env-placeholder
+  overrides:
+    database: {url: "${DB_URL}", forbidden: [{id: f, query: "SELECT count(*) FROM ajustes WHERE tenant = '${TENANT}'"}]}
+  fragments: ["db check 'f': query cannot use placeholders; pass values through params"]
+
+- id: global-forbidden-query-data-placeholder
+  overrides:
+    database: {url: "${DB_URL}", forbidden: [{id: f, query: "SELECT count(*) FROM ajustes WHERE tenant = '{{ data.tenant }}'"}]}
+  fragments: ["db check 'f': query cannot use placeholders"]
+
+- id: expected-value-env-placeholder
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {value: "${TENANT}"}}]}]}]
+  fragments: ["db check 'x': expected values cannot use placeholders"]
+
+- id: expected-value-data-placeholder
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {value: "{{ data.tenant }}"}}]}]}]
+  fragments: ["db check 'x': expected values cannot use placeholders"]
+
+- id: expected-rows-nested-placeholder
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {rows: [[1, "${TENANT}"]]}}]}]}]
+  fragments: ["db check 'x': expected values cannot use placeholders"]
+
+- id: sql-hook-data-placeholder
+  overrides:
+    database: {url: "${DB_URL}"}
+    hooks: {before_trial: [{sql: ["DELETE FROM ajustes WHERE tenant = '{{ data.tenant }}'"]}]}
+  fragments: ['sql hooks cannot use [{][{] [}][}] placeholders']

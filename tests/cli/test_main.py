@@ -586,3 +586,27 @@ def test_database_example_runs_against_a_fake_agent(run_cli, monkeypatch, sqlite
         commands=FakeCommands(),
     )
     assert result.code != 3, result.err
+
+
+@pytest.fixture
+def tenant_env(monkeypatch):
+    monkeypatch.setenv("TENANT", "B")
+
+
+@pytest.mark.security
+@pytest.mark.usefixtures("tenant_env")
+@pytest.mark.parametrize(
+    "marker", ["'${TENANT}'", "'{{ data.tenant }}'"], ids=["env-placeholder", "data-placeholder"]
+)
+def test_placeholder_in_a_forbidden_query_is_a_config_error_not_a_go(
+    marker, db_experiment, run_cli, fake_agent, sqlite_db
+):
+    forbidden = [
+        {"id": "no-tocar-b", "query": f"SELECT count(*) FROM ajustes WHERE tenant = {marker}"}
+    ]
+    path = db_experiment(forbidden=forbidden)
+    agent = fake_agent.answers("ok.").effect(lambda _: sqlite_db.insert(tenant="B"))
+    result = run_cli("run", path, agent=agent)
+    assert_exit(result.code, 3)
+    assert "query cannot use placeholders; pass values through params" in result.err
+    assert fake_agent.requests == []

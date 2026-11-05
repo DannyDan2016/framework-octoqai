@@ -42,6 +42,7 @@ MIN_CANARY_LENGTH = 4
 
 ENV_NAME = re.compile(r"[A-Za-z0-9_-]+")
 TAG = re.compile(r"[a-z][a-z0-9-]*")
+PLACEHOLDER_MARKERS = ("{{", "${")
 READ_QUERY = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 PATH_SEPARATORS = re.compile(r"[\\/]")
 BATCH_SUFFIXES = (".bat", ".cmd")
@@ -147,7 +148,21 @@ _DB_VALUE_CHECKS: dict[str, Callable[[str, Any], None]] = {
 }
 
 
+def _has_placeholder(value: Any) -> bool:
+    if isinstance(value, str):
+        return any(marker in value for marker in PLACEHOLDER_MARKERS)
+    if isinstance(value, dict):
+        return any(_has_placeholder(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_placeholder(item) for item in value)
+    return False
+
+
 def _read_only(check_id: str, query: str) -> None:
+    if any(marker in query for marker in PLACEHOLDER_MARKERS):
+        raise ValueError(
+            f"db check {check_id!r}: query cannot use placeholders; pass values through params"
+        )
     if not READ_QUERY.match(query):
         raise ValueError(
             f"db check {check_id!r}: query must start with SELECT or WITH; change data with hooks"
@@ -159,7 +174,7 @@ class DbCheck(_Model):
 
     id: str
     query: str
-    params: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict, repr=False)
     kind: DbExpectKind
     value: Any
     hard: StrictBool = False
@@ -180,6 +195,8 @@ class DbCheck(_Model):
     @model_validator(mode="after")
     def _check_check(self) -> DbCheck:
         _read_only(self.id, self.query)
+        if _has_placeholder(self.value):
+            raise ValueError(f"db check {self.id!r}: expected values cannot use placeholders")
         _DB_VALUE_CHECKS[self.kind](self.kind, self.value)
         return self
 
@@ -190,11 +207,11 @@ class DbCheck(_Model):
 
 
 class ForbiddenChange(_Model):
-    """A read-only query that must return no rows after the run."""
+    """A read-only query whose result must not change from the snapshot taken after the reset."""
 
     id: str
     query: str
-    params: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict, repr=False)
 
     @model_validator(mode="after")
     def _check_query(self) -> ForbiddenChange:
@@ -212,7 +229,7 @@ class DatabaseConfig(_Model):
 class HttpHook(_Model):
     """An HTTP request sent by a hook."""
 
-    url: str
+    url: str = Field(repr=False)
     method: str = "POST"
     headers: dict[str, str] = Field(default_factory=dict, repr=False)
     body: Any = Field(default=None, repr=False)
@@ -222,8 +239,8 @@ class Hook(_Model):
     """A lifecycle action: exactly one of an HTTP call, SQL statements or a command."""
 
     http: HttpHook | None = None
-    sql: list[str] | None = Field(default=None, min_length=1)
-    command: list[str] | None = Field(default=None, min_length=1)
+    sql: list[str] | None = Field(default=None, min_length=1, repr=False)
+    command: list[str] | None = Field(default=None, min_length=1, repr=False)
     timeout_s: float | None = Field(default=None, gt=0, le=600)
 
     @model_validator(mode="before")
@@ -232,6 +249,12 @@ class Hook(_Model):
         if isinstance(data, dict) and isinstance(data.get("command"), str):
             raise ValueError("command must be a list of arguments: hooks never run through a shell")
         return data
+
+    @model_validator(mode="after")
+    def _sql_without_templates(self) -> Hook:
+        if self.sql and any("{{" in statement for statement in self.sql):
+            raise ValueError("sql hooks cannot use {{ }} placeholders")
+        return self
 
     @model_validator(mode="after")
     def _no_batch_file(self) -> Hook:
@@ -460,7 +483,7 @@ class Experiment(_Model):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     environments: list[str] | None = Field(default=None, min_length=1)
     data: str | None = None
-    data_values: dict[str, Any] = Field(default_factory=dict)
+    data_values: dict[str, Any] = Field(default_factory=dict, repr=False)
     environment: str | None = None
     selected_tags: list[str] = Field(default_factory=list)
     redacted_values: list[str] = Field(default_factory=list, repr=False)
