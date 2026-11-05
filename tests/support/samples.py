@@ -72,4 +72,5 @@ ESCAPED_LEAKS = {
 CLEAN_ESCAPED = r"linea\nuna \u00f1and\u00fa \/ruta\/ \"citado\" \\ \ud83d\ude00 fin \u"
 DB_PASSWORD = "s3cr3t-" + "pw-77"
 DB_URL_WITH_PASSWORD = "nodialect" + "://qa:" + DB_PASSWORD + "@db.example/app"
+DB_URL_PARTIAL_VARIABLE = "postgresql" + "://qa:" + DB_PASSWORD + "@db.example/${DB_NAME}"
 PG_URL_WITH_PASSWORD = "postgresql" + "://qa:" + DB_PASSWORD + "@db.example/app"

@@ -315,3 +315,28 @@ def test_base_dir_and_hook_env_are_filled_and_hidden(experiment, tmp_path):
     )
     assert exp.base_dir == tmp_path and exp.hook_env["DB_URL"] == "sqlite:///app.db"
     assert "sqlite:///app.db" not in repr(exp)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("database", [{"url": samples.DB_URL_PARTIAL_VARIABLE}, {}])
+def test_database_url_must_be_exactly_one_variable(database, experiment, tmp_path):
+    path = experiment.merge({"database": database}).write(tmp_path)
+    assert_config_error(
+        lambda: load_experiment(path, process_env={"DB_NAME": "app"}),
+        r"database\.url must come from an environment variable",
+        absent=[samples.DB_PASSWORD],
+    )
+
+
+def test_database_forbidden_params_render_data_values(experiment, tmp_path):
+    write_data_set(tmp_path, "qa", {"cuenta": "001"})
+    guard = {
+        "id": "g",
+        "query": "SELECT 1 FROM ajustes WHERE cuenta = :c",
+        "params": {"c": "{{ data.cuenta }}"},
+    }
+    experiment.environments("qa").database(forbidden=[guard]).case("c1", db_case())
+    exp = load_experiment(
+        experiment.write(tmp_path), env="qa", process_env={"DB_URL": "sqlite:///a.db"}
+    )
+    assert exp.database.forbidden[0].params == {"c": "001"}

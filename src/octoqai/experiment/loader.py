@@ -95,7 +95,11 @@ def _template_context(values: dict[str, Any], env: str | None) -> dict[str, Any]
 
 
 def _render_cases(exp: Experiment, context: dict[str, Any]) -> Experiment:
-    return exp.model_copy(update={"cases": [_render_case(case, context) for case in exp.cases]})
+    update: dict[str, Any] = {"cases": [_render_case(case, context) for case in exp.cases]}
+    if exp.database is not None:
+        forbidden = _render_params(exp.database.forbidden, context)
+        update["database"] = exp.database.model_copy(update={"forbidden": forbidden})
+    return exp.model_copy(update=update)
 
 
 def _render_case(case: Case, context: dict[str, Any]) -> Case:
@@ -209,7 +213,7 @@ def _expand_database(data: dict[str, Any], variables: _Variables) -> None:
     if not isinstance(database, dict):
         return
     url = database.get("url")
-    if not isinstance(url, str) or "${" not in url:
+    if not isinstance(url, str) or not _ENV_PATTERN.fullmatch(url):
         raise ConfigError(
             "database.url must come from an environment variable, e.g. ${DB_URL}: "
             "never write credentials in the experiment"
