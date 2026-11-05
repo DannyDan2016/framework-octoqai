@@ -4,6 +4,7 @@ from octoqai.experiment import Experiment
 from octoqai.running import run_experiment
 from support.agents import RESPONSE_MAP, FakeSseAgent
 from support.builders import ExperimentBuilder, turn
+from support.hooks import RecordingHooks
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
@@ -159,3 +160,75 @@ def test_ttft_reported_per_trial():
 
 def test_json_trials_have_no_ttft(agent):
     assert run(experiment(*two_cases()), agent).trials[0].ttft_ms is None
+
+
+def lifecycle_experiment(trials=1, n_cases=2):
+    builder = ExperimentBuilder().trials(trials)
+    for i in range(n_cases):
+        builder.case(f"c{i}", turn("Hola", {"contains": "."}))
+    return Experiment.model_validate(builder.build())
+
+
+@pytest.mark.smoke
+def test_hooks_wrap_every_trial_in_series(fake_agent):
+    events = []
+    hooks = RecordingHooks(events)
+    exp = lifecycle_experiment()
+    agent = fake_agent.answers("ok.").effect(lambda _: events.append("send"))
+    run_experiment(exp, agent.adapter(exp.agent), hooks=hooks)
+    assert events == [
+        "before_run",
+        "before_trial",
+        "send",
+        "after_trial",
+        "before_trial",
+        "send",
+        "after_trial",
+        "after_run",
+    ]
+
+
+def test_failed_before_run_skips_trials_and_still_runs_after_run(fake_agent):
+    hooks = RecordingHooks().fails("before_run")
+    exp = lifecycle_experiment()
+    run = run_experiment(exp, fake_agent.adapter(exp.agent), hooks=hooks)
+    assert run.trials == [] and fake_agent.requests == []
+    assert run.setup_error == "before_run[0] (command) exited with code 1"
+    assert hooks.events == ["before_run", "after_run"]
+    assert [h.stage for h in run.hooks] == ["before_run", "after_run"]
+
+
+def test_failed_reset_skips_the_trial_without_calling_the_agent(fake_agent):
+    hooks = RecordingHooks().fails("before_trial", times=1)
+    exp = lifecycle_experiment(trials=2, n_cases=1)
+    adapter = fake_agent.answers("ok.").adapter(exp.agent)
+    first, second = run_experiment(exp, adapter, hooks=hooks).trials
+    assert (first.outcome, first.turns, first.tokens) == ("not_evaluable", [], None)
+    assert first.setup_error == "before_trial[0] (command) exited with code 1"
+    assert second.outcome == "pass" and len(fake_agent.requests) == 1
+    assert hooks.events.count("after_trial") == 2
+
+
+def test_failed_after_trial_is_recorded_without_changing_the_outcome(fake_agent):
+    hooks = RecordingHooks().fails("after_trial")
+    exp = lifecycle_experiment(n_cases=1)
+    adapter = fake_agent.answers("ok.").adapter(exp.agent)
+    [trial] = run_experiment(exp, adapter, hooks=hooks).trials
+    assert trial.outcome == "pass"
+    assert [(h.stage, h.ok) for h in trial.hooks] == [
+        ("before_trial", True),
+        ("after_trial", False),
+    ]
+
+
+def _boom(_request):
+    raise RuntimeError("boom")
+
+
+def test_after_run_runs_even_if_a_trial_raises(fake_agent):
+    hooks = RecordingHooks()
+    exp = lifecycle_experiment(n_cases=1)
+    fake_agent.effect(_boom)
+    with pytest.raises(RuntimeError):
+        run_experiment(exp, fake_agent.adapter(exp.agent), hooks=hooks)
+    assert hooks.events[-1] == "after_run"

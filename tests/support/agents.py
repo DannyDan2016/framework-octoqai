@@ -113,6 +113,7 @@ class FakeAgent:
         self._adapters: list[AgentPort] = []
         self._refusals = 0
         self._refusal: type[httpx.TransportError] = httpx.ConnectError
+        self._effect: Callable[[Any], None] | None = None
         self._handler: _Handler = lambda request: httpx.Response(500)
 
     @property
@@ -236,6 +237,14 @@ class FakeAgent:
         self._refusal = httpx.ConnectTimeout if timeout else httpx.ConnectError
         return self
 
+    def effect(self, fn: Callable[[Any], None]) -> Self:
+        """Call ``fn`` with each request body just before the handler answers it.
+
+        A refused connection never reaches the agent, so it has no effect.
+        """
+        self._effect = fn
+        return self
+
     def fires_stale_watchdog(self) -> Self:
         """Fire the first attempt's alarm while each later request is in flight.
 
@@ -287,6 +296,8 @@ class FakeAgent:
         if self._refusals:
             self._refusals -= 1
             raise self._refusal("refused", request=request)
+        if self._effect is not None:
+            self._effect(self.requests[-1])
         return self._handler(request)
 
 

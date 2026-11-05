@@ -8,8 +8,10 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from octoqai.agents.port import AgentPort, AgentReply
+from octoqai.db.port import DatabasePort
 from octoqai.expectations import CheckResult, evaluate
-from octoqai.experiment import Case, Experiment, Variant
+from octoqai.experiment import Case, Experiment, HookStage, Variant
+from octoqai.hooks.port import HookResult, LifecyclePort
 from octoqai.security import Detector, Leak, scan_reply
 
 Outcome = Literal["pass", "fail", "not_evaluable"]
@@ -33,6 +35,8 @@ class TrialResult:
     case_id: str
     trial: int
     turns: list[TurnResult]
+    hooks: list[HookResult] = field(default_factory=list)
+    setup_error: str | None = None
 
     @property
     def _checks(self) -> list[CheckResult]:
@@ -41,6 +45,8 @@ class TrialResult:
     @property
     def outcome(self) -> Outcome:
         """``fail`` if any check failed, ``not_evaluable`` if any is unknown, else ``pass``."""
+        if self.setup_error is not None:
+            return "not_evaluable"
         checks = self._checks
         if any(turn.reply.error for turn in self.turns) or any(c.passed is False for c in checks):
             return "fail"
@@ -61,6 +67,8 @@ class TrialResult:
     @property
     def tokens(self) -> int | None:
         """Total tokens used, or ``None`` if any turn did not report usage."""
+        if not self.turns:
+            return None
         total = 0
         for turn in self.turns:
             if turn.reply.tokens is None:
@@ -101,6 +109,21 @@ class RunResult:
     trials: list[TrialResult]
     started_at: str
     finished_at: str
+    hooks: list[HookResult] = field(default_factory=list)
+    setup_error: str | None = None
+
+
+class _NoHooks:
+    def run(self, stage: HookStage) -> list[HookResult]:
+        return []
+
+    def close(self) -> None:
+        return None
+
+
+def hook_error(result: HookResult) -> str:
+    """Describe a failed hook as ``stage[index] (kind) error``."""
+    return f"{result.stage}[{result.index}] ({result.kind}) {result.error}"
 
 
 def _now() -> str:
@@ -112,6 +135,8 @@ class _Session:
     agent: AgentPort
     exp: Experiment
     detector: Detector
+    db: DatabasePort | None
+    hooks: LifecyclePort
 
 
 def _leak_check(leak: Leak) -> CheckResult:
@@ -120,7 +145,7 @@ def _leak_check(leak: Leak) -> CheckResult:
     )
 
 
-def _run_trial(session: _Session, variant: Variant, case: Case, index: int) -> TrialResult:
+def _play(session: _Session, variant: Variant, case: Case) -> list[TurnResult]:
     agent, exp = session.agent, session.exp
     said: list[str] = []
     conversation_id = str(uuid.uuid4())
@@ -146,25 +171,57 @@ def _run_trial(session: _Session, variant: Variant, case: Case, index: int) -> T
             break
         history.append({"role": "user", "content": turn.user})
         history.append({"role": "assistant", "content": reply.answer or ""})
-    return TrialResult(variant.name, case.id, index, turns)
+    return turns
 
 
-def run_experiment(exp: Experiment, agent: AgentPort) -> RunResult:
-    """Run every variant, case and trial in series.
+def _first_failure(results: list[HookResult]) -> str | None:
+    return next((hook_error(r) for r in results if not r.ok), None)
 
-    Args:
-        exp: The experiment to run.
-        agent: Adapter connected to the agent under test.
 
-    Returns:
-        The collected trial results.
-    """
-    started_at = _now()
-    session = _Session(agent, exp, Detector(exp.security))
-    trials = [
+def _run_trial(session: _Session, variant: Variant, case: Case, index: int) -> TrialResult:
+    before = session.hooks.run("before_trial")
+    setup_error = _first_failure(before)
+    turns = [] if setup_error else _play(session, variant, case)
+    after = session.hooks.run("after_trial")
+    return TrialResult(variant.name, case.id, index, turns, before + after, setup_error)
+
+
+def _run_all(session: _Session) -> list[TrialResult]:
+    exp = session.exp
+    return [
         _run_trial(session, variant, case, index)
         for variant in exp.variants
         for case in exp.cases
         for index in range(exp.trials)
     ]
-    return RunResult(exp, trials, started_at, _now())
+
+
+def run_experiment(
+    exp: Experiment,
+    agent: AgentPort,
+    *,
+    db: DatabasePort | None = None,
+    hooks: LifecyclePort | None = None,
+) -> RunResult:
+    """Run every variant, case and trial in series, with a reset before each trial.
+
+    Args:
+        exp: The experiment to run.
+        agent: Adapter connected to the agent under test.
+        db: Database the experiment checks, if any.
+        hooks: Lifecycle hooks to run around the run and each trial.
+
+    Returns:
+        The collected trial results and the outcome of the run hooks.
+    """
+    started_at = _now()
+    session = _Session(agent, exp, Detector(exp.security), db, hooks or _NoHooks())
+    before = session.hooks.run("before_run")
+    setup_error = _first_failure(before)
+    trials: list[TrialResult] = []
+    try:
+        if setup_error is None:
+            trials = _run_all(session)
+    finally:
+        after = session.hooks.run("after_run")
+    return RunResult(exp, trials, started_at, _now(), before + after, setup_error)
