@@ -40,7 +40,7 @@ From top to bottom; a package may import only from packages below it:
 
 Additional contracts in `[tool.importlinter]`:
 
-- `httpx` is imported only inside `octoqai.agents`, `octoqai.db` and `octoqai.cli`.
+- `httpx` is imported only inside `octoqai.agents` and `octoqai.cli`.
 - `sqlalchemy` is imported only inside `octoqai.db`.
 - The core (`running`, `security`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse`, `octoqai.agents.factory` or `octoqai.db.sql`; it imports the ports (`octoqai.agents.port`, `octoqai.db.port`).
 - `octoqai.stats` is pure: it imports nothing from Octoqai except `errors`, and never imports `octoqai.db`.
