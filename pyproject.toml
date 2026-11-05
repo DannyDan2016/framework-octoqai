@@ -16,6 +16,7 @@ dependencies = [
     "httpx>=0.28,<1",
     "jsonpath-ng>=1.15,<2",
     "python-dotenv>=1.2,<2",
+    "sqlalchemy>=2.1.8,<2.2",
 ]
 
 [project.optional-dependencies]
@@ -86,6 +87,7 @@ layers = [
     "octoqai.running",
     "octoqai.expectations | octoqai.security",
     "octoqai.agents",
+    "octoqai.db",
     "octoqai.stats | octoqai.experiment",
     "octoqai.errors",
 ]
@@ -95,6 +97,7 @@ name = "httpx only inside agents and cli"
 type = "forbidden"
 source_modules = [
     "octoqai.errors",
+    "octoqai.db",
     "octoqai.experiment",
     "octoqai.stats",
     "octoqai.expectations",
@@ -106,7 +109,7 @@ source_modules = [
 forbidden_modules = ["httpx"]
 
 [[tool.importlinter.contracts]]
-name = "The core only knows the agent port"
+name = "The core only knows ports"
 type = "forbidden"
 source_modules = [
     "octoqai.running",
@@ -119,6 +122,7 @@ forbidden_modules = [
     "octoqai.agents.http_json",
     "octoqai.agents.sse",
     "octoqai.agents.factory",
+    "octoqai.db.sql",
 ]
 
 [[tool.importlinter.contracts]]
@@ -128,6 +132,7 @@ source_modules = ["octoqai.stats"]
 forbidden_modules = [
     "octoqai.experiment",
     "octoqai.agents",
+    "octoqai.db",
     "octoqai.expectations",
     "octoqai.security",
     "octoqai.running",
@@ -135,3 +140,20 @@ forbidden_modules = [
     "octoqai.reports",
     "octoqai.cli",
 ]
+
+[[tool.importlinter.contracts]]
+name = "SQLAlchemy only inside db"
+type = "forbidden"
+source_modules = [
+    "octoqai.errors",
+    "octoqai.experiment",
+    "octoqai.stats",
+    "octoqai.agents",
+    "octoqai.expectations",
+    "octoqai.security",
+    "octoqai.running",
+    "octoqai.verdict",
+    "octoqai.reports",
+    "octoqai.cli",
+]
+forbidden_modules = ["sqlalchemy"]

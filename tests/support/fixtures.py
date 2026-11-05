@@ -16,8 +16,10 @@ from typing import Any
 import pytest
 
 from octoqai.cli import main
+from octoqai.db import SqlDatabase
 from support.agents import FakeAgent, FakeJsonAgent
 from support.builders import ExperimentBuilder
+from support.databases import BANK_SCHEMA, SqliteFile
 from support.paths import TOY_SSE_AGENT
 
 
@@ -54,6 +56,22 @@ def fake_agent() -> Iterator[FakeJsonAgent]:
     agent = FakeJsonAgent()
     yield agent
     agent.close()
+
+
+@pytest.fixture
+def sqlite_db(tmp_path: Path) -> SqliteFile:
+    """A SQLite file with the bank schema."""
+    database = SqliteFile(tmp_path / "app.db")
+    database.run(*BANK_SCHEMA)
+    return database
+
+
+@pytest.fixture
+def sql_database(sqlite_db: SqliteFile) -> Iterator[SqlDatabase]:
+    """An adapter on the test database; it is closed after the test."""
+    database = SqlDatabase(sqlite_db.url)
+    yield database
+    database.close()
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `experiment/` | Pydantic model, YAML loader, `${VAR}` expansion from `.env` files (`envfiles.py`), per-environment data sets (`datasets.py`) and `{{ }}` templates | `errors` |
 | `stats/` | Pure estimators: Wilson interval, paired bootstrap, pass@k | `errors` |
 | `agents/` | `port.py` (`AgentPort`, `AgentReply`), `sse_events.py` (SSE parser), adapters such as `http_json.py` and `sse.py`, and `factory.py` (`adapter_for` picks the adapter from the config) | `experiment`, `errors` |
+| `db/` | Database port (`DatabasePort`, `QueryResult`) and the SQLAlchemy adapter `SqlDatabase` | `errors` |
 | `expectations/` | Registry of deterministic checks applied to an agent reply | `agents.port`, `experiment` |
 | `security/` | Detectors for canaries, secrets and personal data, leak scanning and the single report redactor | `agents.port`, `experiment`, `errors` |
 | `running/` | Serial runner; knows only `AgentPort`, never a concrete adapter | lower layers |
@@ -20,9 +21,8 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `reports/` | Report writers (JSON today) | `verdict`, `running` |
 | `cli/` | `argparse` entry point; wires concrete adapters | everything |
 
-Planned packages: `db/` (database port and adapter) and `providers/` (LLM provider port and
-adapters). Each one gets a row here, an import contract and a mirror test folder when it is
-created.
+Planned package: `providers/` (LLM provider port and adapters). It gets a row here, an import
+contract and a mirror test folder when it is created.
 
 ## Layers
 
@@ -34,14 +34,16 @@ From top to bottom; a package may import only from packages below it:
 4. `octoqai.running`
 5. `octoqai.expectations` and `octoqai.security` (independent of each other)
 6. `octoqai.agents`
-7. `octoqai.stats` and `octoqai.experiment` (independent of each other)
-8. `octoqai.errors`
+7. `octoqai.db`
+8. `octoqai.stats` and `octoqai.experiment` (independent of each other)
+9. `octoqai.errors`
 
 Additional contracts in `[tool.importlinter]`:
 
-- `httpx` is imported only inside `octoqai.agents` and `octoqai.cli`.
-- The core (`running`, `security`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse` or `octoqai.agents.factory`; it imports `octoqai.agents.port`.
-- `octoqai.stats` is pure: it imports nothing from Octoqai except `errors`.
+- `httpx` is imported only inside `octoqai.agents`, `octoqai.db` and `octoqai.cli`.
+- `sqlalchemy` is imported only inside `octoqai.db`.
+- The core (`running`, `security`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse`, `octoqai.agents.factory` or `octoqai.db.sql`; it imports the ports (`octoqai.agents.port`, `octoqai.db.port`).
+- `octoqai.stats` is pure: it imports nothing from Octoqai except `errors`, and never imports `octoqai.db`.
 
 ## Ports and adapters
 
@@ -76,8 +78,8 @@ Both adapters share these rules (`agents/_delivery.py`):
 
 Every package exports its public names in `__init__.py` and lists them in `__all__`. Other packages
 and tests import from the package (`from octoqai.experiment import load_experiment`), not from its
-modules. A module that is not public starts with `_`. The only exception is a port imported
-directly (`octoqai.agents.port`) to keep the runner away from concrete adapters.
+modules. A module that is not public starts with `_`. The only exceptions are the ports imported
+directly (`octoqai.agents.port`, `octoqai.db.port`) to keep the core away from concrete adapters.
 
 ## Tests
 
@@ -86,7 +88,7 @@ directly (`octoqai.agents.port`) to keep the runner away from concrete adapters.
 ```
 tests/
   conftest.py        only: pytest_plugins = ["support.fixtures"]
-  support/           test kit: builders.py, agents.py, assertions.py, paths.py, samples.py, fixtures.py
+  support/           test kit: builders.py, agents.py, databases.py, assertions.py, paths.py, samples.py, fixtures.py
   <package>/         test_<topic>.py and data/<name>.yaml with the tabular cases of that package
   quality/           style, hygiene, architecture and layout checks
   e2e/               real agent process on 127.0.0.1

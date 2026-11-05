@@ -70,3 +70,6 @@ ESCAPED_LEAKS = {
     for secret, (value, escaped, kind) in ESCAPED_SECRETS.items()
 }
 CLEAN_ESCAPED = r"linea\nuna \u00f1and\u00fa \/ruta\/ \"citado\" \\ \ud83d\ude00 fin \u"
+DB_PASSWORD = "s3cr3t-" + "pw-77"
+DB_URL_WITH_PASSWORD = "nodialect" + "://qa:" + DB_PASSWORD + "@db.example/app"
+PG_URL_WITH_PASSWORD = "postgresql" + "://qa:" + DB_PASSWORD + "@db.example/app"
