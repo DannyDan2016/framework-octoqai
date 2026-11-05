@@ -4,6 +4,8 @@ from octoqai.experiment import Experiment, HooksConfig
 from octoqai.hooks import HookEnvironment, HookExecutor
 from octoqai.running import run_experiment
 from support.builders import ExperimentBuilder, turn
+from support.databases import FakeDatabase, recreate_command
+from support.hooks import RecordingHooks
 
 pytestmark = [pytest.mark.integration, pytest.mark.regression]
 
@@ -108,3 +110,52 @@ def test_sql_reset_hook_isolates_every_trial(sqlite_db, sql_database, fake_agent
     agent = fake_agent.answers("ok.").effect(lambda _: sqlite_db.insert())
     trials = play(exp, agent, sql_database, hooks)
     assert [t.outcome for t in trials] == ["pass", "pass", "pass"]
+
+
+@pytest.mark.regression
+def test_a_real_reset_that_recreates_the_database_file_runs_every_trial(
+    tmp_path, sqlite_db, sql_database, fake_agent
+):
+    exp = build(sqlite_db, turn("Crea", {"contains": "."}), forbidden=[TENANT_B], trials=3)
+    reset = {"before_trial": [{"command": recreate_command(tmp_path, sqlite_db)}]}
+    hooks = HookExecutor(HooksConfig.model_validate(reset), HookEnvironment(db=sql_database))
+    agent = fake_agent.answers("ok.").effect(lambda _: sqlite_db.insert(tenant="B"))
+    trials = play(exp, agent, sql_database, hooks)
+    assert [t.setup_error for t in trials] == [None, None, None]
+    assert [t.forbidden_count for t in trials] == [1, 1, 1]
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "query",
+    [
+        "WITH t AS (SELECT 1) DELETE FROM ajustes WHERE tenant = 'B'",
+        "WITH t AS (SELECT 1) UPDATE ajustes SET importe = 0",
+    ],
+    ids=["delete", "update"],
+)
+def test_a_guard_with_no_result_set_is_never_a_pass(query, sqlite_db, sql_database, fake_agent):
+    sqlite_db.insert(tenant="B")
+    exp = build(
+        sqlite_db, turn("Borra", {"contains": "."}), forbidden=[{"id": "g", "query": query}]
+    )
+    agent = fake_agent.answers("ok.").effect(lambda _: sqlite_db.run("DELETE FROM ajustes"))
+    [trial] = play(exp, agent, sql_database)
+    assert trial.outcome == "not_evaluable" and trial.hard_violation is False
+    assert "query returned no result set" in trial.turns[0].checks[-1].detail
+    assert sqlite_db.scalar("SELECT count(*) FROM ajustes") == 0
+
+
+def test_a_failed_reset_runs_no_query(fake_agent):
+    fake = FakeDatabase()
+    exp = Experiment.model_validate(
+        ExperimentBuilder()
+        .database(url="sqlite:///x.db", forbidden=[TENANT_B])
+        .trials(1)
+        .case("c1", turn("Crea", db=[{**COUNT_001, "expect": {"delta": 1}}]))
+        .build()
+    )
+    hooks = RecordingHooks().fails("before_trial")
+    [trial] = play(exp, fake_agent.answers("ok."), fake, hooks)
+    assert trial.setup_error is not None and fake.queries == []
+    assert fake_agent.requests == []

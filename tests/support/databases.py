@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,24 @@ BANK_SCHEMA = (
     "CREATE TABLE ajustes (id INTEGER PRIMARY KEY, tenant TEXT NOT NULL, "
     "cuenta TEXT NOT NULL, importe NUMERIC NOT NULL)",
 )
+
+RECREATE_LINES = (
+    "import os, sqlite3, sys",
+    "path = sys.argv[1]",
+    "if os.path.exists(path):",
+    "    os.remove(path)",
+    "connection = sqlite3.connect(path)",
+    "connection.execute(sys.argv[2])",
+    "connection.commit()",
+    "connection.close()",
+)
+
+
+def recreate_command(directory: Path, database: SqliteFile) -> list[str]:
+    """Write a script that deletes and recreates the SQLite file; return its argv."""
+    script = directory / "recreate.py"
+    script.write_text(chr(10).join(RECREATE_LINES), encoding="utf-8")
+    return [sys.executable, str(script), str(database.path), BANK_SCHEMA[0]]
 
 
 class SqliteFile:
@@ -69,14 +88,16 @@ def result(*rows: Sequence[Any], error: str | None = None) -> QueryResult:
 
 
 class FakeDatabase:
-    """In-memory ``DatabasePort`` that records the statements it is asked to run."""
+    """In-memory ``DatabasePort`` that records the statements and queries it is asked to run."""
 
     def __init__(self, error: str | None = None) -> None:
         self.error = error
         self.executed: list[list[str]] = []
+        self.queries: list[str] = []
 
     def query(self, sql: str, params: Mapping[str, Any]) -> QueryResult:
-        """Return an empty result."""
+        """Record the query and return an empty result."""
+        self.queries.append(sql)
         return QueryResult()
 
     def execute(self, statements: Sequence[str]) -> str | None:

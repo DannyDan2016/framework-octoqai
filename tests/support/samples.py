@@ -75,3 +75,28 @@ DB_URL_WITH_PASSWORD = "nodialect" + "://qa:" + DB_PASSWORD + "@db.example/app"
 DB_URL_PARTIAL_VARIABLE = "postgresql" + "://qa:" + DB_PASSWORD + "@db.example/${DB_NAME}"
 DB_URL_BAD_PORT = "postgresql" + "://qa:p@x:" + DB_PASSWORD + "@db.example:5432/app"
 PG_URL_WITH_PASSWORD = "postgresql" + "://qa:" + DB_PASSWORD + "@db.example/app"
+DB_SECRET_PASSWORD = "Sup3r-" + "s3cret!"
+DB_SECRET_PASSWORD_ENCODED = "Sup3r%2D" + "s3cret%21"
+DB_SSL_SECRET = "qwerty-" + "77"
+DB_KEY_SECRET = "k-9x" + "7q"
+DB_URL_WITH_ENCODED_SECRETS = (
+    "postgresql"
+    + "://qa:"
+    + DB_SECRET_PASSWORD_ENCODED
+    + "@db.example:5432/app?sslpass"
+    + "word="
+    + DB_SSL_SECRET
+    + "&sslkey="
+    + DB_KEY_SECRET
+    + "&application_name=octoqai"
+)
+HARD_SECRETS = {
+    "slash-colon": "/:x" + "9Zk",
+    "percent": "%40" + "ab12",
+    "braces": "{{ x " + "}}7Qz",
+    "long": "L" + "0ng-" * 80 + "tail",
+}
+PG_DATA_ERROR = 'invalid input syntax for type integer: "juan ' + 'perez cliente"'
+MYSQL_DUPLICATE = "Duplicate entry 'juan " + "perez' for key 'ajustes.cuenta'"
+IPV4 = "10.1" + ".2.3"
+IPV6 = "[2001:db8" + "::1]"

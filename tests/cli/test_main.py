@@ -610,3 +610,39 @@ def test_placeholder_in_a_forbidden_query_is_a_config_error_not_a_go(
     assert_exit(result.code, 3)
     assert "query cannot use placeholders; pass values through params" in result.err
     assert fake_agent.requests == []
+
+
+@pytest.fixture
+def hard_secret_experiment(experiment, tmp_path, sqlite_db, monkeypatch):
+    monkeypatch.setenv("DB_URL", sqlite_db.url)
+
+    def _write(secret, where):
+        monkeypatch.setenv("HARD_SECRET", secret)
+        experiment.database().trials(1)
+        check = {
+            "id": "x",
+            "query": "SELECT count(*) FROM nope WHERE cuenta = :c",
+            "params": {"c": "${HARD_SECRET}"},
+            "expect": {"value": 1},
+        }
+        experiment.case("c1", turn("Hola", db=[check]))
+        if where == "hook":
+            experiment.hooks(before_trial=[{"sql": ['DELETE FROM "${HARD_SECRET}"']}])
+        return str(experiment.write(tmp_path))
+
+    return _write
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("where", ["hook", "check"])
+@pytest.mark.parametrize("secret", samples.HARD_SECRETS.values(), ids=samples.HARD_SECRETS)
+def test_hard_secrets_never_reach_outputs_through_database_errors(
+    secret, where, hard_secret_experiment, run_cli, fake_agent
+):
+    result = run_cli("run", hard_secret_experiment(secret, where), agent=fake_agent.answers("ok."))
+    assert result.code in (1, 2, 3)
+    texts = [result.out, result.err]
+    if (result.out_dir / "report.json").is_file():
+        texts.append(result.report_text())
+    for fragment in (secret, secret[:20], secret[-20:]):
+        assert_not_in_outputs(fragment, *texts)

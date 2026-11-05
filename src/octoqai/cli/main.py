@@ -116,7 +116,7 @@ def _open_and_run(exp: Experiment, seams: _Seams) -> RunResult:
     with ExitStack() as stack:
         db = None
         if exp.database is not None:
-            db = stack.enter_context(closing(SqlDatabase(exp.database.url)))
+            db = stack.enter_context(closing(SqlDatabase(exp.database.url, exp.redacted_values)))
         environment = HookEnvironment(db, exp.base_dir, exp.hook_env)
         hooks = stack.enter_context(closing(HookExecutor(exp.hooks, environment, **seams.hooks)))
         adapter = stack.enter_context(

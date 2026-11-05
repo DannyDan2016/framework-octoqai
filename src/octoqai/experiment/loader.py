@@ -5,9 +5,10 @@ from __future__ import annotations
 import difflib
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, get_args
+from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlsplit
 
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -28,6 +29,7 @@ from octoqai.experiment.model import (
 from octoqai.experiment.template import render, render_text
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_SENSITIVE_KEY = re.compile(r"pass|pwd|secret|token|key", re.IGNORECASE)
 _QUOTED = re.compile(r"'([^']+)'")
 _PATTERN_KINDS = ("contains", "not_contains")
 _RESERVED = (
@@ -180,6 +182,11 @@ class _Variables:
     def expand(self, text: str) -> str:
         return _ENV_PATTERN.sub(self._replace, text)
 
+    def remember(self, values: Iterable[str]) -> None:
+        for value in values:
+            if value and value not in self.used:
+                self.used.append(value)
+
     def _replace(self, match: re.Match[str]) -> str:
         name = match.group(1)
         if name not in self._values:
@@ -223,6 +230,26 @@ def _expand_database(data: dict[str, Any], variables: _Variables) -> None:
             "never write credentials in the experiment"
         )
     database["url"] = variables.expand(url)
+    variables.remember(_url_secrets(database["url"]))
+
+
+def _forms(value: str) -> list[str]:
+    return [value, unquote(value), quote(value, safe=""), quote_plus(value)]
+
+
+def _url_secrets(url: str) -> list[str]:
+    try:
+        parts = urlsplit(url)
+        found = [parts.password or ""]
+        found += [value for key, value in parse_qsl(parts.query) if _SENSITIVE_KEY.search(key)]
+        found += [
+            pair.partition("=")[2]
+            for pair in parts.query.split("&")
+            if _SENSITIVE_KEY.search(pair.partition("=")[0])
+        ]
+    except ValueError:
+        return []
+    return [form for value in found if value for form in _forms(value)]
 
 
 def _expand_hooks(data: dict[str, Any], variables: _Variables) -> None:

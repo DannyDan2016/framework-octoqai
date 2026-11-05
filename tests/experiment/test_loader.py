@@ -384,3 +384,26 @@ def test_repr_hides_queries_params_and_hook_actions(experiment, tmp_path):
     text = repr(exp)
     for hidden in ("hk-sql-77", "hk-cmd-77", "hk-url-77", "hk-param-77", "hk-data-77"):
         assert hidden not in text
+
+
+@pytest.mark.security
+def test_database_password_and_secret_query_values_are_redacted_in_every_form(experiment, tmp_path):
+    path = experiment.database().case("c1", db_case()).write(tmp_path)
+    env = {"DB_URL": samples.DB_URL_WITH_ENCODED_SECRETS}
+    values = load_experiment(path, process_env=env).redacted_values
+    for expected in (
+        samples.DB_SECRET_PASSWORD,
+        samples.DB_SECRET_PASSWORD_ENCODED,
+        samples.DB_SSL_SECRET,
+        samples.DB_KEY_SECRET,
+    ):
+        assert expected in values
+    assert "octoqai" not in values
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("url", [samples.DB_URL_BAD_PORT, "postgresql://[::1/app?token=abc"])
+def test_a_malformed_database_url_still_loads_without_raising(url, experiment, tmp_path):
+    path = experiment.database().case("c1", db_case()).write(tmp_path)
+    exp = load_experiment(path, process_env={"DB_URL": url})
+    assert url in exp.redacted_values

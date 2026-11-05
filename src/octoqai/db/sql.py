@@ -6,10 +6,12 @@ import re
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
+from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlsplit
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import URL, make_url
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.engine import URL, Connection, Engine, make_url
+from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, SQLAlchemyError
+from sqlalchemy.pool import NullPool
 
 from octoqai.db.port import QueryResult
 from octoqai.errors import ConfigError
@@ -17,58 +19,108 @@ from octoqai.errors import ConfigError
 _MAX_ERROR_CHARS = 200
 _MIN_PARAM_CHARS = 4
 _NO_PARAMS: Mapping[str, Any] = MappingProxyType({})
+_VALUE_ERRORS = (DataError, IntegrityError)
+_NO_RESULT_SET = "query returned no result set"
+REDACTED = "[redacted]"
+_ADDRESS = re.compile(r"(?<![\w.])\d{1,3}(?:\.\d{1,3}){3}(?![\w.])|\[[0-9A-Fa-f]*:[0-9A-Fa-f:.]*\]")
 
 
-def scrub_error(message: str, url: str | URL, params: Mapping[str, Any] = _NO_PARAMS) -> str:
+def _forms(value: str) -> set[str]:
+    return {value, quote(value, safe=""), quote_plus(value), unquote(value)}
+
+
+def _raw_secrets(url: str) -> set[str]:
+    try:
+        parts = urlsplit(url)
+        found = {parts.password, parts.username}
+        found.update(value for _, value in parse_qsl(parts.query))
+        found.update(pair.partition("=")[2] for pair in parts.query.split("&"))
+    except ValueError:
+        return set()
+    return {form for value in found if value for form in _forms(value)}
+
+
+def _url_secrets(parsed: URL) -> set[str]:
+    found = {parsed.password, parsed.username, parsed.host, parsed.database}
+    found.add(None if parsed.port is None else str(parsed.port))
+    for item in parsed.query.values():
+        found.update((item,) if isinstance(item, str) else item)
+    return {form for value in found if value for form in _forms(value)}
+
+
+def scrub_error(
+    message: str,
+    url: str | URL,
+    params: Mapping[str, Any] = _NO_PARAMS,
+    secrets: Sequence[str] = (),
+) -> str:
     """Mask connection details and parameter values that a driver message may repeat.
 
     Args:
         message: Text produced by the driver.
-        url: Database URL; its password, user name, host and database are masked.
+        url: Database URL; its password, user name, host, port, database and query values are
+            masked, in plain and percent-encoded forms, and so are IP address literals.
         params: Query parameters; values of four characters or more are masked.
+        secrets: Further values to mask, such as environment values used by the experiment.
 
     Returns:
         The message with every sensitive value replaced by ``[redacted]``.
     """
-    parsed = make_url(url)
-    secrets = {parsed.password, parsed.username, parsed.host, parsed.database}
-    secrets |= {str(v) for v in params.values() if len(str(v)) >= _MIN_PARAM_CHARS}
-    values = sorted((s for s in secrets if s), key=len, reverse=True)
-    if not values:
-        return message
-    pattern = re.compile("|".join(re.escape(v) for v in values), re.IGNORECASE)
-    return pattern.sub("[redacted]", message)
+    found = _url_secrets(make_url(url)) | {s for s in secrets if s}
+    if isinstance(url, str):
+        found |= _raw_secrets(url)
+    found |= {str(v) for v in params.values() if len(str(v)) >= _MIN_PARAM_CHARS}
+    values = sorted(found, key=len, reverse=True)
+    if values:
+        message = re.compile("|".join(re.escape(v) for v in values), re.IGNORECASE).sub(
+            REDACTED, message
+        )
+    return _ADDRESS.sub(REDACTED, message)
 
 
 def _describe(exc: SQLAlchemyError) -> str:
-    original = getattr(exc, "orig", None)
-    lines = str(original).splitlines() if original is not None else []
-    detail = lines[0] if lines else ""
     name = type(exc).__name__
-    return f"{name}: {detail}" if detail else name
+    if not isinstance(exc, DBAPIError) or isinstance(exc, _VALUE_ERRORS):
+        return name
+    lines = str(exc.orig).splitlines() if exc.orig is not None else []
+    return f"{name}: {lines[0]}" if lines and lines[0] else name
+
+
+def _explicit_transactions(engine: Engine) -> None:
+    @event.listens_for(engine, "connect")
+    def _manual(dbapi_connection: Any, record: Any) -> None:
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine, "begin")
+    def _begin(conn: Connection) -> None:
+        conn.exec_driver_sql("BEGIN")
 
 
 class SqlDatabase:
     """Database adapter on top of a SQLAlchemy engine."""
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, secrets: Sequence[str] = ()) -> None:
         """Create the engine.
 
         Args:
             url: SQLAlchemy URL of the database.
+            secrets: Values scrubbed from error messages besides the connection details.
 
         Raises:
             ConfigError: When the URL or its driver is not usable; the URL is never echoed.
         """
         try:
-            self._engine = create_engine(url, hide_parameters=True)
+            self._engine = create_engine(url, hide_parameters=True, poolclass=NullPool)
         except Exception:
             raise ConfigError(
                 "database.url is not a valid SQLAlchemy URL or its driver is not installed"
             ) from None
+        self._secrets = tuple(secrets)
+        if self._engine.dialect.name == "sqlite":
+            _explicit_transactions(self._engine)
 
     def _error(self, exc: SQLAlchemyError, params: Mapping[str, Any] = _NO_PARAMS) -> str:
-        cleaned = scrub_error(_describe(exc), self._engine.url, params)
+        cleaned = scrub_error(_describe(exc), self._engine.url, params, self._secrets)
         return cleaned[:_MAX_ERROR_CHARS]
 
     def query(self, sql: str, params: Mapping[str, Any]) -> QueryResult:
@@ -77,8 +129,10 @@ class SqlDatabase:
             with self._engine.connect() as conn:
                 try:
                     result = conn.execute(text(sql), dict(params))
-                    columns = tuple(result.keys()) if result.returns_rows else ()
-                    rows = tuple(tuple(r) for r in result.fetchall()) if columns else ()
+                    if not result.returns_rows:
+                        return QueryResult(error=_NO_RESULT_SET)
+                    columns = tuple(result.keys())
+                    rows = tuple(tuple(r) for r in result.fetchall())
                 finally:
                     conn.rollback()
         except SQLAlchemyError as exc:
