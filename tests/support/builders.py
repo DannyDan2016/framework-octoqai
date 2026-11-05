@@ -14,9 +14,14 @@ from support.agents import SSE_RESPONSE_MAP
 DEFAULT_URL = "http://agent.local/chat"
 
 
-def turn(user: str, *expect: dict[str, Any]) -> dict[str, Any]:
-    """Build one conversation turn with its expectations."""
-    return {"user": user, "expect": list(expect)}
+def turn(
+    user: str, *expect: dict[str, Any], db: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Build one conversation turn with its expectations and database checks."""
+    built: dict[str, Any] = {"user": user, "expect": list(expect)}
+    if db:
+        built["db"] = list(db)
+    return built
 
 
 def write_env_file(directory: Path, name: str, **values: str) -> Path:
@@ -81,12 +86,21 @@ class ExperimentBuilder:
         return self
 
     def case(
-        self, case_id: str, *turns: dict[str, Any], tags: Iterable[str] = ()
+        self,
+        case_id: str,
+        *turns: dict[str, Any],
+        tags: Iterable[str] = (),
+        db: Iterable[dict[str, Any]] = (),
+        forbidden: Iterable[dict[str, Any]] = (),
     ) -> ExperimentBuilder:
-        """Add a case made of ``turn(...)`` items."""
+        """Add a case made of ``turn(...)`` items, with optional case-level database checks."""
         case: dict[str, Any] = {"id": case_id, "turns": list(turns)}
         if tags:
             case["tags"] = list(tags)
+        if db:
+            case["db"] = list(db)
+        if forbidden:
+            case["forbidden"] = list(forbidden)
         self._cases.append(case)
         return self
 
@@ -110,6 +124,16 @@ class ExperimentBuilder:
     def security(self, **settings: Any) -> ExperimentBuilder:
         """Set ``security`` settings such as ``canaries``, ``detectors`` or ``allow``."""
         return self.merge({"security": settings})
+
+    def database(
+        self, url: str = "${DB_URL}", forbidden: Iterable[dict[str, Any]] = ()
+    ) -> ExperimentBuilder:
+        """Declare the database section with its optional forbidden changes."""
+        return self.merge({"database": {"url": url, "forbidden": list(forbidden)}})
+
+    def hooks(self, **stages: list[dict[str, Any]]) -> ExperimentBuilder:
+        """Set lifecycle hooks per stage, e.g. ``before_trial=[{"sql": [...]}]``."""
+        return self.merge({"hooks": stages})
 
     def merge(self, overrides: dict[str, Any]) -> ExperimentBuilder:
         """Deep-merge raw keys into the built document, e.g. rows from a data file."""

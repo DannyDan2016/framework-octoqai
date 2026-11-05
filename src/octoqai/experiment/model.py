@@ -6,6 +6,8 @@ import json
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import (
@@ -32,10 +34,18 @@ ExpectationKind = Literal[
 
 
 DetectorName = Literal["secrets", "pii"]
+DbExpectKind = Literal["row_count", "value", "rows", "delta", "unchanged"]
+HookStage = Literal["before_run", "before_trial", "after_trial", "after_run"]
+HookKind = Literal["http", "sql", "command"]
+DEFAULT_HOOK_TIMEOUT_S = 30.0
 MIN_CANARY_LENGTH = 4
 
 ENV_NAME = re.compile(r"[A-Za-z0-9_-]+")
 TAG = re.compile(r"[a-z][a-z0-9-]*")
+READ_QUERY = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
+PATH_SEPARATORS = re.compile(r"[\\/]")
+BATCH_SUFFIXES = (".bat", ".cmd")
+HOOK_STAGES: tuple[HookStage, ...] = ("before_run", "before_trial", "after_trial", "after_run")
 
 
 class _Model(BaseModel):
@@ -108,11 +118,175 @@ _VALUE_CHECKS: dict[str, Callable[[str, Any], None]] = {
 }
 
 
+def _non_negative_int(kind: str, value: Any) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{kind} expects a non-negative integer")
+
+
+def _list_of_rows(kind: str, value: Any) -> None:
+    if not isinstance(value, list) or not all(isinstance(row, list) for row in value):
+        raise ValueError(f"{kind} expects a list of rows")
+
+
+def _only_true(kind: str, value: Any) -> None:
+    if value is not True:
+        raise ValueError(f"{kind} expects true")
+
+
+def _scalar(kind: str, value: Any) -> None:
+    if value is not None and not isinstance(value, str | int | float | bool | date):
+        raise ValueError(f"{kind} expects a scalar value")
+
+
+_DB_VALUE_CHECKS: dict[str, Callable[[str, Any], None]] = {
+    "row_count": _non_negative_int,
+    "value": _scalar,
+    "rows": _list_of_rows,
+    "delta": _number,
+    "unchanged": _only_true,
+}
+
+
+def _read_only(check_id: str, query: str) -> None:
+    if not READ_QUERY.match(query):
+        raise ValueError(
+            f"db check {check_id!r}: query must start with SELECT or WITH; change data with hooks"
+        )
+
+
+class DbCheck(_Model):
+    """A read-only query whose result is compared with an expectation."""
+
+    id: str
+    query: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    kind: DbExpectKind
+    value: Any
+    hard: StrictBool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_shorthand(cls, data: Any) -> Any:
+        if not isinstance(data, dict) or "expect" not in data:
+            return data
+        expect = data["expect"]
+        if not isinstance(expect, dict) or len(expect) != 1:
+            keys = sorted(expect) if isinstance(expect, dict) else expect
+            raise ValueError(f"db check expect must have exactly one key, got {keys}")
+        kind, value = next(iter(expect.items()))
+        rest = {key: item for key, item in data.items() if key != "expect"}
+        return {**rest, "kind": kind, "value": value}
+
+    @model_validator(mode="after")
+    def _check_check(self) -> DbCheck:
+        _read_only(self.id, self.query)
+        _DB_VALUE_CHECKS[self.kind](self.kind, self.value)
+        return self
+
+    @property
+    def needs_before(self) -> bool:
+        """Whether the check compares against a snapshot taken before the turn."""
+        return self.kind in ("delta", "unchanged")
+
+
+class ForbiddenChange(_Model):
+    """A read-only query that must return no rows after the run."""
+
+    id: str
+    query: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_query(self) -> ForbiddenChange:
+        _read_only(self.id, self.query)
+        return self
+
+
+class DatabaseConfig(_Model):
+    """The database that checks and sql hooks run against."""
+
+    url: str = Field(repr=False)
+    forbidden: list[ForbiddenChange] = Field(default_factory=list)
+
+
+class HttpHook(_Model):
+    """An HTTP request sent by a hook."""
+
+    url: str
+    method: str = "POST"
+    headers: dict[str, str] = Field(default_factory=dict, repr=False)
+    body: Any = Field(default=None, repr=False)
+
+
+class Hook(_Model):
+    """A lifecycle action: exactly one of an HTTP call, SQL statements or a command."""
+
+    http: HttpHook | None = None
+    sql: list[str] | None = Field(default=None, min_length=1)
+    command: list[str] | None = Field(default=None, min_length=1)
+    timeout_s: float | None = Field(default=None, gt=0, le=600)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _command_is_a_list(cls, data: Any) -> Any:
+        if isinstance(data, dict) and isinstance(data.get("command"), str):
+            raise ValueError("command must be a list of arguments, never run through a shell")
+        return data
+
+    @model_validator(mode="after")
+    def _no_batch_file(self) -> Hook:
+        if self.command:
+            name = PATH_SEPARATORS.split(self.command[0])[-1].rstrip(". ").lower()
+            if name.endswith(BATCH_SUFFIXES):
+                raise ValueError(
+                    "command cannot run a .bat or .cmd file: "
+                    "Windows would pass its arguments through cmd.exe"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _one_kind(self) -> Hook:
+        if sum(item is not None for item in (self.http, self.sql, self.command)) != 1:
+            raise ValueError("a hook needs exactly one of http, sql or command")
+        if self.sql is not None and self.timeout_s is not None:
+            raise ValueError(
+                "timeout_s is not supported for sql hooks: "
+                "set the statement timeout in the database"
+            )
+        return self
+
+    @property
+    def kind(self) -> HookKind:
+        """Which of the three actions this hook performs."""
+        if self.http is not None:
+            return "http"
+        return "sql" if self.sql is not None else "command"
+
+    def effective_timeout_s(self) -> float:
+        """Return ``timeout_s``, or the default when it is not set."""
+        return self.timeout_s or DEFAULT_HOOK_TIMEOUT_S
+
+
+class HooksConfig(_Model):
+    """Hooks run at each stage of the lifecycle."""
+
+    before_run: list[Hook] = Field(default_factory=list)
+    before_trial: list[Hook] = Field(default_factory=list)
+    after_trial: list[Hook] = Field(default_factory=list)
+    after_run: list[Hook] = Field(default_factory=list)
+
+    def stage(self, name: HookStage) -> list[Hook]:
+        """Return the hooks of a lifecycle stage."""
+        hooks: list[Hook] = getattr(self, name)
+        return hooks
+
+
 class Turn(_Model):
     """One user message and the expectations on the agent reply."""
 
     user: str
     expect: list[Expectation] = Field(default_factory=list)
+    db: list[DbCheck] = Field(default_factory=list)
 
 
 class Case(_Model):
@@ -121,6 +295,8 @@ class Case(_Model):
     id: str
     turns: list[Turn] = Field(min_length=1)
     tags: list[str] = Field(default_factory=list)
+    db: list[DbCheck] = Field(default_factory=list)
+    forbidden: list[ForbiddenChange] = Field(default_factory=list)
 
     @field_validator("tags")
     @classmethod
@@ -288,6 +464,10 @@ class Experiment(_Model):
     environment: str | None = None
     selected_tags: list[str] = Field(default_factory=list)
     redacted_values: list[str] = Field(default_factory=list, repr=False)
+    database: DatabaseConfig | None = None
+    hooks: HooksConfig = Field(default_factory=HooksConfig)
+    base_dir: Path | None = Field(default=None, repr=False)
+    hook_env: dict[str, str] = Field(default_factory=dict, repr=False)
 
     @model_validator(mode="after")
     def _check_variants(self) -> Experiment:
@@ -338,8 +518,36 @@ def _one_baseline(exp: Experiment) -> None:
 
 def _cases_have_expectations(exp: Experiment) -> None:
     for case in exp.cases:
-        if not any(turn.expect for turn in case.turns):
+        asserted = any(turn.expect or turn.db for turn in case.turns)
+        if not (asserted or case.db or case.forbidden):
             raise ValueError(f"case {case.id!r} has no expectation: it would always pass")
+
+
+def _case_db_ids(exp: Experiment, case: Case) -> list[str]:
+    ids = [check.id for turn in case.turns for check in turn.db]
+    ids += [check.id for check in case.db]
+    ids += [change.id for change in case.forbidden]
+    if exp.database is not None:
+        ids += [change.id for change in exp.database.forbidden]
+    return ids
+
+
+def _database_declared(exp: Experiment) -> None:
+    if exp.database is not None:
+        return
+    for case in exp.cases:
+        if _case_db_ids(exp, case):
+            raise ValueError(f"case {case.id!r} uses database checks but no database is configured")
+    if any(hook.kind == "sql" for stage in HOOK_STAGES for hook in exp.hooks.stage(stage)):
+        raise ValueError("sql hooks need a database section")
+
+
+def _unique_db_ids(exp: Experiment) -> None:
+    for case in exp.cases:
+        ids = _case_db_ids(exp, case)
+        for db_id in ids:
+            if ids.count(db_id) > 1:
+                raise ValueError(f"duplicate database check id {db_id!r} in case {case.id!r}")
 
 
 def _json_serializable(exp: Experiment) -> None:
@@ -377,6 +585,8 @@ _EXPERIMENT_CHECKS: tuple[Callable[[Experiment], None], ...] = (
     _valid_environments,
     _one_baseline,
     _cases_have_expectations,
+    _database_declared,
+    _unique_db_ids,
     _json_serializable,
     _variants_cover_template,
 )

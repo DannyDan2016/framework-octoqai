@@ -106,3 +106,45 @@ def test_agent_headers_are_hidden_from_repr(experiment):
 def test_agent_request_is_hidden_from_repr(experiment):
     experiment.agent(request={"token": "zzz-inline-token"})
     assert "zzz-inline-token" not in repr(Experiment.model_validate(experiment.build()).agent)
+
+
+CREATED = {"id": "ajuste", "query": "SELECT count(*) FROM ajustes", "expect": {"delta": 1}}
+
+
+@pytest.mark.smoke
+def test_db_check_shorthand(experiment):
+    experiment.database(url="sqlite:///x.db")
+    experiment.case("c1", turn("Crea un ajuste", db=[{**CREATED, "hard": True}]))
+    check = Experiment.model_validate(experiment.build()).cases[0].turns[0].db[0]
+    assert (check.kind, check.value, check.hard, check.needs_before) == ("delta", 1, True, True)
+
+
+def test_hooks_resolve_kind_and_timeout(experiment):
+    experiment.database(url="sqlite:///x.db").hooks(
+        before_trial=[{"sql": ["DELETE FROM ajustes"]}],
+        after_run=[
+            {"command": ["python", "limpia.py"], "timeout_s": 5},
+            {"http": {"url": "http://hooks.local/reset"}},
+        ],
+    )
+    hooks = Experiment.model_validate(experiment.build()).hooks
+    assert hooks.stage("before_trial")[0].kind == "sql"
+    assert [(h.kind, h.effective_timeout_s()) for h in hooks.stage("after_run")] == [
+        ("command", 5),
+        ("http", 30.0),
+    ]
+
+
+def test_case_with_only_database_checks_is_valid(experiment):
+    experiment.database(url="sqlite:///x.db")
+    experiment.case("c1", turn("Crea"), db=[{**CREATED, "expect": {"value": 1}}])
+    assert Experiment.model_validate(experiment.build()).cases[0].db[0].kind == "value"
+
+
+@pytest.mark.security
+def test_database_url_and_hook_secrets_hidden_from_repr(experiment):
+    experiment.database(url="sqlite:///secreto.db").hooks(
+        before_run=[{"http": {"url": "http://hooks.local", "headers": {"X-Key": "k-123456"}}}]
+    )
+    exp = Experiment.model_validate(experiment.build())
+    assert "secreto" not in repr(exp) and "k-123456" not in repr(exp)

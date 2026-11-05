@@ -219,3 +219,12 @@ def test_short_env_canary_rejected_without_echoing_value(experiment, tmp_path):
         "shorter than 4",
         absent=["zq9"],
     )
+
+
+@pytest.mark.parametrize("row", cases(__file__, "db_errors"))
+def test_invalid_database_or_hooks_is_config_error(row, experiment, tmp_path):
+    path = experiment.merge(row["overrides"]).write(tmp_path)
+    assert_config_error(
+        lambda: load_experiment(path, process_env={"DB_URL": "sqlite:///x.db"}),
+        *row["fragments"],
+    )

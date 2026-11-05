@@ -1,0 +1,99 @@
+- id: db-check-needs-database
+  overrides:
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {value: 1}}]}]}]
+  fragments: ["case 'c1' uses database checks but no database is configured"]
+
+- id: sql-hook-needs-database
+  overrides: {hooks: {before_trial: [{sql: [DELETE FROM ajustes]}]}}
+  fragments: [sql hooks need a database section]
+
+- id: db-expect-two-keys
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {value: 1, delta: 1}}]}]}]
+  fragments: [exactly one key]
+
+- id: db-expect-unknown-kind
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {rowcount: 1}}]}]}]
+  fragments: [rowcount, "did you mean 'row_count'"]
+
+- id: db-query-must-read
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: DELETE FROM ajustes, expect: {value: 1}}]}]}]
+  fragments: ["db check 'x': query must start with SELECT or WITH"]
+
+- id: forbidden-query-must-read
+  overrides:
+    database: {url: "${DB_URL}", forbidden: [{id: f, query: UPDATE ajustes SET importe = 0}]}
+  fragments: ["'f': query must start with SELECT or WITH"]
+
+- id: row-count-not-negative
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {row_count: -1}}]}]}]
+  fragments: [row_count expects a non-negative integer]
+
+- id: delta-is-a-number
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {delta: mucho}}]}]}]
+  fragments: [delta expects a number]
+
+- id: rows-is-a-list-of-rows
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {rows: 3}}]}]}]
+  fragments: [rows expects a list of rows]
+
+- id: unchanged-only-true
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {unchanged: false}}]}]}]
+  fragments: [unchanged expects true]
+
+- id: duplicate-db-id
+  overrides:
+    database: {url: "${DB_URL}", forbidden: [{id: x, query: SELECT 1}]}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {value: 1}}]}]}]
+  fragments: ["duplicate database check id 'x' in case 'c1'"]
+
+- id: hook-needs-one-kind
+  overrides: {hooks: {before_run: [{timeout_s: 5}]}}
+  fragments: [exactly one of http, sql or command]
+
+- id: hook-two-kinds
+  overrides: {hooks: {before_run: [{command: [python, a.py], http: {url: "http://hooks.local"}}]}}
+  fragments: [exactly one of http, sql or command]
+
+- id: command-string-never-shell
+  overrides: {hooks: {before_trial: [{command: "python reset.py && echo hecho"}]}}
+  fragments: [command must be a list of arguments, never run through a shell]
+
+- id: command-batch-file-rejected
+  overrides: {hooks: {before_trial: [{command: [scripts/reset.bat, tenant]}]}}
+  fragments: [command cannot run a .bat or .cmd file]
+
+- id: command-batch-file-disguised
+  overrides: {hooks: {before_trial: [{command: ["RESET.CMD. "]}]}}
+  fragments: [command cannot run a .bat or .cmd file]
+
+- id: sql-hook-timeout-not-supported
+  overrides:
+    database: {url: "${DB_URL}"}
+    hooks: {before_trial: [{sql: [DELETE FROM ajustes], timeout_s: 5}]}
+  fragments: [timeout_s is not supported for sql hooks]
+
+- id: hook-timeout-limit
+  overrides: {hooks: {after_run: [{command: [python, a.py], timeout_s: 601}]}}
+  fragments: [less than or equal to 600]
+
+- id: hook-key-typo
+  overrides: {hooks: {before_run: [{comand: [python, a.py]}]}}
+  fragments: ["did you mean 'command'"]
+
+- id: unknown-hook-stage
+  overrides: {hooks: {before_case: []}}
+  fragments: [before_case]
