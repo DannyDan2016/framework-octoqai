@@ -15,9 +15,9 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `agents/` | `port.py` (`AgentPort`, `AgentReply`), `sse_events.py` (SSE parser), adapters such as `http_json.py` and `sse.py`, and `factory.py` (`adapter_for` picks the adapter from the config) | `experiment`, `errors` |
 | `db/` | Database port (`DatabasePort`, `QueryResult`) and the SQLAlchemy adapter `SqlDatabase` | `errors` |
 | `hooks/` | Lifecycle hooks: `LifecyclePort`, `HookExecutor` for http, sql and command (argv list, never a shell) | `db.port`, `experiment`, `errors` |
-| `expectations/` | Registry of deterministic checks applied to an agent reply | `agents.port`, `experiment` |
+| `expectations/` | Registry of deterministic checks applied to an agent reply, plus the evaluation of database checks and forbidden changes | `agents.port`, `db.port`, `experiment` |
 | `security/` | Detectors for canaries, secrets and personal data, leak scanning and the single report redactor | `agents.port`, `experiment`, `errors` |
-| `running/` | Serial runner; knows only `AgentPort`, never a concrete adapter | lower layers |
+| `running/` | Serial runner; knows only the ports `AgentPort`, `DatabasePort` and `LifecyclePort`, never a concrete adapter | lower layers |
 | `verdict/` | Go/no-go decision, hard gates and A/B recommendation | `running`, `stats` |
 | `reports/` | Report writers (JSON today) | `verdict`, `running` |
 | `cli/` | `argparse` entry point; wires concrete adapters | everything |
@@ -127,7 +127,7 @@ tests/
   root: `python tests/e2e/toy_sse_agent.py --port 8000 --db examples/database/conciliaciones.db`;
   in another terminal, inside `examples/database`: `copy .env.example .env`, then
   `octoqai run experiment.yaml`.
-- **Hooks and databases:** `FakeCommands` stands in for the process runner (`exits`, `times_out`, `missing`) and never starts a process; `RecordingHooks` is a `LifecyclePort` that records stages and fails the ones it is told to; `FakeDatabase` is a `DatabasePort` that records the statements; `sqlite_db` and `sql_database` give a real SQLite file in `tmp_path`. Http hooks are tested against `FakeJsonAgent` as the endpoint.
+- **Hooks and databases:** `FakeCommands` stands in for the process runner (`exits`, `times_out`, `missing`) and never starts a process; `RecordingHooks` is a `LifecyclePort` that records stages and fails the ones it is told to; `FakeDatabase` is a `DatabasePort` that records the statements and queries; `sqlite_db` and `sql_database` give a real SQLite file in `tmp_path`. Http hooks are tested against `FakeJsonAgent` as the endpoint.
 - **Experiments:** build them with `ExperimentBuilder` and `turn(...)`, or the `experiment` fixture.
 - **CLI:** use the `run_cli` fixture; it returns the exit code, captured output and report.
 - Tests are written first and seen failing before the implementation.
@@ -195,14 +195,31 @@ pytest -m security -q         secrets, hygiene and headers
    never capture it.
 3. Test it with a fake (`FakeCommands`, `FakeJsonAgent`, `FakeDatabase`), never with a real process.
 
-A relative SQLite path resolves against the directory `octoqai` runs from, while hooks run in the
-experiment's folder; run from that folder or use an absolute path.
-
 ### Add a CLI option
 
 1. Add the argument in `cli/main.py`.
 2. Put the logic in the package that owns it, not in `cli/`.
 3. Add a test in `tests/cli/` using the `run_cli` fixture.
+
+## Database checks in practice
+
+- Use two database users: a read-only one in `database.url` for the checks, and a separate one
+  with write access that only the hooks use. `sql` hooks run through `database.url` as well, so
+  with a read-only user the reset belongs in a `command` hook that reads its own variable. The adapter rolls every query back and rejects queries that do not start with
+  `SELECT` or `WITH`, but only the database can guarantee that nothing is written.
+- Set a statement timeout in the database or in the driver URL, for example PostgreSQL
+  `statement_timeout`. The adapter has no timeout of its own and `timeout_s` is not accepted by
+  `sql` hooks.
+- Queries run through SQLAlchemy `text()`: a literal `:` in the SQL is written `\:`, and values
+  go through `params` (`:name`). A query never accepts `{{ }}` or `${VAR}`, and neither do expected
+  values or `sql` hooks (`{{ }}` only); a placeholder there would be sent as literal text.
+- `postgresql://` uses psycopg 3. Octoqai does not install any driver: install the one your
+  URL needs.
+- A relative SQLite path resolves against the directory `octoqai` runs from, while hooks run in
+  the experiment's folder; run from that folder or use an absolute path.
+- Errors never carry values read from the database: a data or integrity error reports only its
+  class, and connection details, the experiment's environment values and parameter values are
+  masked before a message is cut to 200 characters.
 
 ## Conventions
 
