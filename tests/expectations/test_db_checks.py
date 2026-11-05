@@ -73,3 +73,45 @@ def test_forbidden_change_is_a_hard_failure_only_when_rows_change():
     )
     broken = forbidden_check(change, result([0]), result(error="OperationalError: x"), 1)
     assert (broken.passed, broken.hard) == (None, True)
+
+
+NON_FINITE = [
+    Decimal("NaN"),
+    Decimal("sNaN"),
+    Decimal("Infinity"),
+    Decimal("-Infinity"),
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+]
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("special", NON_FINITE, ids=repr)
+def test_a_non_finite_number_never_crashes_a_check(special):
+    for expect in ({"value": 1}, {"rows": [[1]]}, {"row_count": 1}, {"unchanged": True}):
+        outcome = evaluate_db(check(expect=expect), result([special]), result([special]))
+        assert outcome.passed in (True, False)
+    delta = evaluate_db(check(expect={"delta": 1}), result([0]), result([special]))
+    assert (
+        delta.passed is None and delta.detail == "db 'x': delta needs a number in the first column"
+    )
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("special", NON_FINITE, ids=repr)
+def test_a_non_finite_value_equal_before_and_after_is_not_a_forbidden_change(special):
+    change = ForbiddenChange(id="g", query="SELECT amount FROM ajustes")
+    assert forbidden_check(change, result([special]), result([special]), 1) is None
+
+
+def test_a_non_finite_value_that_appears_is_a_forbidden_change():
+    change = ForbiddenChange(id="g", query="SELECT amount FROM ajustes")
+    failed = forbidden_check(change, result([1]), result([Decimal("NaN")]), 1)
+    assert failed is not None and failed.passed is False
+
+
+def test_a_non_finite_value_matches_only_its_stable_text_form():
+    assert evaluate_db(check(expect={"value": "NaN"}), None, result([Decimal("sNaN")])).passed
+    assert evaluate_db(check(expect={"value": "-Infinity"}), None, result([float("-inf")])).passed
+    assert not evaluate_db(check(expect={"value": 1}), None, result([Decimal("NaN")])).passed

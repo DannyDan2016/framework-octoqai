@@ -18,7 +18,23 @@ FORBIDDEN_KIND = "forbidden_crud"
 _Outcome = tuple[bool | None, str]
 
 
+def _non_finite(value: Decimal | float) -> str:
+    if isinstance(value, Decimal):
+        negative = value.is_signed()
+        nan = value.is_nan()
+    else:
+        negative = value < 0
+        nan = math.isnan(value)
+    if nan:
+        return "NaN"
+    return "-Infinity" if negative else "Infinity"
+
+
 def _plain(value: Any) -> Any:
+    if isinstance(value, Decimal | float) and not (
+        value.is_finite() if isinstance(value, Decimal) else math.isfinite(value)
+    ):
+        return _non_finite(value)
     if isinstance(value, Decimal):
         return int(value) if value == value.to_integral_value() else float(value)
     if isinstance(value, date | datetime | time):
