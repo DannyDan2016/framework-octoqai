@@ -97,3 +97,9 @@
 - id: unknown-hook-stage
   overrides: {hooks: {before_case: []}}
   fragments: [before_case]
+
+- id: database-forbidden-is-not-an-expectation
+  overrides:
+    database: {url: "${DB_URL}", forbidden: [{id: f, query: SELECT 1}]}
+    cases: [{id: c1, turns: [{user: Hola}]}]
+  fragments: [has no expectation, it would always pass]

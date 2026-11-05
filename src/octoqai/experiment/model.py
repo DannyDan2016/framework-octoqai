@@ -230,7 +230,7 @@ class Hook(_Model):
     @classmethod
     def _command_is_a_list(cls, data: Any) -> Any:
         if isinstance(data, dict) and isinstance(data.get("command"), str):
-            raise ValueError("command must be a list of arguments, never run through a shell")
+            raise ValueError("command must be a list of arguments: hooks never run through a shell")
         return data
 
     @model_validator(mode="after")
