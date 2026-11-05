@@ -3,6 +3,7 @@ import pytest
 from octoqai.agents import AgentReply
 from octoqai.expectations import evaluate
 from octoqai.experiment import load_experiment
+from support import samples
 from support.assertions import assert_config_error
 from support.builders import turn, write_data_set, write_env_file
 from support.paths import cases
@@ -228,3 +229,89 @@ def test_invalid_database_or_hooks_is_config_error(row, experiment, tmp_path):
         lambda: load_experiment(path, process_env={"DB_URL": "sqlite:///x.db"}),
         *row["fragments"],
     )
+
+
+def db_case():
+    return turn(
+        "Crea", db=[{"id": "x", "query": "SELECT count(*) FROM ajustes", "expect": {"delta": 1}}]
+    )
+
+
+@pytest.mark.smoke
+def test_database_url_comes_from_env_and_is_redacted(experiment, tmp_path):
+    path = experiment.database().case("c1", db_case()).write(tmp_path)
+    exp = load_experiment(path, process_env={"DB_URL": "sqlite:///app.db"})
+    assert exp.database.url == "sqlite:///app.db"
+    assert "sqlite:///app.db" in exp.redacted_values
+
+
+@pytest.mark.security
+def test_literal_database_url_is_rejected_without_echo(experiment, tmp_path):
+    path = experiment.database(url=samples.DB_URL_WITH_PASSWORD).write(tmp_path)
+    assert_config_error(
+        lambda: load_experiment(path, process_env={}),
+        r"database\.url must come from an environment variable",
+        absent=[samples.DB_PASSWORD],
+    )
+
+
+@pytest.mark.security
+def test_hook_values_expand_env_and_are_redacted(experiment, tmp_path):
+    experiment.hooks(
+        before_trial=[{"command": ["python", "reset.py", "--tenant", "${TENANT}"]}],
+        after_run=[
+            {"http": {"url": "http://hooks.local/fin", "headers": {"X-Key": "${HOOK_KEY}"}}}
+        ],
+    )
+    exp = load_experiment(
+        experiment.write(tmp_path), process_env={"TENANT": "tenant-a", "HOOK_KEY": "hk-998877"}
+    )
+    assert exp.hooks.before_trial[0].command[-1] == "tenant-a"
+    assert exp.hooks.after_run[0].http.headers == {"X-Key": "hk-998877"}
+    assert {"tenant-a", "hk-998877"} <= set(exp.redacted_values)
+
+
+def test_db_params_render_data_values(experiment, tmp_path):
+    write_data_set(tmp_path, "qa", {"cuenta": "001"})
+    check = {
+        "id": "x",
+        "query": "SELECT 1 FROM ajustes WHERE cuenta = :c",
+        "params": {"c": "{{ data.cuenta }}"},
+        "expect": {"row_count": 1},
+    }
+    experiment.environments("qa").database().case("c1", turn("Crea", db=[check]))
+    exp = load_experiment(
+        experiment.write(tmp_path), env="qa", process_env={"DB_URL": "sqlite:///a.db"}
+    )
+    assert exp.cases[0].turns[0].db[0].params == {"c": "001"}
+
+
+@pytest.mark.security
+def test_check_params_expand_env_and_are_redacted(experiment, tmp_path):
+    def guarded(check_id):
+        return {"id": check_id, "query": "SELECT 1 WHERE :t = :t", "params": {"t": "${TENANT}"}}
+
+    experiment.database().case(
+        "c1",
+        turn("Crea", db=[{**guarded("turno"), "expect": {"row_count": 1}}]),
+        db=[{**guarded("caso"), "expect": {"row_count": 1}}],
+        forbidden=[guarded("prohibido")],
+    )
+    exp = load_experiment(
+        experiment.write(tmp_path),
+        process_env={"DB_URL": "sqlite:///a.db", "TENANT": "tenant-b-77"},
+    )
+    case = exp.cases[0]
+    params = [case.turns[0].db[0].params, case.db[0].params, case.forbidden[0].params]
+    assert params == [{"t": "tenant-b-77"}] * 3
+    assert "tenant-b-77" in exp.redacted_values
+
+
+@pytest.mark.security
+def test_base_dir_and_hook_env_are_filled_and_hidden(experiment, tmp_path):
+    write_env_file(tmp_path, ".env", DB_URL="sqlite:///app.db")
+    exp = load_experiment(
+        experiment.database().case("c1", db_case()).write(tmp_path), process_env={}
+    )
+    assert exp.base_dir == tmp_path and exp.hook_env["DB_URL"] == "sqlite:///app.db"
+    assert "sqlite:///app.db" not in repr(exp)

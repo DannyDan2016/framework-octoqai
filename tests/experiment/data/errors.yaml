@@ -131,3 +131,7 @@
 - id: unknown-detector
   overrides: {security: {detectors: [secretz]}}
   fragments: ["did you mean 'secrets'"]
+
+- id: base-dir-is-reserved
+  overrides: {base_dir: /tmp}
+  fragments: [base_dir is filled in by octoqai]

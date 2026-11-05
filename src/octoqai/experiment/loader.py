@@ -16,13 +16,28 @@ from pydantic_core import ErrorDetails
 from octoqai.errors import ConfigError
 from octoqai.experiment.datasets import load_data_set
 from octoqai.experiment.envfiles import resolve_env
-from octoqai.experiment.model import ENV_NAME, Case, Expectation, Experiment, Turn
-from octoqai.experiment.template import render_text
+from octoqai.experiment.model import (
+    ENV_NAME,
+    Case,
+    DbCheck,
+    Expectation,
+    Experiment,
+    ForbiddenChange,
+    Turn,
+)
+from octoqai.experiment.template import render, render_text
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _QUOTED = re.compile(r"'([^']+)'")
 _PATTERN_KINDS = ("contains", "not_contains")
-_RESERVED = ("data_values", "environment", "selected_tags", "redacted_values")
+_RESERVED = (
+    "data_values",
+    "environment",
+    "selected_tags",
+    "redacted_values",
+    "base_dir",
+    "hook_env",
+)
 
 
 def load_experiment(
@@ -47,11 +62,13 @@ def load_experiment(
     path = Path(path)
     data = _read_experiment(path)
     _check_environment(data.get("environments"), env)
-    variables = _Variables(
-        resolve_env(path.parent, env, os.environ if process_env is None else process_env)
-    )
+    hook_env = resolve_env(path.parent, env, os.environ if process_env is None else process_env)
+    variables = _Variables(hook_env)
     _expand_agent(data, variables)
     _expand_security(data, variables)
+    _expand_database(data, variables)
+    _expand_hooks(data, variables)
+    _expand_check_params(data, variables)
     exp = _validate(data)
     values: dict[str, Any] = {}
     if exp.data is not None:
@@ -60,7 +77,13 @@ def load_experiment(
         )
     exp = _render_cases(exp, _template_context(values, env))
     return exp.model_copy(
-        update={"data_values": values, "environment": env, "redacted_values": variables.used}
+        update={
+            "data_values": values,
+            "environment": env,
+            "redacted_values": variables.used,
+            "base_dir": path.parent,
+            "hook_env": hook_env,
+        }
     )
 
 
@@ -82,12 +105,30 @@ def _render_case(case: Case, context: dict[str, Any]) -> Case:
             turns.append(_render_turn(turn, context))
         except ConfigError as exc:
             raise ConfigError(f"cases[{case.id}].turns[{index}]: {exc}") from None
-    return case.model_copy(update={"turns": turns})
+    return case.model_copy(
+        update={
+            "turns": turns,
+            "db": _render_params(case.db, context),
+            "forbidden": _render_params(case.forbidden, context),
+        }
+    )
+
+
+def _render_params[C: (DbCheck, ForbiddenChange)](
+    items: list[C], context: dict[str, Any]
+) -> list[C]:
+    return [item.model_copy(update={"params": render(item.params, context)}) for item in items]
 
 
 def _render_turn(turn: Turn, context: dict[str, Any]) -> Turn:
     expect = [_render_expectation(item, context) for item in turn.expect]
-    return turn.model_copy(update={"user": render_text(turn.user, context), "expect": expect})
+    return turn.model_copy(
+        update={
+            "user": render_text(turn.user, context),
+            "expect": expect,
+            "db": _render_params(turn.db, context),
+        }
+    )
 
 
 def _render_expectation(item: Expectation, context: dict[str, Any]) -> Expectation:
@@ -161,6 +202,43 @@ def _expand_security(data: dict[str, Any], variables: _Variables) -> None:
     for canary in canaries:
         if isinstance(canary, dict) and isinstance(canary.get("value"), str):
             canary["value"] = variables.expand(canary["value"])
+
+
+def _expand_database(data: dict[str, Any], variables: _Variables) -> None:
+    database = data.get("database")
+    if not isinstance(database, dict):
+        return
+    url = database.get("url")
+    if not isinstance(url, str) or "${" not in url:
+        raise ConfigError(
+            "database.url must come from an environment variable, e.g. ${DB_URL}: "
+            "never write credentials in the experiment"
+        )
+    data["database"] = _expand_values(database, variables)
+
+
+def _expand_hooks(data: dict[str, Any], variables: _Variables) -> None:
+    if "hooks" in data:
+        data["hooks"] = _expand_values(data["hooks"], variables)
+
+
+def _expand_check_params(data: dict[str, Any], variables: _Variables) -> None:
+    cases = data.get("cases")
+    for case in cases if isinstance(cases, list) else []:
+        if not isinstance(case, dict):
+            continue
+        _expand_params(case.get("db"), variables)
+        _expand_params(case.get("forbidden"), variables)
+        turns = case.get("turns")
+        for turn in turns if isinstance(turns, list) else []:
+            if isinstance(turn, dict):
+                _expand_params(turn.get("db"), variables)
+
+
+def _expand_params(checks: Any, variables: _Variables) -> None:
+    for check in checks if isinstance(checks, list) else []:
+        if isinstance(check, dict) and "params" in check:
+            check["params"] = _expand_values(check["params"], variables)
 
 
 def _expand_values(value: Any, variables: _Variables) -> Any:
