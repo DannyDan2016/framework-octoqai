@@ -181,8 +181,12 @@ def _first_failure(results: list[HookResult]) -> str | None:
 def _run_trial(session: _Session, variant: Variant, case: Case, index: int) -> TrialResult:
     before = session.hooks.run("before_trial")
     setup_error = _first_failure(before)
-    turns = [] if setup_error else _play(session, variant, case)
-    after = session.hooks.run("after_trial")
+    turns: list[TurnResult] = []
+    try:
+        if setup_error is None:
+            turns = _play(session, variant, case)
+    finally:
+        after = session.hooks.run("after_trial")
     return TrialResult(variant.name, case.id, index, turns, before + after, setup_error)
 
 
@@ -215,7 +219,9 @@ def run_experiment(
         The collected trial results and the outcome of the run hooks.
     """
     started_at = _now()
-    session = _Session(agent, exp, Detector(exp.security), db, hooks or _NoHooks())
+    session = _Session(
+        agent, exp, Detector(exp.security), db, hooks if hooks is not None else _NoHooks()
+    )
     before = session.hooks.run("before_run")
     setup_error = _first_failure(before)
     trials: list[TrialResult] = []

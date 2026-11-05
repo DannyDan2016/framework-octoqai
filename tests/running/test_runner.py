@@ -232,3 +232,12 @@ def test_after_run_runs_even_if_a_trial_raises(fake_agent):
     with pytest.raises(RuntimeError):
         run_experiment(exp, fake_agent.adapter(exp.agent), hooks=hooks)
     assert hooks.events[-1] == "after_run"
+
+
+def test_after_trial_runs_even_if_the_conversation_raises(fake_agent):
+    hooks = RecordingHooks()
+    exp = lifecycle_experiment(n_cases=1)
+    fake_agent.effect(_boom)
+    with pytest.raises(RuntimeError):
+        run_experiment(exp, fake_agent.adapter(exp.agent), hooks=hooks)
+    assert hooks.events[-2:] == ["after_trial", "after_run"]
