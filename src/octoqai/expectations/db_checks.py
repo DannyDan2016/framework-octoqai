@@ -6,6 +6,7 @@ import math
 from collections.abc import Callable
 from datetime import date, datetime, time
 from decimal import Decimal
+from fractions import Fraction
 from typing import Any
 
 from octoqai.db.port import QueryResult
@@ -16,6 +17,9 @@ DB_KIND = "db"
 FORBIDDEN_KIND = "forbidden_crud"
 
 _Outcome = tuple[bool | None, str]
+_FLOAT_TOLERANCE = Fraction(1, 10**9)
+_MAX_EXPONENT = 100_000
+_OUT_OF_RANGE = "a value out of range"
 
 
 def _non_finite(value: Decimal | float) -> str:
@@ -35,8 +39,8 @@ def _plain(value: Any) -> Any:
         value.is_finite() if isinstance(value, Decimal) else math.isfinite(value)
     ):
         return _non_finite(value)
-    if isinstance(value, Decimal):
-        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, float):
+        return Decimal(repr(value))
     if isinstance(value, date | datetime | time):
         return value.isoformat()
     return value
@@ -69,21 +73,45 @@ def _rows(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _Ou
 
 
 def _number(value: Any) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool)
+    return isinstance(value, int | Decimal) and not isinstance(value, bool)
+
+
+def _exact(value: int | float | Decimal) -> Fraction:
+    if isinstance(value, float):
+        value = Decimal(repr(value))
+    if isinstance(value, Decimal) and abs(value.adjusted()) > _MAX_EXPONENT:
+        raise OverflowError
+    return Fraction(value)
+
+
+def _shown(value: Fraction | int | float) -> str:
+    try:
+        return f"{float(value):g}"
+    except OverflowError:
+        return _OUT_OF_RANGE
+
+
+def _within(change: Fraction, expected: Fraction, tolerant: bool) -> bool:
+    if tolerant:
+        return abs(change - expected) <= _FLOAT_TOLERANCE
+    return change == expected
 
 
 def _delta(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _Outcome:
     assert before is not None
-    start, end = _plain(before.scalar), _plain(after.scalar)
+    raw = (before.scalar, after.scalar)
+    start, end = _plain(raw[0]), _plain(raw[1])
     if not (_number(start) and _number(end)):
         return None, f"db {check.id!r}: delta needs a number in the first column"
     try:
-        float(start), float(end)
-        change = end - start
-        matches = math.isclose(change, check.value, abs_tol=1e-9)
-        return matches, f"db {check.id!r}: changed by {change:g} (expected {check.value:g})"
+        if isinstance(check.value, float) and not math.isfinite(check.value):
+            raise OverflowError
+        change = _exact(end) - _exact(start)
+        matches = _within(change, _exact(check.value), any(isinstance(v, float) for v in raw))
     except OverflowError:
         return None, f"db {check.id!r}: delta out of range"
+    shown = f"changed by {_shown(change)} (expected {_shown(check.value)})"
+    return matches, f"db {check.id!r}: {shown}"
 
 
 def _unchanged(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _Outcome:
@@ -118,6 +146,13 @@ def evaluate_db(
 ) -> CheckResult:
     """Evaluate one database check without touching the database.
 
+    Numbers are compared exactly, never rounded: a ``Decimal`` keeps all its digits, a float
+    is read as its shortest decimal text, and only the value counts, not the scale, so ``1.1``
+    equals ``Decimal("1.10")``. ``delta`` is computed with exact fractions and must equal the
+    expected value; when a database value is a float it may differ by at most ``1e-9``, never
+    by a relative amount. A non-finite expected delta, or a number with an exponent beyond
+    ``100000``, is not evaluable.
+
     Args:
         check: The check to evaluate.
         before: Snapshot taken before the turn; needed by ``delta`` and ``unchanged``.
@@ -125,8 +160,9 @@ def evaluate_db(
         agent_error: Error of the agent reply, if any; it fails the check.
 
     Returns:
-        The check result; ``passed`` is ``None`` when the database could not be read.
-        Details never include values read from the database.
+        The check result; ``passed`` is ``None`` when the database could not be read or a
+        ``delta`` cannot be computed. Details never include values read from the database,
+        except the size of a ``delta``.
     """
     if agent_error is not None:
         detail = f"db {check.id!r}: agent error: {agent_error}"
@@ -151,7 +187,8 @@ def forbidden_check(
 
     Returns:
         A hard failure when the rows changed, a hard non-evaluable result when the database
-        could not be read, and ``None`` when nothing changed.
+        could not be read, and ``None`` when nothing changed. Numbers are compared exactly, so
+        a change in the last digit of a wide ``NUMERIC`` is a change.
     """
     error = after.error or before.error
     if error is not None:

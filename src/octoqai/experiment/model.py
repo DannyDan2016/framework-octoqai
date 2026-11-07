@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -119,6 +120,12 @@ _VALUE_CHECKS: dict[str, Callable[[str, Any], None]] = {
 }
 
 
+def _finite_number(kind: str, value: Any) -> None:
+    _number(kind, value)
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{kind} expects a finite number")
+
+
 def _non_negative_int(kind: str, value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{kind} expects a non-negative integer")
@@ -143,7 +150,7 @@ _DB_VALUE_CHECKS: dict[str, Callable[[str, Any], None]] = {
     "row_count": _non_negative_int,
     "value": _scalar,
     "rows": _list_of_rows,
-    "delta": _number,
+    "delta": _finite_number,
     "unchanged": _only_true,
 }
 

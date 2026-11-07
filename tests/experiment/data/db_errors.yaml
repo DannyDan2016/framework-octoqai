@@ -42,6 +42,18 @@
     cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {delta: mucho}}]}]}]
   fragments: [delta expects a number]
 
+- id: delta-is-finite
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {delta: .inf}}]}]}]
+  fragments: [delta expects a finite number]
+
+- id: delta-is-not-nan
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {delta: .nan}}]}]}]
+  fragments: [delta expects a finite number]
+
 - id: rows-is-a-list-of-rows
   overrides:
     database: {url: "${DB_URL}"}
