@@ -217,6 +217,15 @@ pytest -m security -q         secrets, hygiene and headers
   URL needs.
 - A relative SQLite path resolves against the directory `octoqai` runs from, while hooks run in
   the experiment's folder; run from that folder or use an absolute path.
+- The statements of a `sql` hook run in one transaction, so a statement that cannot run inside
+  one (`VACUUM` and similar) belongs in a `command` hook.
+- The `timeout_s` of an `http` hook applies to each phase of the request (connect, write, read
+  and pool), not to the whole call.
+- A `command` hook with a non-empty `env` replaces the child's environment instead of extending
+  it; the CLI passes the process environment plus the `.env` files, so a command sees both.
+- A query that starts with `SELECT` or `WITH` can still hold a second statement
+  (`SELECT ...; DROP ...`) or a data-modifying `WITH`. Only the rollback and a read-only database
+  user stop them, so use that user.
 - A failed `sql` hook or query reports only its exception class, because the driver message can
   repeat stored values, parameters or connection details; to debug it, run the statement by
   hand. Database values and connection details never reach an error.

@@ -243,6 +243,11 @@ def run_experiment(
 
     Returns:
         The collected trial results and the outcome of the run hooks.
+
+    Raises:
+        Exception: Whatever a trial raises, such as an agent adapter failing unexpectedly. The
+            ``after_trial`` and ``after_run`` hooks still run, but the trials and hook results
+            gathered so far are lost, because no ``RunResult`` is returned.
     """
     started_at = _now()
     session = _Session(

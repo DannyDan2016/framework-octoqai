@@ -11,7 +11,7 @@ Last review: 2026-11-04.
 | PyYAML | `>=6.0.3,<7` | 6.0.3 (2025-09-25) | none announced | `octoqai/experiment/loader.py` (`yaml.safe_load` only) | None |
 | jsonpath-ng | `>=1.15,<2` | 1.15.0 (2026-10-29) | none announced | `octoqai/agents/http_json.py` (response mapping) | None |
 | python-dotenv | `>=1.2,<2` | 1.2.4 | none announced | `octoqai/experiment/envfiles.py` (`dotenv_values` only, without interpolation) | None |
-| SQLAlchemy | `>=2.1.8,<2.2` | 2.1.8 (2026-11-04) | 2.2 not announced; each minor series has its own migration guide | `octoqai/db/sql.py` only (`create_engine`, `make_url`, `text`, `exc`); pulls only `typing-extensions`. `postgresql://` defaults to psycopg 3 since 2.1, and users install their own driver | When a new series is stable: read its "What's New", run the suite, then raise the ceiling |
+| SQLAlchemy | `>=2.1.8,<2.2` | 2.1.8 (2026-11-04) | 2.2 not announced; each minor series has its own migration guide | `octoqai/db/sql.py` only (`create_engine`, `event`, `make_url`, `pool`, `text`, `exc`); pulls only `typing-extensions`. `postgresql://` defaults to psycopg 3 since 2.1, and users install their own driver | When a new series is stable: read its "What's New", run the suite, then raise the ceiling |
 | hatchling (build) | `>=1.33,<2` | 1.33.0 (2026-10-28) | none announced | Packaging only | None |
 | pytest (dev) | `>=9.2,<10` | 9.2.0 (2026-10-27) | none announced | Test suite | None |
 | ruff (dev) | `>=0.17.3,<0.18` | 0.17.3 | still 0.x: any minor may change rules | Lint and format | Raise the minor deliberately and fix new findings |
