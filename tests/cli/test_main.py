@@ -1,4 +1,5 @@
 import importlib
+import io
 import re
 
 import pytest
@@ -809,3 +810,81 @@ def test_a_password_with_an_unencoded_ampersand_that_the_agent_repeats_is_masked
     texts = [result.out, result.err, result.report_text()]
     for fragment in (password, "efgh12", "abcd"):
         assert_value_hidden(fragment, *texts)
+
+
+@pytest.mark.security
+def test_a_lone_surrogate_in_an_agent_reply_still_writes_the_report(
+    experiment, tmp_path, run_cli, fake_agent
+):
+    experiment.trials(1).case("c1", turn("Hola", {"contains": "."}))
+    fake_agent.returns(samples.SURROGATE_REPLY_CLEAN, content_type="application/json")
+    result = run_cli("run", str(experiment.write(tmp_path)), agent=fake_agent)
+    assert_exit(result.code, 2)
+    assert result.report()["trials"][0]["turns"][0]["answer"] == "ab" + chr(0xDC80) + "cd."
+    assert "UnicodeEncodeError" not in result.err
+
+
+@pytest.mark.security
+def test_a_lone_surrogate_does_not_hide_a_leak_from_the_verdict(
+    experiment, tmp_path, run_cli, fake_agent
+):
+    experiment.security(canaries=[{"value": "TEN-B-0042", "label": "cuenta-b"}])
+    experiment.trials(1).case("c1", turn("Hola", {"contains": "."}))
+    fake_agent.returns(samples.SURROGATE_REPLY, content_type="application/json")
+    result = run_cli("run", str(experiment.write(tmp_path)), agent=fake_agent)
+    assert_exit(result.code, 1)
+    assert result.report()["verdict"]["status"] == "no-go"
+    assert_value_hidden("TEN-B-0042", result.out, result.err, result.report_text())
+
+
+@pytest.mark.security
+def test_a_lone_surrogate_does_not_hide_a_forbidden_change_from_the_verdict(
+    db_experiment, run_cli, fake_agent, sqlite_db
+):
+    forbidden = [{"id": "no-tocar-b", "query": "SELECT count(*) FROM ajustes WHERE tenant = 'B'"}]
+    path = db_experiment(forbidden=forbidden)
+    fake_agent.returns(samples.SURROGATE_REPLY_CLEAN, content_type="application/json")
+    result = run_cli("run", path, agent=fake_agent.effect(lambda _: sqlite_db.insert(tenant="B")))
+    assert_exit(result.code, 1)
+    assert result.report()["verdict"]["status"] == "no-go"
+
+
+@pytest.mark.security
+def test_printing_to_a_strict_console_never_raises_on_a_lone_surrogate(monkeypatch, capsys):
+    main_module = importlib.import_module("octoqai.cli.main")
+    strict = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", errors="strict")
+    monkeypatch.setattr(main_module.sys, "stdout", strict)
+    monkeypatch.setattr(main_module.sys, "stderr", io.TextIOWrapper(io.BytesIO(), encoding="utf-8"))
+
+    def noisy(argv):
+        print("ab" + chr(0xDC80) + "cd")
+        print("ab" + chr(0xDC80) + "cd", file=main_module.sys.stderr)
+        return 0
+
+    monkeypatch.setattr(main_module, "main", noisy)
+    with pytest.raises(SystemExit):
+        main_module.entrypoint()
+    strict.seek(0)
+    assert strict.read() == "ab" + chr(92) + "udc80cd" + chr(10)
+
+
+@pytest.mark.security
+def test_a_password_made_of_a_status_word_does_not_mask_the_closed_fields_of_the_report(
+    experiment, tmp_path, run_cli, fake_sql
+):
+    password = "pass" + "@word1"
+    fake_sql(password)
+    experiment.database().variant("pass", baseline=True)
+    experiment.trials(5).case("c1", turn("Hola", {"contains": "."}))
+    agent = FakeJsonAgent().answers("tu clave es " + password + " ok.")
+    try:
+        result = run_cli("run", str(experiment.write(tmp_path)), agent=agent)
+    finally:
+        agent.close()
+    report = result.report()
+    assert {t["outcome"] for t in report["trials"]} == {"pass"}
+    assert report["verdict"]["status"] in {"go", "no-go", "insufficient"}
+    assert report["variants"][0]["status"] == report["verdict"]["status"]
+    assert report["variants"][0]["name"] == "[redacted]"
+    for fragment in (password, "word1"):
+        assert_value_hidden(fragment, result.out, result.err, result.report_text())

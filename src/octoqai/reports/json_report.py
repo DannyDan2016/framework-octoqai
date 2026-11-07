@@ -55,7 +55,9 @@ def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
     """Build the report document without agent connection details.
 
     Every string passes through the redactor: canaries, secrets, personal data and values
-    from ``${VAR}`` expansions are replaced by placeholders. Raw stream fragments are not
+    from ``${VAR}`` expansions are replaced by placeholders. The fields with a closed set of
+    values, ``outcome`` and each ``status``, can never hold a secret and are written as they
+    are; names written by the user are masked like any other text. Raw stream fragments are not
     written, only their count.
 
     Args:
@@ -92,11 +94,23 @@ def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
     }
     redactor = Redactor.for_report(exp.security, exp.redacted_values)
     redacted: dict[str, Any] = redactor.redact_tree(report)
+    _restore_closed_values(redacted, run, verdict)
     return redacted
+
+
+def _restore_closed_values(report: dict[str, Any], run: RunResult, verdict: Verdict) -> None:
+    report["verdict"]["status"] = verdict.status
+    for entry, summary in zip(report["variants"], verdict.variants, strict=True):
+        entry["status"] = summary.status
+    for entry, trial in zip(report["trials"], run.trials, strict=True):
+        entry["outcome"] = trial.outcome
 
 
 def write_json(run: RunResult, verdict: Verdict, path: Path) -> None:
     """Write the JSON report as UTF-8, creating parent directories.
+
+    A lone surrogate in a string, which an agent can send, is written as a backslash-u escape,
+    so the report is always written.
 
     Args:
         run: The collected trial results.
@@ -106,5 +120,7 @@ def write_json(run: RunResult, verdict: Verdict, path: Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(build_report(run, verdict), ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(build_report(run, verdict), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+        errors="backslashreplace",
     )

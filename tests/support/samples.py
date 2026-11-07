@@ -112,6 +112,8 @@ PASSWORD_SAMPLES = {
     "unencoded-at": AT_PASSWORD,
 }
 LONE_SURROGATE = chr(0xDC80)
+SURROGATE_REPLY = b'{"answer": "ab' + chr(92).encode() + b'udc80cd. TEN-B-0042 fin"}'
+SURROGATE_REPLY_CLEAN = b'{"answer": "ab' + chr(92).encode() + b'udc80cd."}'
 SURROGATE_PASSWORDS = {
     "after-slash": "kLm/" + LONE_SURROGATE + "x9Zk",
     "plain": "abc" + LONE_SURROGATE + "def",

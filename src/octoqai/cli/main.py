@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 from contextlib import ExitStack, closing
 from dataclasses import dataclass
@@ -194,5 +195,8 @@ def main(
 
 
 def entrypoint() -> None:
-    """Console script entry point."""
+    """Console script entry point; printing a lone surrogate never raises."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(errors="backslashreplace")
     sys.exit(main(sys.argv[1:]))
