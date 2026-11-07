@@ -585,10 +585,11 @@ def test_database_example_runs_against_a_fake_agent(run_cli, monkeypatch, sqlite
         str(EXAMPLES / "database" / "experiment.yaml"),
         "--tags",
         "smoke",
-        agent=FakeSseAgent().streams("Ajuste creado."),
+        agent=FakeSseAgent().streams("Ajuste creado.").effect(lambda _: sqlite_db.insert()),
         commands=FakeCommands(),
     )
-    assert result.code != 3, result.err
+    assert_exit(result.code, 2)
+    assert [trial["outcome"] for trial in result.report()["trials"]] == ["pass", "pass"]
 
 
 @pytest.fixture

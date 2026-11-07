@@ -27,6 +27,11 @@ RECREATE_LINES = (
 )
 
 
+def sqlite_url(path: Path) -> str:
+    """SQLAlchemy URL of a SQLite file."""
+    return f"sqlite:///{path.as_posix()}"
+
+
 def recreate_command(directory: Path, database: SqliteFile) -> list[str]:
     """Write a script that deletes and recreates the SQLite file; return its argv."""
     script = directory / "recreate.py"
@@ -43,7 +48,7 @@ class SqliteFile:
     @property
     def url(self) -> str:
         """SQLAlchemy URL of the file."""
-        return f"sqlite:///{self.path.as_posix()}"
+        return sqlite_url(self.path)
 
     def run(self, *statements: str) -> None:
         """Run the statements in one transaction and commit."""

@@ -35,7 +35,11 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length) or b"{}")
         message = str(body.get("message", ""))
         if self.db_path:
-            write_rows(self.db_path, message)
+            try:
+                write_rows(self.db_path, message)
+            except sqlite3.Error:
+                self.send_error(500, "cannot write to the database")
+                return
         deltas = LEAKING if "otro tenant" in message else CLEAN
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
