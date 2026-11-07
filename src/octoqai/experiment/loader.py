@@ -26,6 +26,7 @@ from octoqai.experiment.model import (
     ForbiddenChange,
     Turn,
 )
+from octoqai.experiment.sourcefloat import load_source_yaml
 from octoqai.experiment.template import render, render_text
 from octoqai.experiment.urlkeys import is_sensitive_key
 
@@ -151,7 +152,7 @@ def _read_experiment(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise ConfigError(f"experiment file not found: {path}")
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = load_source_yaml(path.read_text(encoding="utf-8"))
     except (yaml.YAMLError, UnicodeDecodeError) as exc:
         raise ConfigError(f"cannot parse {path}: {exc}") from exc
     if not isinstance(data, dict):

@@ -5,13 +5,13 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from typing import Any
 
 from octoqai.db.port import QueryResult
 from octoqai.expectations.checks import CheckResult
-from octoqai.experiment import DbCheck, ForbiddenChange
+from octoqai.experiment import DbCheck, ForbiddenChange, SourceFloat
 
 DB_KIND = "db"
 FORBIDDEN_KIND = "forbidden_crud"
@@ -34,20 +34,56 @@ def _non_finite(value: Decimal | float) -> str:
     return "-Infinity" if negative else "Infinity"
 
 
+def _written(value: float) -> Decimal:
+    if isinstance(value, SourceFloat) and value.source is not None:
+        try:
+            written = Decimal(value.source)
+        except InvalidOperation:
+            return Decimal(repr(value))
+        if written.is_finite():
+            return written
+    return Decimal(repr(value))
+
+
 def _plain(value: Any) -> Any:
     if isinstance(value, Decimal | float) and not (
         value.is_finite() if isinstance(value, Decimal) else math.isfinite(value)
     ):
         return _non_finite(value)
     if isinstance(value, float):
-        return Decimal(repr(value))
+        return _written(value)
     if isinstance(value, date | datetime | time):
         return value.isoformat()
     return value
 
 
+def _key(value: Any) -> tuple[str, Any]:
+    if isinstance(value, bool):
+        return "bool", value
+    if isinstance(value, date | datetime | time):
+        return "time", value.isoformat()
+    plain = _plain(value)
+    if isinstance(value, Decimal | float) and isinstance(plain, str):
+        return "non-finite", plain
+    if isinstance(plain, int | Decimal):
+        return "number", plain
+    return "other", plain
+
+
 def _normalized(result: QueryResult) -> list[tuple[Any, ...]]:
-    return [tuple(_plain(item) for item in row) for row in result.rows]
+    return [tuple(_key(item) for item in row) for row in result.rows]
+
+
+def _one_or_zero(stored: Any) -> bool:
+    return _number(stored) and stored in (0, 1)
+
+
+def _same(stored: Any, expected: Any) -> bool:
+    if isinstance(expected, bool):
+        return stored is expected or (_one_or_zero(_plain(stored)) and bool(stored) is expected)
+    if isinstance(stored, bool):
+        return False
+    return bool(_plain(stored) == _plain(expected))
 
 
 def _row_count(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _Outcome:
@@ -58,16 +94,24 @@ def _row_count(check: DbCheck, before: QueryResult | None, after: QueryResult) -
 def _value(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _Outcome:
     if not after.rows:
         return False, f"db {check.id!r}: query returned no rows"
-    matches = _plain(after.scalar) == _plain(check.value)
+    matches = _same(after.scalar, check.value)
     return matches, f"db {check.id!r}: " + (
         "value matches" if matches else "value differs from expected"
     )
 
 
+def _same_row(stored: Any, expected: Any) -> bool:
+    return len(stored) == len(expected) and all(
+        _same(*pair) for pair in zip(stored, expected, strict=True)
+    )
+
+
 def _rows(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _Outcome:
-    expected = [tuple(_plain(item) for item in row) for row in check.value]
-    got = _normalized(after)
-    if got == expected:
+    got = after.rows
+    expected = check.value
+    if len(got) == len(expected) and all(
+        _same_row(*pair) for pair in zip(got, expected, strict=True)
+    ):
         return True, f"db {check.id!r}: rows match"
     return False, f"db {check.id!r}: rows differ (got {len(got)}, expected {len(expected)})"
 
@@ -78,8 +122,10 @@ def _number(value: Any) -> bool:
 
 def _exact(value: int | float | Decimal) -> Fraction:
     if isinstance(value, float):
-        value = Decimal(repr(value))
-    if isinstance(value, Decimal) and abs(value.adjusted()) > _MAX_EXPONENT:
+        value = _written(value)
+    if isinstance(value, Decimal) and (
+        abs(value.adjusted()) > _MAX_EXPONENT or len(value.as_tuple().digits) > _MAX_EXPONENT
+    ):
         raise OverflowError
     return Fraction(value)
 
@@ -110,7 +156,8 @@ def _delta(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _O
         matches = _within(change, _exact(check.value), any(isinstance(v, float) for v in raw))
     except OverflowError:
         return None, f"db {check.id!r}: delta out of range"
-    shown = f"changed by {_shown(change)} (expected {_shown(check.value)})"
+    shown = f"changed by {_shown(change)} (expected {_shown(check.value)}"
+    shown += ")" if matches else ", not equal)"
     return matches, f"db {check.id!r}: {shown}"
 
 
@@ -147,11 +194,20 @@ def evaluate_db(
     """Evaluate one database check without touching the database.
 
     Numbers are compared exactly, never rounded: a ``Decimal`` keeps all its digits, a float
-    is read as its shortest decimal text, and only the value counts, not the scale, so ``1.1``
+    from the database is read as its shortest decimal text, a float written in the experiment
+    is read as the text the user wrote, and only the value counts, not the scale, so ``1.1``
     equals ``Decimal("1.10")``. ``delta`` is computed with exact fractions and must equal the
     expected value; when a database value is a float it may differ by at most ``1e-9``, never
-    by a relative amount. A non-finite expected delta, or a number with an exponent beyond
-    ``100000``, is not evaluable.
+    by a relative amount. A non-finite expected delta, or a number with an exponent or a
+    digit count beyond ``100000``, is not evaluable.
+
+    Types are kept apart. Against an expected value (``value``, ``rows``), an expected ``true``
+    or ``false`` matches a database ``bool`` or a number equal to ``1`` or ``0``, because
+    SQLite and MySQL have no real booleans; an expected number never matches a database
+    ``bool``; a date matches its ISO text, since YAML writes dates that way. Between two
+    snapshots (``unchanged`` and forbidden changes) a ``bool`` is not a number, a non-finite
+    number is not its text and a date is not its ISO text, while ``Decimal("1.10")`` equals
+    ``Decimal("1.1")`` and ``1`` equals ``Decimal("1")``, because drivers may vary the type.
 
     Args:
         check: The check to evaluate.

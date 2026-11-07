@@ -39,6 +39,20 @@ def write_data_set(directory: Path, env: str, values: dict[str, Any]) -> Path:
     return path
 
 
+def write_with_numbers(builder: ExperimentBuilder, directory: Path, **numbers: str) -> Path:
+    """Write the experiment and put each number's text where its placeholder stands.
+
+    ``yaml.safe_dump`` would rewrite a long float, so the test writes a placeholder word and
+    this puts the exact YAML text of the number in its place.
+    """
+    path = builder.write(directory)
+    text = path.read_text(encoding="utf-8")
+    for placeholder, number in numbers.items():
+        text = text.replace(placeholder, number)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def _deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in overrides.items():

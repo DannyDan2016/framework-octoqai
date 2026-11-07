@@ -4,7 +4,8 @@ from decimal import Decimal
 import pytest
 
 from octoqai.expectations import evaluate_db, forbidden_check
-from octoqai.experiment import DbCheck, ForbiddenChange
+from octoqai.experiment import DbCheck, ForbiddenChange, load_experiment
+from support.builders import turn, write_with_numbers
 from support.databases import result
 from support.paths import cases
 
@@ -284,7 +285,7 @@ def test_delta_reads_a_float_expected_value_as_its_shortest_decimal():
 def test_delta_between_the_extremes_of_a_float_is_exact_and_never_crashes():
     outcome = evaluate_db(check(expect={"delta": 0}), result([1e308]), result([-1e308]))
     assert outcome.passed is False
-    assert outcome.detail == "db 'x': changed by a value out of range (expected 0)"
+    assert outcome.detail == "db 'x': changed by a value out of range (expected 0, not equal)"
     assert "e+308" not in outcome.detail
 
 
@@ -305,3 +306,120 @@ def test_a_non_finite_expected_delta_is_never_a_pass(special, expected):
 def test_delta_needs_a_real_number_not_a_bool_or_text(amount):
     outcome = evaluate_db(check(expect={"delta": 1}), result([0]), result([amount]))
     assert outcome.passed is None
+
+
+YAML_NUMBER_ROWS = [
+    ("99999999999999.99", Decimal("99999999999999.99"), True),
+    ("1234567890123456.13", Decimal("1234567890123456.2"), False),
+    ("1234567890123456.13", Decimal("1234567890123456.13"), True),
+]
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("kind", ["value", "rows", "delta"])
+@pytest.mark.parametrize("row", YAML_NUMBER_ROWS, ids=["14-digits", "wide-differs", "wide-equal"])
+def test_a_yaml_float_wider_than_a_double_keeps_the_digits_the_user_wrote(
+    kind, row, experiment, tmp_path, monkeypatch
+):
+    text, stored, passed = row
+    monkeypatch.setenv("DB_URL", "sqlite:///unused.db")
+    value = [["NUMBER"]] if kind == "rows" else "NUMBER"
+    db = {"id": "x", "query": "SELECT 1", "expect": {kind: value}}
+    experiment.database().case("c1", turn("Hola", db=[db]))
+    loaded = load_experiment(write_with_numbers(experiment, tmp_path, NUMBER=text))
+    outcome = evaluate_db(loaded.cases[0].turns[0].db[0], result([0]), result([stored]))
+    assert outcome.passed is passed
+
+
+def test_a_failed_delta_says_that_it_is_not_equal_without_more_digits():
+    outcome = evaluate_db(check(expect={"delta": 1000000000}), result([0]), result([1000000001]))
+    assert outcome.passed is False
+    assert outcome.detail == "db 'x': changed by 1e+09 (expected 1e+09, not equal)"
+    assert "1000000001" not in outcome.detail
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("where", ["expected", "after"])
+def test_a_delta_with_more_digits_than_the_limit_is_not_evaluable(where):
+    wide = Decimal("1." + "3" * 300000)
+    expected, after = (wide, 1) if where == "expected" else (1, wide)
+    wrong = DbCheck.model_construct(
+        id="x", query="SELECT 1", params={}, kind="delta", value=expected, hard=False
+    )
+    outcome = evaluate_db(wrong, result([0]), result([after]))
+    assert (outcome.passed, outcome.detail) == (None, "db 'x': delta out of range")
+
+
+DAY = date(2026, 10, 31)
+SAME_OVER_TIME = [
+    (Decimal("1.10"), Decimal("1.1")),
+    (1, Decimal("1")),
+    (1.5, Decimal("1.5")),
+    (True, True),
+    ("NaN", "NaN"),
+    (Decimal("NaN"), float("nan")),
+    (DAY, DAY),
+]
+DIFFERENT_OVER_TIME = [
+    (True, 1),
+    (1, True),
+    (False, 0),
+    (0, False),
+    (True, Decimal("1")),
+    (Decimal("NaN"), "NaN"),
+    (float("inf"), "Infinity"),
+    (Decimal("-Infinity"), "-Infinity"),
+    (DAY, "2026-10-31"),
+    ("2026-10-31", DAY),
+]
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(("before", "after"), SAME_OVER_TIME, ids=repr)
+def test_values_that_drivers_may_return_differently_are_not_a_change(before, after):
+    change = ForbiddenChange(id="g", query="SELECT amount FROM ajustes")
+    assert forbidden_check(change, result([before]), result([after]), 1) is None
+    unchanged = evaluate_db(check(expect={"unchanged": True}), result([before]), result([after]))
+    assert unchanged.passed is True
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(("before", "after"), DIFFERENT_OVER_TIME, ids=repr)
+def test_a_bool_a_non_finite_number_and_a_date_are_not_their_number_or_text(before, after):
+    change = ForbiddenChange(id="g", query="SELECT amount FROM ajustes")
+    failed = forbidden_check(change, result([before]), result([after]), 1)
+    assert failed is not None and failed.passed is False
+    unchanged = evaluate_db(check(expect={"unchanged": True}), result([before]), result([after]))
+    assert unchanged.passed is False
+
+
+EXPECTED_MATCHES = [
+    (True, True, True),
+    (True, 1, True),
+    (False, 0, True),
+    (True, Decimal("1"), True),
+    (False, 0.0, True),
+    (True, 0, False),
+    (False, 1, False),
+    (True, 2, False),
+    (True, "true", False),
+    (True, None, False),
+    (1, True, False),
+    (0, False, False),
+    (5, True, False),
+    (1.0, True, False),
+    (1, 1, True),
+    (1, Decimal("1.0"), True),
+    ("2026-10-31", DAY, True),
+    (DAY, "2026-10-31", True),
+    (DAY, DAY, True),
+]
+
+
+@pytest.mark.parametrize(("expected", "stored", "passed"), EXPECTED_MATCHES, ids=repr)
+def test_an_expected_bool_matches_a_bool_or_exactly_one_or_zero_and_a_number_never_a_bool(
+    expected, stored, passed
+):
+    assert evaluate_db(check(expect={"value": expected}), None, result([stored])).passed is passed
+    rows = check(expect={"rows": [[expected]]})
+    assert evaluate_db(rows, None, result([stored])).passed is passed

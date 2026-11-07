@@ -52,7 +52,7 @@
   before: {rows: [[3]]}
   after: {rows: [[3]]}
   passed: false
-  detail: "db 'x': changed by 0 (expected 1)"
+  detail: "db 'x': changed by 0 (expected 1, not equal)"
 
 - id: delta-not-numeric-not-evaluable
   check: {expect: {delta: 1}}

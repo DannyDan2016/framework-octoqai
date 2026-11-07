@@ -30,6 +30,7 @@ from octoqai.experiment.model import (
     Variant,
     WaitPolicy,
 )
+from octoqai.experiment.sourcefloat import SourceFloat
 from octoqai.experiment.template import render, render_text
 from octoqai.experiment.urlkeys import is_sensitive_key
 
@@ -55,6 +56,7 @@ __all__ = [
     "ResponseMap",
     "RetryPolicy",
     "SecurityConfig",
+    "SourceFloat",
     "StreamConfig",
     "Thresholds",
     "Turn",
