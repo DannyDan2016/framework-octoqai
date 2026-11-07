@@ -115,6 +115,16 @@ SURROGATE_PASSWORDS = {
     "after-slash": "kLm/" + LONE_SURROGATE + "x9Zk",
     "plain": "abc" + LONE_SURROGATE + "def",
 }
+ESCAPING_PASSWORDS = {
+    "quote": 'abcd@ef"' + "gh12",
+    "slash": "root@db/" + "abcd",
+}
+
+
+def escaped_reply(password: str) -> str:
+    """Prose around a JSON fragment that repeats ``password`` with its JSON escapes."""
+    fragment = json.dumps({"p": password}).replace("/", chr(92) + "/")
+    return "dato " + fragment + " fin."
 
 
 def db_url_with(password: str) -> str:

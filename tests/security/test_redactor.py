@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from octoqai.db import connection_secrets
 from octoqai.experiment import SecurityConfig
 from octoqai.security import Detector, Redactor
 from support import samples
@@ -178,3 +179,23 @@ def test_text_with_escapes_and_no_secret_is_unchanged():
 def test_escaped_findings_are_masked_in_linear_steps():
     module = importlib.import_module("octoqai.security.redactor").__file__
     assert_linear_steps(redactor().redact, lambda n: "TEN\\u002dB-0042 " * n, 300, module)
+
+
+@pytest.mark.parametrize("name", samples.ESCAPING_PASSWORDS)
+def test_a_short_prefix_of_a_password_does_not_expose_the_rest_in_escaped_text(name):
+    password = samples.ESCAPING_PASSWORDS[name]
+    security = SecurityConfig.model_validate({})
+    values = connection_secrets(samples.db_url_with(password))
+    result = Redactor.for_report(security, values).redact(samples.escaped_reply(password))
+    assert result == 'dato {"p": "[redacted]"} fin.'
+
+
+def test_escaped_text_whose_values_the_raw_text_already_covers_keeps_its_escapes():
+    text = "linea" + chr(92) + "nfin ES-REAL-998877."
+    assert redactor(["ES-REAL-998877"]).redact(text) == "linea" + chr(92) + "nfin [redacted]."
+
+
+def test_a_value_written_twice_once_plain_and_once_escaped_is_masked_both_times():
+    escaped = "ES" + chr(92) + "u002dREAL-998877"
+    result = redactor(["ES-REAL-998877"]).redact("uno ES-REAL-998877 dos " + escaped)
+    assert result == "uno [redacted] dos [redacted]"

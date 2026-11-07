@@ -729,3 +729,21 @@ def test_a_database_password_with_a_lone_surrogate_is_never_printed(
     assert result.code in (0, 1, 2)
     for fragment in re.findall(r"[A-Za-z0-9]{3,}", password):
         assert_not_in_outputs(fragment, result.out, result.err, result.report_text())
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("name", samples.ESCAPING_PASSWORDS)
+def test_a_password_the_agent_repeats_with_json_escapes_in_prose_is_masked_everywhere(
+    name, experiment, tmp_path, run_cli, fake_sql
+):
+    password = samples.ESCAPING_PASSWORDS[name]
+    fake_sql(password)
+    experiment.database().trials(1).case("c1", turn("Hola", {"contains": "."}))
+    agent = FakeJsonAgent().answers(samples.escaped_reply(password))
+    try:
+        result = run_cli("run", str(experiment.write(tmp_path)), agent=agent)
+    finally:
+        agent.close()
+    texts = [result.out, result.err, result.report_text()]
+    for fragment in (password, *re.findall(r"[A-Za-z0-9]{4,}", password)):
+        assert_value_hidden(fragment, *texts)

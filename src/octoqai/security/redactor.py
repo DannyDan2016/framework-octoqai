@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -43,6 +44,11 @@ def _merged(candidates: list[Finding]) -> list[list[Finding]]:
     return groups
 
 
+def _covers(raw: list[Finding], plain: list[Finding]) -> bool:
+    seen = Counter(f.value for f in raw)
+    return all(seen[value] >= count for value, count in Counter(f.value for f in plain).items())
+
+
 class Redactor:
     """Replaces sensitive values in text and in report trees."""
 
@@ -78,9 +84,11 @@ class Redactor:
         escapes, so a unicode escape or an escaped slash cannot hide a value. Keys are not
         rewritten, so when any key of that JSON hides a value, even as nested escaped JSON,
         the whole text becomes ``REDACTED``; the decision is taken on the decoded tree and
-        never depends on the masked text still being valid JSON. Any other text whose JSON
-        escapes hide a value is masked with those escapes undone, and becomes ``REDACTED`` when
-        undoing them once still leaves an escaped value.
+        never depends on the masked text still being valid JSON. In any other text, when undoing
+        the JSON escapes reveals a value that the raw text does not show as often, the text is
+        masked with those escapes undone, so a short prefix found in the raw text cannot leave
+        the rest of an escaped value visible; it becomes ``REDACTED`` when undoing them once
+        still leaves an escaped value.
 
         Args:
             text: The text to clean.
@@ -107,20 +115,26 @@ class Redactor:
         )
 
     def _mask_escaped(self, text: str) -> str:
-        masked = self._mask(text)
-        if not self._shows(masked):
-            return masked
-        masked = self._mask(unescape(text))
+        plain = unescape(text)
+        raw = self._detector.candidates(text)
+        if plain == text:
+            return self._mask(text, raw)
+        unescaped = self._detector.candidates(plain)
+        if _covers(raw, unescaped):
+            masked = self._mask(text, raw)
+            if not self._shows(masked):
+                return masked
+        masked = self._mask(plain, unescaped)
         return REDACTED if self._shows(masked) else masked
 
     def _shows(self, masked: str) -> bool:
         plain = unescape(masked)
         return plain != masked and bool(self._detector.candidates(plain))
 
-    def _mask(self, text: str) -> str:
+    def _mask(self, text: str, found: list[Finding]) -> str:
         parts: list[str] = []
         done = 0
-        for group in _merged(self._detector.candidates(text)):
+        for group in _merged(found):
             lead = min(group, key=lambda f: (PRIORITY[f.kind], f.start, f.start - f.end))
             start, end = group[0].start, max(f.end for f in group)
             parts += [text[done:start], _placeholder(lead)]
