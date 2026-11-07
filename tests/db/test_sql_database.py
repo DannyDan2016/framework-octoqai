@@ -207,3 +207,34 @@ def test_a_secret_in_the_statement_never_reaches_the_error(secret, sql_database)
 def test_connection_secrets_with_a_lone_surrogate_never_raises(password):
     found = connection_secrets(samples.db_url_with(password))
     assert password in found
+
+
+@pytest.mark.security
+def test_connection_secrets_reads_the_pw_query_key():
+    assert samples.PW_SECRET in connection_secrets(samples.PW_URL)
+
+
+@pytest.mark.security
+def test_connection_secrets_reads_the_password_inside_odbc_connect():
+    found = connection_secrets(samples.ODBC_URL)
+    assert samples.ODBC_PASSWORD in found
+    assert "{" + samples.ODBC_PASSWORD + "}" in found
+    assert any(samples.ODBC_PASSWORD in value and "DRIVER=" in value for value in found)
+
+
+@pytest.mark.security
+def test_connection_secrets_keeps_the_rest_of_a_query_after_an_unencoded_ampersand():
+    found = connection_secrets(samples.AMPERSAND_URL)
+    assert {"abcd", "abcd&efgh12"} <= set(found)
+
+
+@pytest.mark.security
+def test_connection_secrets_takes_the_short_cut_when_the_parser_rejects_the_url():
+    found = connection_secrets(samples.DB_URL_BAD_PORT)
+    assert {"p", "p@x:" + samples.DB_PASSWORD} <= set(found)
+
+
+@pytest.mark.security
+def test_connection_secrets_takes_the_text_before_the_first_at_sign_alone_when_it_is_the_only_one():
+    found = connection_secrets(samples.SHORT_CUT_URL)
+    assert "ab" in found

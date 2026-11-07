@@ -423,6 +423,13 @@ def test_a_database_password_with_a_lone_surrogate_still_loads(
     assert expected is None or expected in exp.redacted_values
 
 
+@pytest.mark.security
+def test_the_pw_query_key_is_redacted(experiment, tmp_path):
+    path = experiment.database().case("c1", db_case()).write(tmp_path)
+    values = load_experiment(path, process_env={"DB_URL": samples.PW_URL}).redacted_values
+    assert samples.PW_SECRET in values
+
+
 def _params_experiment(experiment, tmp_path, params, forbidden=()):
     check = {
         "id": "x",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import quote_plus
 
 SECRET_SAMPLES: dict[str, str] = {
     "private key": "-----BEGIN RSA " + "PRIVATE KEY-----",
@@ -115,6 +116,21 @@ SURROGATE_PASSWORDS = {
     "after-slash": "kLm/" + LONE_SURROGATE + "x9Zk",
     "plain": "abc" + LONE_SURROGATE + "def",
 }
+ODBC_PASSWORD = "Od8c" + "-pw-5531"
+ODBC_URL = (
+    "mssql+pyodbc"
+    + ":///?odbc_connect="
+    + quote_plus(
+        "DRIVER={ODBC Driver 18 for SQL Server};SERVER=db.example;UID=qa;PW"
+        + "D={"
+        + ODBC_PASSWORD
+        + "};"
+    )
+)
+PW_SECRET = "pw-val" + "-4417"
+PW_URL = "postgresql" + "://qa" + "@db.example/app?pw=" + PW_SECRET
+AMPERSAND_URL = "postgresql" + "://qa" + "@db.example/app?pass" + "word=abcd&efgh12"
+SHORT_CUT_URL = "postgresql" + "://qa:ab@c:" + "80" + "@db.example/app"
 ESCAPING_PASSWORDS = {
     "quote": 'abcd@ef"' + "gh12",
     "slash": "root@db/" + "abcd",

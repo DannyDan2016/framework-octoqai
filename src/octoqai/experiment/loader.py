@@ -29,7 +29,7 @@ from octoqai.experiment.model import (
 from octoqai.experiment.template import render, render_text
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-_SENSITIVE_KEY = re.compile(r"pass|pwd|secret|token|key", re.IGNORECASE)
+_SENSITIVE_KEY = re.compile(r"pass|pwd|pw|secret|token|key", re.IGNORECASE)
 _QUOTED = re.compile(r"'([^']+)'")
 _PATTERN_KINDS = ("contains", "not_contains")
 _RESERVED = (

@@ -747,3 +747,20 @@ def test_a_password_the_agent_repeats_with_json_escapes_in_prose_is_masked_every
     texts = [result.out, result.err, result.report_text()]
     for fragment in (password, *re.findall(r"[A-Za-z0-9]{4,}", password)):
         assert_value_hidden(fragment, *texts)
+
+
+@pytest.mark.security
+def test_a_password_inside_odbc_connect_that_the_agent_repeats_is_masked_everywhere(
+    experiment, tmp_path, run_cli, fake_sql, monkeypatch
+):
+    fake_sql("unused")
+    monkeypatch.setenv("DB_URL", samples.ODBC_URL)
+    experiment.database().trials(1).case("c1", turn("Hola", {"contains": "."}))
+    agent = FakeJsonAgent().answers("your password is " + samples.ODBC_PASSWORD + " ok.")
+    try:
+        result = run_cli("run", str(experiment.write(tmp_path)), agent=agent)
+    finally:
+        agent.close()
+    texts = [result.out, result.err, result.report_text()]
+    for fragment in (samples.ODBC_PASSWORD, "pw-5531", "Od8c"):
+        assert_value_hidden(fragment, *texts)

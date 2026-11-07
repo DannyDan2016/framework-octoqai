@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
-from urllib.parse import quote, quote_plus, unquote
+from urllib.parse import parse_qsl, quote, quote_plus, unquote
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Connection, Engine, make_url
@@ -14,7 +14,7 @@ from sqlalchemy.pool import NullPool
 from octoqai.db.port import QueryResult
 from octoqai.errors import ConfigError
 
-_SENSITIVE_KEY = re.compile(r"pass|pwd|secret|token|key", re.IGNORECASE)
+_SENSITIVE_KEY = re.compile(r"pass|pwd|pw|secret|token|key", re.IGNORECASE)
 _NO_RESULT_SET = "query returned no result set"
 
 
@@ -40,6 +40,31 @@ def _parsed_secrets(url: str) -> list[str]:
     return [value for value in found if value]
 
 
+def _odbc_secrets(url: str) -> list[str]:
+    found: list[str] = []
+    for key, value in parse_qsl(url.partition("?")[2]):
+        if key.lower() != "odbc_connect":
+            continue
+        found.append(value)
+        for pair in unquote(value).split(";"):
+            name, separator, item = pair.partition("=")
+            if separator and _SENSITIVE_KEY.search(name):
+                found.extend((item, item.removeprefix("{").removesuffix("}")))
+    return found
+
+
+def _query_tails(url: str) -> list[str]:
+    query = url.partition("?")[2]
+    tails: list[str] = []
+    done = 0
+    for pair in query.split("&"):
+        name, separator, _ = pair.partition("=")
+        if separator and _SENSITIVE_KEY.search(name):
+            tails.append(query[done + len(name) + 1 :])
+        done += len(pair) + 1
+    return tails
+
+
 def _cut_passwords(url: str) -> list[str]:
     rest = url.partition("://")[2]
     cuts = (rest.find("@"), rest.rfind("@"))
@@ -51,7 +76,9 @@ def connection_secrets(url: str) -> list[str]:
 
     The password is read as SQLAlchemy reads it and also cut from the raw text, up to the
     first and up to the last ``@``, so a password with an unencoded ``/``, ``#``, ``?`` or
-    ``@`` is still found. Values of query keys that look like credentials are included.
+    ``@`` is still found. Values of query keys that look like credentials are included, and so
+    are the whole ``odbc_connect`` value and the credential entries inside it. After an
+    unencoded ``&`` in a credential value, the rest of the query is included too.
 
     Args:
         url: Database URL; it is never echoed and a malformed one never raises.
@@ -60,7 +87,12 @@ def connection_secrets(url: str) -> list[str]:
         Each value in its plain, unquoted, percent-encoded and plus-encoded form, without
         empty strings or duplicates.
     """
-    found = [*_parsed_secrets(url), *_cut_passwords(url)]
+    found = [
+        *_parsed_secrets(url),
+        *_cut_passwords(url),
+        *_odbc_secrets(url),
+        *_query_tails(url),
+    ]
     forms = [form for value in found if value for form in _forms(value)]
     return [form for form in dict.fromkeys(forms) if form]
 
