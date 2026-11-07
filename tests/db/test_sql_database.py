@@ -198,3 +198,12 @@ def test_a_secret_in_the_statement_never_reaches_the_error(secret, sql_database)
     statement = f'SELECT * FROM "{secret}"'
     errors = [sql_database.query(statement, {}).error, sql_database.execute([statement])]
     assert all(e is not None and e.isidentifier() and e.endswith("Error") for e in errors)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "password", samples.SURROGATE_PASSWORDS.values(), ids=samples.SURROGATE_PASSWORDS
+)
+def test_connection_secrets_with_a_lone_surrogate_never_raises(password):
+    found = connection_secrets(samples.db_url_with(password))
+    assert password in found

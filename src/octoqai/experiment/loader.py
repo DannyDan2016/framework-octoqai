@@ -234,7 +234,13 @@ def _expand_database(data: dict[str, Any], variables: _Variables) -> None:
 
 
 def _forms(value: str) -> list[str]:
-    return [value, unquote(value), quote(value, safe=""), quote_plus(value)]
+    found = [value, unquote(value)]
+    for encode in (lambda text: quote(text, safe=""), quote_plus):
+        try:
+            found.append(encode(value))
+        except UnicodeEncodeError:
+            continue
+    return found
 
 
 def _url_secrets(url: str) -> list[str]:

@@ -110,6 +110,11 @@ PASSWORD_SAMPLES = {
     "question": QUESTION_PASSWORD,
     "unencoded-at": AT_PASSWORD,
 }
+LONE_SURROGATE = chr(0xDC80)
+SURROGATE_PASSWORDS = {
+    "after-slash": "kLm/" + LONE_SURROGATE + "x9Zk",
+    "plain": "abc" + LONE_SURROGATE + "def",
+}
 
 
 def db_url_with(password: str) -> str:

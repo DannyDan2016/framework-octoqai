@@ -711,3 +711,21 @@ def test_a_stored_value_the_driver_repeats_in_an_error_never_reaches_any_output(
         assert_not_in_outputs(fragment, *texts)
     assert "database error: OperationalError" in result.report_text()
     assert result.code != 0
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("name", samples.SURROGATE_PASSWORDS)
+def test_a_database_password_with_a_lone_surrogate_is_never_printed(
+    name, experiment, tmp_path, run_cli, fake_sql
+):
+    password = samples.SURROGATE_PASSWORDS[name]
+    fake_sql(password)
+    experiment.database().trials(1).case("c1", turn("Hola", {"contains": "."}))
+    agent = FakeJsonAgent().answers("ok.")
+    try:
+        result = run_cli("run", str(experiment.write(tmp_path)), agent=agent)
+    finally:
+        agent.close()
+    assert result.code in (0, 1, 2)
+    for fragment in re.findall(r"[A-Za-z0-9]{3,}", password):
+        assert_not_in_outputs(fragment, result.out, result.err, result.report_text())

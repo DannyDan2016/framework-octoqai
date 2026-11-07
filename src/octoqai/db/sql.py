@@ -19,7 +19,13 @@ _NO_RESULT_SET = "query returned no result set"
 
 
 def _forms(value: str) -> set[str]:
-    return {value, quote(value, safe=""), quote_plus(value), unquote(value)}
+    found = {value, unquote(value)}
+    for encode in (lambda text: quote(text, safe=""), quote_plus):
+        try:
+            found.add(encode(value))
+        except UnicodeEncodeError:
+            continue
+    return found
 
 
 def _parsed_secrets(url: str) -> list[str]:

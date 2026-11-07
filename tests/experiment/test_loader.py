@@ -409,6 +409,20 @@ def test_a_malformed_database_url_still_loads_without_raising(url, experiment, t
     assert url in exp.redacted_values
 
 
+@pytest.mark.security
+@pytest.mark.parametrize(
+    ("name", "expected"), [("after-slash", None), ("plain", samples.SURROGATE_PASSWORDS["plain"])]
+)
+def test_a_database_password_with_a_lone_surrogate_still_loads(
+    name, expected, experiment, tmp_path
+):
+    url = samples.db_url_with(samples.SURROGATE_PASSWORDS[name])
+    path = experiment.database().case("c1", db_case()).write(tmp_path)
+    exp = load_experiment(path, process_env={"DB_URL": url})
+    assert url in exp.redacted_values
+    assert expected is None or expected in exp.redacted_values
+
+
 def _params_experiment(experiment, tmp_path, params, forbidden=()):
     check = {
         "id": "x",
