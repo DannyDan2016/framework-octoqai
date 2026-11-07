@@ -13,7 +13,7 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `experiment/` | Pydantic model, YAML loader, `${VAR}` expansion from `.env` files (`envfiles.py`), per-environment data sets (`datasets.py`) and `{{ }}` templates | `errors` |
 | `stats/` | Pure estimators: Wilson interval, paired bootstrap, pass@k | `errors` |
 | `agents/` | `port.py` (`AgentPort`, `AgentReply`), `sse_events.py` (SSE parser), adapters such as `http_json.py` and `sse.py`, and `factory.py` (`adapter_for` picks the adapter from the config) | `experiment`, `errors` |
-| `db/` | Database port (`DatabasePort`, `QueryResult`) and the SQLAlchemy adapter `SqlDatabase`, with `scrub_error` and `connection_secrets` to mask connection details | `errors` |
+| `db/` | Database port (`DatabasePort`, `QueryResult`) and the SQLAlchemy adapter `SqlDatabase`, with `connection_secrets` to list the connection values the report must mask | `errors` |
 | `hooks/` | Lifecycle hooks: `LifecyclePort`, `HookExecutor` for http, sql and command (argv list, never a shell) | `db.port`, `experiment`, `errors` |
 | `expectations/` | Registry of deterministic checks applied to an agent reply, plus the evaluation of database checks and forbidden changes | `agents.port`, `db.port`, `experiment` |
 | `security/` | Detectors for canaries, secrets and personal data, leak scanning and the single report redactor | `agents.port`, `experiment`, `errors` |
@@ -217,12 +217,13 @@ pytest -m security -q         secrets, hygiene and headers
   URL needs.
 - A relative SQLite path resolves against the directory `octoqai` runs from, while hooks run in
   the experiment's folder; run from that folder or use an absolute path.
-- A failed `sql` hook reports only its exception class, because hook SQL can hold environment
-  values; to debug it, run the statement by hand.
-- A failed query reports the class and the first line of the driver message, or only the class for
-  data and integrity errors, which may echo stored values. Masking there covers connection
-  details, the experiment's environment values and parameter values, whole values only, before
-  the message is cut to 200 characters.
+- A failed `sql` hook or query reports only its exception class, because the driver message can
+  repeat stored values, parameters or connection details; to debug it, run the statement by
+  hand. Database values and connection details never reach an error.
+- Report masking uses values taken from the environment and from the database connection, and it
+  applies to the whole report, so a value such as `pass` also masks a field that holds that word.
+- Database numbers are compared exactly, never rounded. A `delta` must equal the expected value;
+  only when a database value is a float is an absolute difference of `1e-9` accepted.
 
 ## Conventions
 
