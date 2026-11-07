@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -47,7 +47,7 @@ PLACEHOLDER_MARKERS = ("{{", "${")
 READ_QUERY = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 PATH_SEPARATORS = re.compile(r"[\\/]")
 BATCH_SUFFIXES = (".bat", ".cmd")
-HOOK_STAGES: tuple[HookStage, ...] = ("before_run", "before_trial", "after_trial", "after_run")
+HOOK_STAGES: tuple[HookStage, ...] = get_args(HookStage)
 
 
 class _Model(BaseModel):
@@ -192,9 +192,16 @@ class DbCheck(_Model):
         if not isinstance(data, dict) or "expect" not in data:
             return data
         expect = data["expect"]
-        if not isinstance(expect, dict) or len(expect) != 1:
-            keys = sorted(expect) if isinstance(expect, dict) else expect
-            raise ValueError(f"db check expect must have exactly one key, got {keys}")
+        label = f"db check {data.get('id')!r}"
+        if not isinstance(expect, dict):
+            raise ValueError(
+                f"db check expect must be a mapping with exactly one key, "
+                f"got {type(expect).__name__}"
+            )
+        if len(expect) != 1:
+            raise ValueError(f"db check expect must have exactly one key, got {sorted(expect)}")
+        if "kind" in data or "value" in data:
+            raise ValueError(f"{label}: expect cannot be combined with kind or value")
         kind, value = next(iter(expect.items()))
         rest = {key: item for key, item in data.items() if key != "expect"}
         return {**rest, "kind": kind, "value": value}
@@ -260,7 +267,10 @@ class Hook(_Model):
     @model_validator(mode="after")
     def _sql_without_templates(self) -> Hook:
         if self.sql and any("{{" in statement for statement in self.sql):
-            raise ValueError("sql hooks cannot use {{ }} placeholders")
+            raise ValueError(
+                "sql hooks cannot use {{ }} placeholders, "
+                "and a ${VAR} value used there cannot contain {{"
+            )
         return self
 
     @model_validator(mode="after")
@@ -549,8 +559,15 @@ def _one_baseline(exp: Experiment) -> None:
 def _cases_have_expectations(exp: Experiment) -> None:
     for case in exp.cases:
         asserted = any(turn.expect or turn.db for turn in case.turns)
-        if not (asserted or case.db or case.forbidden):
-            raise ValueError(f"case {case.id!r} has no expectation: it would always pass")
+        if asserted or case.db or case.forbidden:
+            continue
+        if exp.database is not None and exp.database.forbidden:
+            raise ValueError(
+                f"case {case.id!r} has no expectation of its own: database.forbidden guards "
+                f"every case but does not make this one assert anything; add an expect, "
+                f"a db check or a forbidden entry to the case"
+            )
+        raise ValueError(f"case {case.id!r} has no expectation: it would always pass")
 
 
 def _case_db_ids(exp: Experiment, case: Case) -> list[str]:

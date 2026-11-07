@@ -1,5 +1,6 @@
 import pytest
 
+from octoqai.db import QueryResult
 from octoqai.experiment import Experiment, HooksConfig
 from octoqai.hooks import HookEnvironment, HookExecutor
 from octoqai.running import run_experiment
@@ -161,3 +162,60 @@ def test_a_failed_reset_runs_no_query(fake_agent):
     [trial] = play(exp, fake_agent.answers("ok."), fake, hooks)
     assert trial.setup_error is not None and fake.queries == []
     assert fake_agent.requests == []
+
+
+class UnreadableAfterStart(FakeDatabase):
+    def __init__(self, readable):
+        super().__init__()
+        self.readable = readable
+
+    def query(self, sql, params):
+        super().query(sql, params)
+        if len(self.queries) in self.readable:
+            return QueryResult(("n",), ((0,),), None)
+        return QueryResult(error="OperationalError")
+
+
+@pytest.mark.security
+def test_an_unreadable_forbidden_check_is_reported_once_per_trial(fake_agent):
+    exp = Experiment.model_validate(
+        ExperimentBuilder()
+        .database(url="sqlite:///x.db", forbidden=[TENANT_B])
+        .trials(2)
+        .case("c1", turn("Uno", {"contains": "."}), turn("Dos", {"contains": "."}))
+        .build()
+    )
+    trials = play(exp, fake_agent.answers("ok."), UnreadableAfterStart({1, 4}))
+    for trial in trials:
+        found = [c for t in trial.turns for c in t.checks if c.kind == "forbidden_crud"]
+        assert [(c.passed, c.hard) for c in found] == [(None, True)]
+    assert [t.outcome for t in trials] == ["not_evaluable", "not_evaluable"]
+
+
+@pytest.mark.security
+def test_a_real_change_after_an_unreadable_turn_still_counts(fake_agent):
+    class Sequence(FakeDatabase):
+        answers = iter(
+            [
+                QueryResult(("n",), ((0,),), None),
+                QueryResult(error="OperationalError"),
+                QueryResult(("n",), ((1,),), None),
+            ]
+        )
+
+        def query(self, sql, params):
+            return next(self.answers)
+
+    exp = Experiment.model_validate(
+        ExperimentBuilder()
+        .database(url="sqlite:///x.db", forbidden=[TENANT_B])
+        .trials(1)
+        .case("c1", turn("Uno", {"contains": "."}), turn("Dos", {"contains": "."}))
+        .build()
+    )
+    [trial] = play(exp, fake_agent.answers("ok."), Sequence())
+    assert [c.passed for t in trial.turns for c in t.checks if c.kind == "forbidden_crud"] == [
+        None,
+        False,
+    ]
+    assert trial.forbidden_count == 1

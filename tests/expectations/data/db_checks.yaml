@@ -77,13 +77,13 @@
 
 - id: after-error-not-evaluable
   check: {expect: {row_count: 1}}
-  after: {rows: [], error: "OperationalError: no such table: ajustes"}
+  after: {rows: [], error: OperationalError}
   passed: null
-  detail: "db 'x': database error: OperationalError: no such table: ajustes"
+  detail: "db 'x': database error: OperationalError"
 
 - id: before-error-not-evaluable
   check: {expect: {delta: 1}}
-  before: {rows: [], error: "OperationalError: database is locked"}
+  before: {rows: [], error: OperationalError}
   after: {rows: [[1]]}
   passed: null
-  detail: "db 'x': database error: OperationalError: database is locked"
+  detail: "db 'x': database error: OperationalError"

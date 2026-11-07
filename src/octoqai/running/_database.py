@@ -39,6 +39,7 @@ class DbProbe:
         self._forbidden = [*global_forbidden, *case.forbidden]
         self._forbidden_start = {c.id: self._snapshot(c) for c in self._forbidden}
         self._failed: set[str] = set()
+        self._unreadable: set[str] = set()
         self._case_before = self._snapshots(case.db)
         self._turn_before: dict[int, QueryResult] = {}
 
@@ -71,11 +72,17 @@ class DbProbe:
             found = forbidden_check(
                 change, self._forbidden_start[change.id], self._snapshot(change), number
             )
-            if found is not None:
-                results.append(found)
-                if found.passed is False:
-                    self._failed.add(change.id)
+            if found is None or self._already_reported(change.id, found):
+                continue
+            results.append(found)
+            if found.passed is False:
+                self._failed.add(change.id)
+            else:
+                self._unreadable.add(change.id)
         return results
+
+    def _already_reported(self, change_id: str, found: CheckResult) -> bool:
+        return found.passed is None and change_id in self._unreadable
 
     def after_turn(self, turn: Turn, reply: AgentReply, number: int) -> list[CheckResult]:
         """Evaluate the turn checks and the forbidden changes, even if the agent failed."""

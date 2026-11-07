@@ -76,6 +76,19 @@ def test_forbidden_change_is_a_hard_failure_only_when_rows_change():
     assert (broken.passed, broken.hard) == (None, True)
 
 
+@pytest.mark.security
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [(result([0], error="OperationalError"), result([1])), (result([0]), result(error=""))],
+    ids=["before-error", "empty-error"],
+)
+def test_forbidden_check_with_an_unreadable_snapshot_is_hard_and_not_evaluable(before, after):
+    change = ForbiddenChange(id="g", query="SELECT count(*) FROM ajustes")
+    outcome = forbidden_check(change, before, after, 1)
+    assert (outcome.passed, outcome.hard) == (None, True)
+    assert outcome.detail.startswith("forbidden 'g': database error: ")
+
+
 NON_FINITE = [
     Decimal("NaN"),
     Decimal("sNaN"),

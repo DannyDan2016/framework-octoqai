@@ -74,6 +74,10 @@ def _normalized(result: QueryResult) -> list[tuple[Any, ...]]:
     return [tuple(_key(item) for item in row) for row in result.rows]
 
 
+def _same_rows(before: QueryResult, after: QueryResult) -> bool:
+    return _normalized(before) == _normalized(after)
+
+
 def _one_or_zero(stored: Any) -> bool:
     return _number(stored) and stored in (0, 1)
 
@@ -163,7 +167,7 @@ def _delta(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _O
 
 def _unchanged(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _Outcome:
     assert before is not None
-    same = _normalized(before) == _normalized(after)
+    same = _same_rows(before, after)
     return same, f"db {check.id!r}: " + ("unchanged" if same else "changed")
 
 
@@ -246,11 +250,11 @@ def forbidden_check(
         could not be read, and ``None`` when nothing changed. Numbers are compared exactly, so
         a change in the last digit of a wide ``NUMERIC`` is a change.
     """
-    error = after.error or before.error
+    error = after.error if after.error is not None else before.error
     if error is not None:
         detail = f"forbidden {change.id!r}: database error: {error}"
         return CheckResult(FORBIDDEN_KIND, None, True, detail)
-    if _normalized(before) == _normalized(after):
+    if _same_rows(before, after):
         return None
     detail = f"forbidden change {change.id!r} after turn {turn_number}"
     return CheckResult(FORBIDDEN_KIND, False, True, detail)

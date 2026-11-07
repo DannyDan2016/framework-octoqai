@@ -125,7 +125,7 @@ def _summarize(
         reasons = gate_reasons
     else:
         status, reasons = _rate_status(lo, hi, threshold, n_not_evaluable)
-    ttfts = [t.ttft_ms for t in trials if t.ttft_ms is not None]
+    ttfts = [t.ttft_ms for t in ran if t.ttft_ms is not None]
     return VariantSummary(
         name=name,
         baseline=baseline,
@@ -189,6 +189,11 @@ def decide(run: RunResult) -> Verdict:
     recommended = max(winners, key=lambda c: c.diff).variant if winners else baseline.name
     chosen = summaries[recommended]
     reasons = [f"{recommended}: {reason}" for reason in chosen.reasons]
+    reasons += [
+        f"{variant.name}: no trial ran"
+        for variant in exp.variants
+        if variant.name != baseline.name and not any(t.turns for t in by_variant[variant.name])
+    ]
     if comparisons and len(case_ids) < MIN_CASES_FOR_COMPARISON:
         reasons.append(
             f"at least {MIN_CASES_FOR_COMPARISON} cases are needed to compare variants, "

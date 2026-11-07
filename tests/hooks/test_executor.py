@@ -43,7 +43,7 @@ def test_command_runs_without_shell_in_the_experiment_folder(tmp_path):
     [
         (FakeCommands().exits(2), "exited with code 2"),
         (FakeCommands().times_out(), "timed out after 5s"),
-        (FakeCommands().missing(), "cannot start 'python': FileNotFoundError"),
+        (FakeCommands().missing(), "cannot start the command: FileNotFoundError"),
     ],
     ids=["exit-code", "timeout", "missing-program"],
 )
@@ -141,3 +141,15 @@ def test_after_stage_continues_after_a_hook_that_cannot_be_sent(fake_agent):
 def test_sql_hook_without_database_fails():
     [outcome] = executor({"before_run": [{"sql": ["DELETE FROM ajustes"]}]}).run("before_run")
     assert (outcome.ok, outcome.error) == (False, "no database configured")
+
+
+class RaisingDatabase(FakeDatabase):
+    def execute(self, statements):
+        raise RuntimeError("password=hunter2 for tenant-b-77")
+
+
+@pytest.mark.security
+def test_sql_hook_reports_only_the_class_of_an_exception_from_the_port():
+    stages = {"before_trial": [{"sql": ["DELETE FROM ajustes"]}]}
+    [outcome] = executor(stages, db=RaisingDatabase()).run("before_trial")
+    assert (outcome.ok, outcome.error) == (False, "RuntimeError")

@@ -271,6 +271,21 @@ def test_hook_values_expand_env_and_are_redacted(experiment, tmp_path):
     assert {"tenant-a", "hk-998877"} <= set(exp.redacted_values)
 
 
+@pytest.mark.security
+def test_sql_hook_with_a_variable_holding_a_template_marker_fails_without_the_value(
+    experiment, tmp_path
+):
+    experiment.database().hooks(before_trial=[{"sql": ["DELETE FROM t WHERE a = '${TENANT}'"]}])
+    path = experiment.write(tmp_path)
+    assert_config_error(
+        lambda: load_experiment(
+            path, process_env={"DB_URL": "sqlite:///a.db", "TENANT": "tenant-{{-77"}
+        ),
+        r"sql hooks cannot use \{\{ \}\} placeholders, and a \$\{VAR\} value used there",
+        absent=["tenant-", "-77"],
+    )
+
+
 def test_db_params_render_data_values(experiment, tmp_path):
     write_data_set(tmp_path, "qa", {"cuenta": "001"})
     check = {
@@ -284,6 +299,33 @@ def test_db_params_render_data_values(experiment, tmp_path):
         experiment.write(tmp_path), env="qa", process_env={"DB_URL": "sqlite:///a.db"}
     )
     assert exp.cases[0].turns[0].db[0].params == {"c": "001"}
+
+
+def test_render_error_in_global_forbidden_params_names_its_location(experiment, tmp_path):
+    forbidden = [
+        {"id": "no-b", "query": "SELECT 1 WHERE :t = 1", "params": {"t": "{{ data.nope }}"}}
+    ]
+    experiment.database(forbidden=forbidden).case("c1", turn("Hola", {"contains": "."}))
+    path = experiment.write(tmp_path)
+    assert_config_error(
+        lambda: load_experiment(path, process_env={"DB_URL": "sqlite:///a.db"}),
+        r"database\.forbidden\[no-b\]: ",
+    )
+
+
+def test_env_placeholder_renders_in_check_params(experiment, tmp_path):
+    write_data_set(tmp_path, "qa", {"cuenta": "001"})
+    check = {
+        "id": "x",
+        "query": "SELECT 1 WHERE :e = 'qa'",
+        "params": {"e": "{{ env }}"},
+        "expect": {"row_count": 1},
+    }
+    experiment.environments("qa").database().case("c1", turn("Crea", db=[check]))
+    exp = load_experiment(
+        experiment.write(tmp_path), env="qa", process_env={"DB_URL": "sqlite:///a.db"}
+    )
+    assert exp.cases[0].turns[0].db[0].params == {"e": "qa"}
 
 
 @pytest.mark.security

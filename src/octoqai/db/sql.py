@@ -20,6 +20,7 @@ _BLANK = re.compile(r"\s*")
 _MAX_CUTS = 8
 _MAX_PAIRS = 32
 _NO_RESULT_SET = "query returned no result set"
+_IN_MEMORY = "in-memory SQLite cannot be used: each check opens a new connection; use a file"
 
 
 def _forms(value: str) -> set[str]:
@@ -203,7 +204,8 @@ class SqlDatabase:
             url: SQLAlchemy URL of the database.
 
         Raises:
-            ConfigError: When the URL or its driver is not usable; the URL is never echoed.
+            ConfigError: When the URL or its driver is not usable, or it names an in-memory
+                SQLite database; the URL is never echoed.
         """
         try:
             self._engine = create_engine(url, hide_parameters=True, poolclass=NullPool)
@@ -212,6 +214,8 @@ class SqlDatabase:
                 "database.url is not a valid SQLAlchemy URL or its driver is not installed"
             ) from None
         if self._engine.dialect.name == "sqlite":
+            if self._engine.url.database in (None, "", ":memory:"):
+                raise ConfigError(_IN_MEMORY)
             _explicit_transactions(self._engine)
 
     def query(self, sql: str, params: Mapping[str, Any]) -> QueryResult:

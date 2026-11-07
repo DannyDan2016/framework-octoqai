@@ -299,3 +299,13 @@ def test_connection_secrets_ignores_keys_that_only_name_an_authentication_method
     query = quote_plus(f"DRIVER=x;{key}=admin;")
     assert connection_secrets("postgresql" + "://qa" + "@db.example/app?" + f"{key}=admin") == []
     assert "admin" not in connection_secrets("mssql+pyodbc:///?odbc_connect=" + query)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("url", ["sqlite://", "sqlite:///:memory:", "sqlite:///"])
+def test_in_memory_sqlite_is_rejected_with_a_fixed_message(url):
+    message = assert_config_error(
+        lambda: SqlDatabase(url),
+        r"^in-memory SQLite cannot be used: each check opens a new connection; use a file$",
+    )
+    assert url not in message

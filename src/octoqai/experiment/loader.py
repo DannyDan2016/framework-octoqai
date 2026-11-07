@@ -101,7 +101,9 @@ def _render_cases(exp: Experiment, context: dict[str, Any], variables: _Variable
         "cases": [_render_case(case, context, variables) for case in exp.cases]
     }
     if exp.database is not None:
-        forbidden = _render_params(exp.database.forbidden, context, variables)
+        forbidden = _render_params(
+            exp.database.forbidden, context, variables, where="database.forbidden"
+        )
         update["database"] = exp.database.model_copy(update={"forbidden": forbidden})
     return exp.model_copy(update=update)
 
@@ -123,12 +125,18 @@ def _render_case(case: Case, context: dict[str, Any], variables: _Variables) -> 
 
 
 def _render_params[C: (DbCheck, ForbiddenChange)](
-    items: list[C], context: dict[str, Any], variables: _Variables
+    items: list[C], context: dict[str, Any], variables: _Variables, where: str = ""
 ) -> list[C]:
-    return [
-        item.model_copy(update={"params": render(item.params, context, literal=variables.expand)})
-        for item in items
-    ]
+    rendered: list[C] = []
+    for item in items:
+        try:
+            params = render(item.params, context, literal=variables.expand)
+        except ConfigError as exc:
+            if not where:
+                raise
+            raise ConfigError(f"{where}[{item.id}]: {exc}") from None
+        rendered.append(item.model_copy(update={"params": params}))
+    return rendered
 
 
 def _render_turn(turn: Turn, context: dict[str, Any], variables: _Variables) -> Turn:

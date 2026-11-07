@@ -5,7 +5,6 @@ from __future__ import annotations
 import subprocess
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, TypedDict, Unpack, get_args
 
 import httpx
@@ -90,7 +89,7 @@ class HookExecutor:
         except subprocess.TimeoutExpired:
             return f"timed out after {timeout:g}s"
         except (OSError, ValueError) as exc:
-            return f"cannot start {Path(argv[0]).name!r}: {type(exc).__name__}"
+            return f"cannot start the command: {type(exc).__name__}"
         if completed.returncode != 0:
             return f"exited with code {completed.returncode}"
         return None
@@ -98,8 +97,7 @@ class HookExecutor:
     def _http(self, hook: Hook) -> str | None:
         spec = hook.http
         client = self._client
-        if spec is None or client is None:
-            return "no http client configured"
+        assert spec is not None and client is not None
         timeout = hook.effective_timeout_s()
         try:
             response = client.request(
@@ -118,4 +116,7 @@ class HookExecutor:
     def _sql(self, statements: list[str]) -> str | None:
         if self._environment.db is None:
             return "no database configured"
-        return self._environment.db.execute(statements)
+        try:
+            return self._environment.db.execute(statements)
+        except Exception as exc:
+            return type(exc).__name__

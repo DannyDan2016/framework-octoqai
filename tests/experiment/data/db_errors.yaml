@@ -82,7 +82,7 @@
 
 - id: command-string-never-shell
   overrides: {hooks: {before_trial: [{command: "python reset.py && echo hecho"}]}}
-  fragments: [command must be a list of arguments, never run through a shell]
+  fragments: ["command must be a list of arguments: hooks never run through a shell"]
 
 - id: command-batch-file-rejected
   overrides: {hooks: {before_trial: [{command: [scripts/reset.bat, tenant]}]}}
@@ -114,7 +114,7 @@
   overrides:
     database: {url: "${DB_URL}", forbidden: [{id: f, query: SELECT 1}]}
     cases: [{id: c1, turns: [{user: Hola}]}]
-  fragments: [has no expectation, it would always pass]
+  fragments: ["case 'c1' has no expectation of its own: database[.]forbidden guards every case"]
 
 - id: check-query-env-placeholder
   overrides:
@@ -178,4 +178,28 @@
   overrides:
     database: {url: "${DB_URL}"}
     hooks: {before_trial: [{sql: ["DELETE FROM ajustes WHERE tenant = '{{ data.tenant }}'"]}]}
-  fragments: ['sql hooks cannot use [{][{] [}][}] placeholders']
+  fragments: ['sql hooks cannot use [{][{] [}][}] placeholders, and a [$][{]VAR[}] value used there cannot contain [{][{]']
+
+- id: shorthand-expect-with-kind
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, kind: value, expect: {value: 1}}]}]}]
+  fragments: ["db check 'x': expect cannot be combined with kind or value"]
+
+- id: shorthand-expect-with-value
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, value: 2, expect: {value: 1}}]}]}]
+  fragments: ["db check 'x': expect cannot be combined with kind or value"]
+
+- id: shorthand-expect-not-a-mapping
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: 3}]}]}]
+  fragments: ["db check expect must be a mapping with exactly one key, got int"]
+
+- id: shorthand-expect-a-list
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: [row_count, 1]}]}]}]
+  fragments: ["db check expect must be a mapping with exactly one key, got list"]

@@ -193,3 +193,26 @@ def test_a_variant_that_never_ran_is_insufficient_and_empty():
     summary = next(s for s in decide(run).variants if s.name == "cand")
     assert summary.status == "insufficient" and summary.n_evaluable == 0
     assert summary.mean_latency_ms == 0.0 and summary.mean_tokens is None
+
+
+@pytest.mark.parametrize("skipped", ["no-trials", "failed-reset"])
+def test_a_candidate_where_no_trial_ran_is_named_in_the_reasons(skipped):
+    run = make_run({"base": all_pass(30, 5), "cand": all_pass(30, 5)}, baseline="base")
+    if skipped == "no-trials":
+        run.trials = [t for t in run.trials if t.variant == "base"]
+    else:
+        run.trials = [
+            TrialResult(t.variant, t.case_id, t.trial, [], setup_error="before_trial[0] failed")
+            if t.variant == "cand"
+            else t
+            for t in run.trials
+        ]
+    verdict = decide(run)
+    assert "cand: no trial ran" in verdict.reasons
+    assert verdict.recommended == "base"
+    assert next(s for s in verdict.variants if s.name == "cand").status != "go"
+
+
+def test_a_candidate_that_ran_is_not_reported_as_unrun():
+    run = make_run({"base": all_pass(30, 5), "cand": all_pass(30, 5)}, baseline="base")
+    assert not any("no trial ran" in reason for reason in decide(run).reasons)
