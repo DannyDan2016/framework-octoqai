@@ -47,7 +47,21 @@ def render_text(
     return _PLACEHOLDER.sub(replace, text)
 
 
-def render(template: Any, context: dict[str, Any]) -> Any:
+def _interpolate(text: str, context: dict[str, Any], literal: Callable[[str], str] | None) -> str:
+    apply = literal or (lambda part: part)
+    parts: list[str] = []
+    end = 0
+    for match in _PLACEHOLDER.finditer(text):
+        parts.append(apply(text[end : match.start()]))
+        parts.append(str(_lookup(match.group(1), context)))
+        end = match.end()
+    parts.append(apply(text[end:]))
+    return "".join(parts)
+
+
+def render(
+    template: Any, context: dict[str, Any], literal: Callable[[str], str] | None = None
+) -> Any:
     """Render a request template against a context.
 
     A string that is exactly one placeholder is replaced by the raw value, keeping its type.
@@ -56,6 +70,8 @@ def render(template: Any, context: dict[str, Any]) -> Any:
     Args:
         template: Any JSON-like structure containing ``{{ path }}`` placeholders.
         context: Values available to the placeholders.
+        literal: Optional function applied to the text the template author wrote, that is the
+            text between placeholders; inserted values are never passed through it.
 
     Returns:
         A new structure with every placeholder resolved.
@@ -64,12 +80,12 @@ def render(template: Any, context: dict[str, Any]) -> Any:
         ConfigError: If a placeholder references an unknown variable.
     """
     if isinstance(template, dict):
-        return {key: render(value, context) for key, value in template.items()}
+        return {key: render(value, context, literal) for key, value in template.items()}
     if isinstance(template, list):
-        return [render(item, context) for item in template]
+        return [render(item, context, literal) for item in template]
     if not isinstance(template, str):
         return template
     whole = _PLACEHOLDER.fullmatch(template.strip())
     if whole:
         return _lookup(whole.group(1), context)
-    return _PLACEHOLDER.sub(lambda m: str(_lookup(m.group(1), context)), template)
+    return _interpolate(template, context, literal)

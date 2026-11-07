@@ -125,7 +125,7 @@ def _render_params[C: (DbCheck, ForbiddenChange)](
     items: list[C], context: dict[str, Any], variables: _Variables
 ) -> list[C]:
     return [
-        item.model_copy(update={"params": _expand_values(render(item.params, context), variables)})
+        item.model_copy(update={"params": render(item.params, context, literal=variables.expand)})
         for item in items
     ]
 

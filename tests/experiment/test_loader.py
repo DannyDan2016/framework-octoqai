@@ -407,3 +407,49 @@ def test_a_malformed_database_url_still_loads_without_raising(url, experiment, t
     path = experiment.database().case("c1", db_case()).write(tmp_path)
     exp = load_experiment(path, process_env={"DB_URL": url})
     assert url in exp.redacted_values
+
+
+def _params_experiment(experiment, tmp_path, params, forbidden=()):
+    check = {
+        "id": "x",
+        "query": "SELECT count(*) FROM ajustes WHERE cuenta = :c",
+        "params": params,
+        "expect": {"value": 1},
+    }
+    return experiment.database().case("c1", turn("Hola", db=[check])).write(tmp_path)
+
+
+@pytest.mark.security
+def test_environment_value_holding_a_placeholder_is_not_expanded_again(experiment, tmp_path):
+    secret = "tok-" + "${OTHER}-end"
+    path = _params_experiment(experiment, tmp_path, {"c": "${CHECK_KEY}"})
+    exp = load_experiment(path, process_env={"DB_URL": "sqlite:///x.db", "CHECK_KEY": secret})
+    assert exp.cases[0].turns[0].db[0].params == {"c": secret}
+
+
+@pytest.mark.security
+def test_data_value_holding_a_placeholder_is_not_expanded(experiment, tmp_path):
+    value = "cta-" + "${OTHER}"
+    write_data_set(tmp_path, "qa", {"cuenta": "${DATA_VAR}"})
+    experiment.environments("qa")
+    path = _params_experiment(experiment, tmp_path, {"c": "{{ data.cuenta }}"})
+    process_env = {"DB_URL": "sqlite:///x.db", "DATA_VAR": value}
+    exp = load_experiment(path, env="qa", process_env=process_env)
+    assert exp.cases[0].turns[0].db[0].params == {"c": value}
+
+
+@pytest.mark.security
+def test_environment_value_holding_a_template_is_not_rendered(experiment, tmp_path):
+    path = _params_experiment(experiment, tmp_path, {"c": "pre-${CHECK_KEY}"})
+    process_env = {"DB_URL": "sqlite:///x.db", "CHECK_KEY": "{{ data.nope }}"}
+    exp = load_experiment(path, process_env=process_env)
+    assert exp.cases[0].turns[0].db[0].params == {"c": "pre-{{ data.nope }}"}
+
+
+def test_param_mixing_literal_variable_and_data_gets_both(experiment, tmp_path):
+    write_data_set(tmp_path, "qa", {"cuenta": "001"})
+    experiment.environments("qa")
+    path = _params_experiment(experiment, tmp_path, {"c": "${TENANT}-{{ data.cuenta }}"})
+    process_env = {"DB_URL": "sqlite:///x.db", "TENANT": "tenant-b-77"}
+    exp = load_experiment(path, env="qa", process_env=process_env)
+    assert exp.cases[0].turns[0].db[0].params == {"c": "tenant-b-77-001"}

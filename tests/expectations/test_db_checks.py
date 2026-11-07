@@ -115,3 +115,18 @@ def test_a_non_finite_value_matches_only_its_stable_text_form():
     assert evaluate_db(check(expect={"value": "NaN"}), None, result([Decimal("sNaN")])).passed
     assert evaluate_db(check(expect={"value": "-Infinity"}), None, result([float("-inf")])).passed
     assert not evaluate_db(check(expect={"value": 1}), None, result([Decimal("NaN")])).passed
+
+
+HUGE = Decimal("1E+400")
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [(HUGE, Decimal(0)), (Decimal(0), HUGE), (HUGE, HUGE)],
+    ids=["before", "after", "both"],
+)
+def test_a_numeric_out_of_float_range_is_not_evaluable_and_not_shown(before, after):
+    outcome = evaluate_db(check(expect={"delta": 1}), result([before]), result([after]))
+    assert outcome.passed is None
+    assert outcome.detail == "db 'x': delta out of range"

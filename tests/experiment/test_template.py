@@ -55,3 +55,17 @@ def test_render_text_escapes_inserted_values_only():
 def test_render_text_unknown_variable_raises():
     with pytest.raises(ConfigError, match="data.x"):
         render_text("{{ data.x }}", {"data": {}})
+
+
+def test_literal_applies_to_text_around_placeholders_only():
+    template = {"a": "x-{{ message }}-y", "b": ["plain"], "c": "{{ message }}"}
+    result = render(template, CTX, literal=str.upper)
+    assert result == {"a": "X-Hola ñandú-Y", "b": ["PLAIN"], "c": "Hola ñandú"}
+
+
+def test_literal_is_not_applied_to_a_string_that_is_one_placeholder():
+    assert render(" {{ message }} ", {"message": "a b"}, literal=str.upper) == "a b"
+
+
+def test_render_without_literal_keeps_text_as_is():
+    assert render("a-{{ message }}-b", CTX) == "a-Hola ñandú-b"

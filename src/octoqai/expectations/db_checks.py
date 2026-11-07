@@ -77,9 +77,13 @@ def _delta(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _O
     start, end = _plain(before.scalar), _plain(after.scalar)
     if not (_number(start) and _number(end)):
         return None, f"db {check.id!r}: delta needs a number in the first column"
-    change = end - start
-    matches = math.isclose(change, check.value, abs_tol=1e-9)
-    return matches, f"db {check.id!r}: changed by {change:g} (expected {check.value:g})"
+    try:
+        float(start), float(end)
+        change = end - start
+        matches = math.isclose(change, check.value, abs_tol=1e-9)
+        return matches, f"db {check.id!r}: changed by {change:g} (expected {check.value:g})"
+    except OverflowError:
+        return None, f"db {check.id!r}: delta out of range"
 
 
 def _unchanged(check: DbCheck, before: QueryResult | None, after: QueryResult) -> _Outcome:
