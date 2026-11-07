@@ -1,4 +1,5 @@
 import importlib
+import re
 
 import pytest
 
@@ -612,6 +613,13 @@ def test_placeholder_in_a_forbidden_query_is_a_config_error_not_a_go(
     assert fake_agent.requests == []
 
 
+_HOOK_SQL = {
+    "hook-quoted": "DELETE FROM ajustes WHERE cuenta = '${HARD_SECRET}'",
+    "hook-unquoted": "DELETE FROM ajustes WHERE cuenta = ${HARD_SECRET}",
+    "hook-identifier": 'DELETE FROM "${HARD_SECRET}"',
+}
+
+
 @pytest.fixture
 def hard_secret_experiment(experiment, tmp_path, sqlite_db, monkeypatch):
     monkeypatch.setenv("DB_URL", sqlite_db.url)
@@ -626,15 +634,15 @@ def hard_secret_experiment(experiment, tmp_path, sqlite_db, monkeypatch):
             "expect": {"value": 1},
         }
         experiment.case("c1", turn("Hola", db=[check]))
-        if where == "hook":
-            experiment.hooks(before_trial=[{"sql": ['DELETE FROM "${HARD_SECRET}"']}])
+        if where in _HOOK_SQL:
+            experiment.hooks(before_trial=[{"sql": [_HOOK_SQL[where]]}])
         return str(experiment.write(tmp_path))
 
     return _write
 
 
 @pytest.mark.security
-@pytest.mark.parametrize("where", ["hook", "check"])
+@pytest.mark.parametrize("where", ["check", *_HOOK_SQL])
 @pytest.mark.parametrize("secret", samples.HARD_SECRETS.values(), ids=samples.HARD_SECRETS)
 def test_hard_secrets_never_reach_outputs_through_database_errors(
     secret, where, hard_secret_experiment, run_cli, fake_agent
@@ -644,5 +652,6 @@ def test_hard_secrets_never_reach_outputs_through_database_errors(
     texts = [result.out, result.err]
     if (result.out_dir / "report.json").is_file():
         texts.append(result.report_text())
-    for fragment in (secret, secret[:20], secret[-20:]):
+    pieces = re.findall(r"[A-Za-z0-9]{4,}", secret)
+    for fragment in (secret, secret[:20], secret[-20:], *pieces):
         assert_not_in_outputs(fragment, *texts)

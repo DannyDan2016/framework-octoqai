@@ -94,7 +94,9 @@ HARD_SECRETS = {
     "slash-colon": "/:x" + "9Zk",
     "percent": "%40" + "ab12",
     "braces": "{{ x " + "}}7Qz",
-    "long": "L" + "0ng-" * 80 + "tail",
+    "long": "L" + "0ng-" * 80 + "zq9Xtl",
+    "quote-split": "ab'" + "QWERTYPART99",
+    "dash-split": "abcd-" + "efgh-" + "KLMNSECRET",
 }
 PG_DATA_ERROR = 'invalid input syntax for type integer: "juan ' + 'perez cliente"'
 MYSQL_DUPLICATE = "Duplicate entry 'juan " + "perez' for key 'ajustes.cuenta'"

@@ -140,13 +140,23 @@ class SqlDatabase:
         return QueryResult(columns, rows, None)
 
     def execute(self, statements: Sequence[str]) -> str | None:
-        """Run the statements in one transaction; return the error or ``None``."""
+        """Run the statements in one transaction.
+
+        Statements may hold environment values, so a failure is reported as the exception
+        class name only, never as driver text.
+
+        Args:
+            statements: SQL statements to run in order.
+
+        Returns:
+            ``None`` on success, otherwise the class name of the exception.
+        """
         try:
             with self._engine.begin() as conn:
                 for statement in statements:
                     conn.execute(text(statement))
-        except SQLAlchemyError as exc:
-            return self._error(exc)
+        except Exception as exc:
+            return type(exc).__name__
         return None
 
     def close(self) -> None:

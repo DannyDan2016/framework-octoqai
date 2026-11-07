@@ -114,7 +114,7 @@ def test_error_gives_only_the_class_when_the_driver_may_echo_a_stored_value(
 ):
     fail_with(sql_database, monkeypatch, error)
     assert sql_database.query("SELECT 1", {}).error == expected
-    assert sql_database.execute(["DELETE FROM ajustes"]) == expected
+    assert sql_database.execute(["DELETE FROM ajustes"]) == type(error).__name__
 
 
 def test_error_is_cut_to_200_characters(sql_database):
@@ -184,3 +184,18 @@ def test_query_without_a_result_set_is_an_error_and_never_commits(sqlite_db, sql
     result = sql_database.query("WITH t AS (SELECT 1) DELETE FROM ajustes", {})
     assert result == QueryResult(error="query returned no result set")
     assert sqlite_db.scalar("SELECT count(*) FROM ajustes") == 1
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    ("statement", "expected"),
+    [
+        ("DELETE FROM ajustes WHERE cuenta = 'ab'" + "QWERTYPART99'", "OperationalError"),
+        ("DELETE FROM ajustes WHERE cuenta = abcd-efgh-" + "KLMNSECRET", "OperationalError"),
+        ("DELETE FROM ajustes; DELETE FROM ajustes", "ProgrammingError"),
+        ("SELECT '\ud800" + "QWERTYPART99'", "UnicodeEncodeError"),
+    ],
+    ids=["quote", "unquoted", "multi-statement", "non-driver-exception"],
+)
+def test_execute_error_is_exactly_the_exception_class(statement, expected, sql_database):
+    assert sql_database.execute([statement]) == expected

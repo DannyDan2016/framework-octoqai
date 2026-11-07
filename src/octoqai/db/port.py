@@ -29,7 +29,7 @@ class DatabasePort(Protocol):
         ...
 
     def execute(self, statements: Sequence[str]) -> str | None:
-        """Run the statements in one transaction and return the error, or ``None``."""
+        """Run the statements in one transaction; return the exception class name, or ``None``."""
         ...
 
     def close(self) -> None:
