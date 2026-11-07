@@ -199,3 +199,23 @@ def test_a_value_written_twice_once_plain_and_once_escaped_is_masked_both_times(
     escaped = "ES" + chr(92) + "u002dREAL-998877"
     result = redactor(["ES-REAL-998877"]).redact("uno ES-REAL-998877 dos " + escaped)
     assert result == "uno [redacted] dos [redacted]"
+
+
+def password_redactor(password):
+    values = connection_secrets(samples.db_url_with(password))
+    return Redactor.for_report(SecurityConfig.model_validate({}), values)
+
+
+@pytest.mark.parametrize("name", samples.PREFIX_ESCAPE_ROWS)
+def test_an_escape_that_eats_a_copy_or_a_double_escape_never_leaves_the_rest_visible(name):
+    password, text = samples.PREFIX_ESCAPE_ROWS[name]
+    cleaned = password_redactor(password).redact(text)
+    assert cleaned == "[redacted]"
+    for fragment in ("cd12", "efgh12", "gh12", "abcd", "@db"):
+        assert_value_hidden(fragment, cleaned, UNESCAPE(cleaned))
+
+
+def test_two_copies_of_a_password_one_plain_and_one_escaped_are_both_masked():
+    password, text = samples.COUNTED_COPIES
+    result = password_redactor(password).redact(text)
+    assert result == "x [redacted] y [redacted] z"

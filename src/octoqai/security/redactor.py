@@ -49,6 +49,17 @@ def _covers(raw: list[Finding], plain: list[Finding]) -> bool:
     return all(seen[value] >= count for value, count in Counter(f.value for f in plain).items())
 
 
+def _destroys(text: str, plain: str, raw: list[Finding]) -> bool:
+    parts: list[str] = []
+    done = 0
+    for group in _merged(raw):
+        start, end = group[0].start, max(f.end for f in group)
+        parts += [unescape(text[done:start]), text[start:end]]
+        done = end
+    parts.append(unescape(text[done:]))
+    return "".join(parts) != plain
+
+
 class Redactor:
     """Replaces sensitive values in text and in report trees."""
 
@@ -86,9 +97,9 @@ class Redactor:
         the whole text becomes ``REDACTED``; the decision is taken on the decoded tree and
         never depends on the masked text still being valid JSON. In any other text, when undoing
         the JSON escapes reveals a value that the raw text does not show as often, the text is
-        masked with those escapes undone, so a short prefix found in the raw text cannot leave
-        the rest of an escaped value visible; it becomes ``REDACTED`` when undoing them once
-        still leaves an escaped value.
+        masked with those escapes undone. It becomes ``REDACTED`` when an escape alters a value
+        that the raw text shows, or when undoing the escapes a second time reveals one more
+        value; escapes nested deeper than that are not followed.
 
         Args:
             text: The text to clean.
@@ -120,6 +131,10 @@ class Redactor:
         if plain == text:
             return self._mask(text, raw)
         unescaped = self._detector.candidates(plain)
+        if not _covers(unescaped, self._detector.candidates(unescape(plain))):
+            return REDACTED
+        if _destroys(text, plain, raw):
+            return REDACTED
         if _covers(raw, unescaped):
             masked = self._mask(text, raw)
             if not self._shows(masked):

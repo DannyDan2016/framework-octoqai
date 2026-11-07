@@ -168,6 +168,42 @@ ESCAPING_PASSWORDS = {
 }
 
 
+_BACKSLASH = chr(92)
+PREFIX_ESCAPE_ROWS = {
+    "slash-prefix": (
+        "root@db/" + "abcd",
+        "x " + _BACKSLASH + "root@db/abcd y root@db" + _BACKSLASH + "/abcd z",
+    ),
+    "unicode-prefix": (
+        'abcd@ef"' + "gh12",
+        "x " + _BACKSLASH + 'u006abcd@ef"gh12 y abcd@ef' + _BACKSLASH + '"gh12 z',
+    ),
+    "double-escape": (
+        'abcd@ef"' + "gh12",
+        "dato {"
+        + _BACKSLASH
+        + '"p'
+        + _BACKSLASH
+        + '": '
+        + _BACKSLASH
+        + '"abcd@ef'
+        + _BACKSLASH * 3
+        + '"gh12'
+        + _BACKSLASH
+        + '"} fin.',
+    ),
+    "triple-backslash": ('ab"' + "cdef12", "dato ab" + _BACKSLASH * 3 + '"cdef12 fin.'),
+    "literal-backslash": (
+        "ab" + _BACKSLASH + "ncd12",
+        "dato ab" + _BACKSLASH + "ncd12 y ab" + _BACKSLASH * 2 + "ncd12 fin",
+    ),
+}
+COUNTED_COPIES = (
+    'abcd@ef"' + "gh12",
+    'x abcd@ef"gh12 y abcd@ef' + _BACKSLASH + '"gh12 z',
+)
+
+
 def escaped_reply(password: str) -> str:
     """Prose around a JSON fragment that repeats ``password`` with its JSON escapes."""
     fragment = json.dumps({"p": password}).replace("/", chr(92) + "/")
