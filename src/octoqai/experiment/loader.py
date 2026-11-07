@@ -27,9 +27,9 @@ from octoqai.experiment.model import (
     Turn,
 )
 from octoqai.experiment.template import render, render_text
+from octoqai.experiment.urlkeys import is_sensitive_key
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-_SENSITIVE_KEY = re.compile(r"pass|pwd|pw|secret|token|key", re.IGNORECASE)
 _QUOTED = re.compile(r"'([^']+)'")
 _PATTERN_KINDS = ("contains", "not_contains")
 _RESERVED = (
@@ -247,11 +247,11 @@ def _url_secrets(url: str) -> list[str]:
     try:
         parts = urlsplit(url)
         found = [parts.password or ""]
-        found += [value for key, value in parse_qsl(parts.query) if _SENSITIVE_KEY.search(key)]
+        found += [value for key, value in parse_qsl(parts.query) if is_sensitive_key(key)]
         found += [
             pair.partition("=")[2]
             for pair in parts.query.split("&")
-            if _SENSITIVE_KEY.search(pair.partition("=")[0])
+            if is_sensitive_key(pair.partition("=")[0])
         ]
     except ValueError:
         return []

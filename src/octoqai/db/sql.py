@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
-from urllib.parse import parse_qsl, quote, quote_plus, unquote
+from urllib.parse import quote, quote_plus, unquote, unquote_plus
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Connection, Engine, make_url
@@ -13,8 +13,12 @@ from sqlalchemy.pool import NullPool
 
 from octoqai.db.port import QueryResult
 from octoqai.errors import ConfigError
+from octoqai.experiment import is_sensitive_key
 
-_SENSITIVE_KEY = re.compile(r"pass|pwd|pw|secret|token|key", re.IGNORECASE)
+_UP_TO_SEPARATOR = re.compile(r"[^=;]*")
+_BLANK = re.compile(r"\s*")
+_MAX_CUTS = 8
+_MAX_PAIRS = 32
 _NO_RESULT_SET = "query returned no result set"
 
 
@@ -35,33 +39,112 @@ def _parsed_secrets(url: str) -> list[str]:
         return []
     found = [parsed.password]
     for key, item in parsed.query.items():
-        if _SENSITIVE_KEY.search(key):
+        if is_sensitive_key(key):
             found.extend((item,) if isinstance(item, str) else item)
     return [value for value in found if value]
 
 
-def _odbc_secrets(url: str) -> list[str]:
-    found: list[str] = []
-    for key, value in parse_qsl(url.partition("?")[2]):
-        if key.lower() != "odbc_connect":
+def _pairs(query: str) -> Iterator[tuple[str, int]]:
+    done = 0
+    for pair in query.split("&"):
+        name, separator, _ = pair.partition("=")
+        if separator:
+            yield name, done + len(name) + 1
+        done += len(pair) + 1
+
+
+def _cuts(tail: str) -> list[str]:
+    found = [tail]
+    end = tail.find("&")
+    while end >= 0 and len(found) <= _MAX_CUTS:
+        found.append(tail[:end])
+        end = tail.find("&", end + 1)
+    return found
+
+
+def _end(pattern: re.Pattern[str], text: str, start: int) -> int:
+    found = pattern.match(text, start)
+    return found.end() if found else start
+
+
+def _brace_end(text: str, start: int) -> int:
+    index = start + 1
+    while True:
+        close = text.find("}", index)
+        if close < 0:
+            return -1
+        if text.startswith("}}", close):
+            index = close + 2
+        else:
+            return close + 1
+
+
+def _odbc_value(text: str, start: int, closable: bool) -> tuple[str, str, int, bool]:
+    stop = text.find(";", start)
+    stop = len(text) if stop < 0 else stop
+    if not text.startswith("{", start):
+        raw = text[start:stop]
+        return raw, raw.strip(), stop, closable
+    end = _brace_end(text, start) if closable else -1
+    if end >= 0:
+        raw = text[start:end]
+        stop = text.find(";", end)
+        return raw, raw[1:-1].replace("}}", "}"), len(text) if stop < 0 else stop, True
+    raw = text[start:stop]
+    return raw, raw[1:].replace("}}", "}"), stop, False
+
+
+def _odbc_pairs(text: str) -> Iterator[tuple[str, str, str]]:
+    position, closable = 0, True
+    while position <= len(text):
+        key_end = _end(_UP_TO_SEPARATOR, text, position)
+        if key_end >= len(text) or text[key_end] != "=":
+            position = key_end + 1
             continue
-        found.append(value)
-        for pair in unquote(value).split(";"):
-            name, separator, item = pair.partition("=")
-            if separator and _SENSITIVE_KEY.search(name):
-                found.extend((item, item.removeprefix("{").removesuffix("}")))
+        start = _end(_BLANK, text, key_end + 1)
+        raw, inner, stop, closable = _odbc_value(text, start, closable)
+        yield text[position:key_end].strip(), raw, inner
+        position = stop + 1
+
+
+def _odbc_values(text: str) -> list[str]:
+    found: list[str] = []
+    for name, raw, inner in _odbc_pairs(text):
+        if is_sensitive_key(name):
+            found.extend((raw, inner))
+            if raw.startswith("{") and raw.endswith("}"):
+                found.append(raw[1:-1])
+    return found
+
+
+def _odbc_secrets(url: str) -> list[str]:
+    query = url.partition("?")[2]
+    found: list[str] = []
+    seen = 0
+    for name, start in _pairs(query):
+        if unquote_plus(name).lower() != "odbc_connect":
+            continue
+        seen += 1
+        if seen > _MAX_PAIRS:
+            break
+        for raw in _cuts(query[start:]):
+            decoded = unquote_plus(raw)
+            for form in dict.fromkeys((decoded, unquote(decoded))):
+                found.append(form)
+                found.extend(_odbc_values(form))
     return found
 
 
 def _query_tails(url: str) -> list[str]:
     query = url.partition("?")[2]
     tails: list[str] = []
-    done = 0
-    for pair in query.split("&"):
-        name, separator, _ = pair.partition("=")
-        if separator and _SENSITIVE_KEY.search(name):
-            tails.append(query[done + len(name) + 1 :])
-        done += len(pair) + 1
+    seen = 0
+    for name, start in _pairs(query):
+        if is_sensitive_key(name):
+            seen += 1
+            if seen > _MAX_PAIRS:
+                break
+            tails.extend(_cuts(query[start:]))
     return tails
 
 

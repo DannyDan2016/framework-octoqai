@@ -127,6 +127,37 @@ ODBC_URL = (
         + "};"
     )
 )
+BRACED_ODBC_PASSWORDS = {
+    "semicolon": ("abcd;" + "efgh12", "abcd;" + "efgh12"),
+    "closing-brace": ("abcd}" + "efgh12", "abcd}}" + "efgh12"),
+}
+
+
+def braced_odbc_url(written: str) -> str:
+    """Database URL whose ODBC password is written inside braces, as ``written``."""
+    return "mssql+pyodbc:///?odbc_connect=" + quote_plus("DRIVER=x;PW" + "D={" + written + "};")
+
+
+AMPERSAND_ROWS = {
+    "query-then-key": (
+        "postgresql" + "://qa" + "@db.example/app?pass" + "word=abcd&efgh12&sslmode=require",
+        "abcd&efgh12",
+    ),
+    "query-then-secret": (
+        "postgresql" + "://qa" + "@db.example/app?pass" + "word=abcd&efgh12&token=tok12345",
+        "abcd&efgh12",
+    ),
+    "odbc-raw": (
+        "mssql+pyodbc:///?odbc_connect=DRIVER%3Dx%3BPW" + "D%3Dabcd&efgh12",
+        "abcd&efgh12",
+    ),
+}
+CREDENTIAL_KEYS = {
+    "credential": "credential",
+    "auth": "auth",
+    "odbc-credential": "Credential",
+}
+METHOD_KEYS = ["authSource", "authMechanism", "auth_plugin"]
 PW_SECRET = "pw-val" + "-4417"
 PW_URL = "postgresql" + "://qa" + "@db.example/app?pw=" + PW_SECRET
 AMPERSAND_URL = "postgresql" + "://qa" + "@db.example/app?pass" + "word=abcd&efgh12"

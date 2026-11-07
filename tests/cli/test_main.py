@@ -764,3 +764,48 @@ def test_a_password_inside_odbc_connect_that_the_agent_repeats_is_masked_everywh
     texts = [result.out, result.err, result.report_text()]
     for fragment in (samples.ODBC_PASSWORD, "pw-5531", "Od8c"):
         assert_value_hidden(fragment, *texts)
+
+
+@pytest.fixture
+def fake_sql_url(fake_sql, monkeypatch):
+    def _use(url):
+        fake_sql("unused")
+        monkeypatch.setenv("DB_URL", url)
+
+    return _use
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("name", samples.BRACED_ODBC_PASSWORDS)
+def test_a_braced_odbc_password_the_agent_repeats_is_masked_everywhere(
+    name, experiment, tmp_path, run_cli, fake_sql_url
+):
+    password, written = samples.BRACED_ODBC_PASSWORDS[name]
+    fake_sql_url(samples.braced_odbc_url(written))
+    experiment.database().trials(1).case("c1", turn("Hola", {"contains": "."}))
+    agent = FakeJsonAgent().answers("la clave es " + password + " ok.")
+    try:
+        result = run_cli("run", str(experiment.write(tmp_path)), agent=agent)
+    finally:
+        agent.close()
+    texts = [result.out, result.err, result.report_text()]
+    for fragment in (password, "efgh12", "abcd"):
+        assert_value_hidden(fragment, *texts)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("name", samples.AMPERSAND_ROWS)
+def test_a_password_with_an_unencoded_ampersand_that_the_agent_repeats_is_masked_everywhere(
+    name, experiment, tmp_path, run_cli, fake_sql_url
+):
+    url, password = samples.AMPERSAND_ROWS[name]
+    fake_sql_url(url)
+    experiment.database().trials(1).case("c1", turn("Hola", {"contains": "."}))
+    agent = FakeJsonAgent().answers("tu clave es " + password + " ok")
+    try:
+        result = run_cli("run", str(experiment.write(tmp_path)), agent=agent)
+    finally:
+        agent.close()
+    texts = [result.out, result.err, result.report_text()]
+    for fragment in (password, "efgh12", "abcd"):
+        assert_value_hidden(fragment, *texts)

@@ -1,9 +1,11 @@
+from urllib.parse import quote_plus
+
 import pytest
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError, ProgrammingError
 
 from octoqai.db import QueryResult, SqlDatabase, connection_secrets
 from support import samples
-from support.assertions import assert_config_error
+from support.assertions import assert_config_error, assert_linear_growth
 
 pytestmark = [pytest.mark.integration, pytest.mark.regression]
 
@@ -238,3 +240,62 @@ def test_connection_secrets_takes_the_short_cut_when_the_parser_rejects_the_url(
 def test_connection_secrets_takes_the_text_before_the_first_at_sign_alone_when_it_is_the_only_one():
     found = connection_secrets(samples.SHORT_CUT_URL)
     assert "ab" in found
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("name", samples.BRACED_ODBC_PASSWORDS)
+def test_connection_secrets_reads_a_braced_odbc_password_whole(name):
+    password, written = samples.BRACED_ODBC_PASSWORDS[name]
+    assert password in connection_secrets(samples.braced_odbc_url(written))
+
+
+@pytest.mark.security
+def test_connection_secrets_reads_a_braced_odbc_password_followed_by_more_pairs():
+    url = samples.braced_odbc_url("abcd;efgh12") + "&x=1"
+    assert "abcd;efgh12" in connection_secrets(url)
+    inner = "DRIVER=x;PW" + "D={abcd;efgh12};UID={qa;qa}"
+    assert "abcd;efgh12" in connection_secrets("mssql+pyodbc:///?odbc_connect=" + quote_plus(inner))
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "unit", ["}}", ";a={", ";a={}}", "{}}"], ids=["pairs", "opens", "mixed", "open"]
+)
+def test_connection_secrets_with_hostile_braces_is_linear(unit):
+    def make(n):
+        return "mssql+pyodbc:///?odbc_connect=" + quote_plus("PW" + "D={" + unit * n)
+
+    assert_linear_growth(connection_secrets, make, 2000, factor=8, bound=24)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("name", samples.AMPERSAND_ROWS)
+def test_connection_secrets_keeps_every_prefix_of_a_tail_ending_before_an_ampersand(name):
+    url, password = samples.AMPERSAND_ROWS[name]
+    assert {"abcd", password} <= set(connection_secrets(url))
+
+
+@pytest.mark.security
+def test_connection_secrets_bounds_the_candidates_of_a_url_with_many_ampersands():
+    url = "postgresql" + "://qa" + "@db.example/app?pass" + "word=" + "&".join(["ab"] * 20000)
+    found = connection_secrets(url)
+    assert sum(len(value) for value in found) < 40 * len(url)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("key", samples.CREDENTIAL_KEYS.values(), ids=samples.CREDENTIAL_KEYS)
+def test_connection_secrets_reads_the_credential_and_auth_keys(key):
+    value = "cv-" + "4417x"
+    query = quote_plus(f"DRIVER=x;{key}={value};")
+    assert value in connection_secrets(
+        "postgresql" + "://qa" + "@db.example/app?" + f"{key}={value}"
+    )
+    assert value in connection_secrets("mssql+pyodbc:///?odbc_connect=" + query)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("key", samples.METHOD_KEYS)
+def test_connection_secrets_ignores_keys_that_only_name_an_authentication_method(key):
+    query = quote_plus(f"DRIVER=x;{key}=admin;")
+    assert connection_secrets("postgresql" + "://qa" + "@db.example/app?" + f"{key}=admin") == []
+    assert "admin" not in connection_secrets("mssql+pyodbc:///?odbc_connect=" + query)

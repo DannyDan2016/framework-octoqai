@@ -31,6 +31,7 @@ from octoqai.experiment.model import (
     WaitPolicy,
 )
 from octoqai.experiment.template import render, render_text
+from octoqai.experiment.urlkeys import is_sensitive_key
 
 __all__ = [
     "DEFAULT_HOOK_TIMEOUT_S",
@@ -59,6 +60,7 @@ __all__ = [
     "Turn",
     "Variant",
     "WaitPolicy",
+    "is_sensitive_key",
     "load_experiment",
     "render",
     "render_text",
