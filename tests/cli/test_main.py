@@ -664,7 +664,7 @@ UNPARSEABLE_PASSWORDS = {**samples.PASSWORD_SAMPLES, **samples.HARD_SECRETS}
 @pytest.fixture
 def fake_sql(monkeypatch):
     main_module = importlib.import_module("octoqai.cli.main")
-    monkeypatch.setattr(main_module, "SqlDatabase", lambda url, secrets=(): FakeDatabase())
+    monkeypatch.setattr(main_module, "SqlDatabase", lambda url: FakeDatabase())
 
     def _use(password):
         monkeypatch.setenv("DB_URL", samples.db_url_with(password))
@@ -690,3 +690,24 @@ def test_a_database_password_the_agent_repeats_is_masked_everywhere(
     if password == samples.AT_PASSWORD:
         assert_not_in_outputs("zq7", *texts)
         assert_not_in_outputs("wx8Nc", *texts)
+
+
+@pytest.mark.security
+def test_a_stored_value_the_driver_repeats_in_an_error_never_reaches_any_output(
+    experiment, run_cli, fake_agent, sqlite_db, monkeypatch
+):
+    stored = ("STORED" + "-VALUE-99").encode().hex()
+    sqlite_db.run(
+        "INSERT INTO ajustes (tenant, cuenta, importe) VALUES "
+        f"('A', CAST(X'{stored}ff' AS TEXT), 1)"
+    )
+    monkeypatch.setenv("DB_URL", sqlite_db.url)
+    check = {"id": "x", "query": "SELECT cuenta FROM ajustes", "expect": {"value": "ok"}}
+    experiment.database().trials(1).case("c1", turn("Hola", db=[check]))
+    path = experiment.write(sqlite_db.path.parent)
+    result = run_cli("run", str(path), agent=fake_agent.answers("ok."))
+    texts = [result.out, result.err, result.report_text()]
+    for fragment in ("STORED", "VALUE", "-99"):
+        assert_not_in_outputs(fragment, *texts)
+    assert "database error: OperationalError" in result.report_text()
+    assert result.code != 0

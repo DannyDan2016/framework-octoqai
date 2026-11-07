@@ -83,7 +83,9 @@ def test_database_error_makes_the_check_not_evaluable(sqlite_db, sql_database, f
     [trial] = play(
         build(sqlite_db, turn("Hola", db=[bad])), fake_agent.answers("ok."), sql_database
     )
-    assert trial.outcome == "not_evaluable" and "no such table" in trial.turns[0].checks[-1].detail
+    assert trial.outcome == "not_evaluable" and trial.turns[0].checks[-1].detail.endswith(
+        "OperationalError"
+    )
 
 
 def test_checks_without_a_database_connection_are_not_evaluable(sqlite_db, fake_agent):

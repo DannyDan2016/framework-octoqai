@@ -1,7 +1,7 @@
 import pytest
-from sqlalchemy.exc import DataError, IntegrityError, ProgrammingError
+from sqlalchemy.exc import DataError, IntegrityError, OperationalError, ProgrammingError
 
-from octoqai.db import QueryResult, SqlDatabase, connection_secrets, scrub_error
+from octoqai.db import QueryResult, SqlDatabase, connection_secrets
 from support import samples
 from support.assertions import assert_config_error
 
@@ -43,32 +43,13 @@ def test_execute_returns_none_on_success(sqlite_db, sql_database):
 
 def test_query_error_is_reported_not_raised(sql_database):
     result = sql_database.query("SELECT * FROM nope", {})
-    assert result.error == "OperationalError: no such table: nope" and result.rows == ()
+    assert result.error == "OperationalError" and result.rows == ()
 
 
 @pytest.mark.security
 def test_error_never_contains_parameters(sql_database):
     result = sql_database.query("SELECT * FROM nope WHERE x = :x", {"x": "TEN-B-0042"})
     assert "TEN-B-0042" not in (result.error or "")
-
-
-@pytest.mark.security
-def test_error_masks_a_parameter_the_driver_repeats(sql_database):
-    result = sql_database.query('SELECT * FROM "TEN-B-0042" WHERE x = :x', {"x": "TEN-B-0042"})
-    assert result.error == "OperationalError: no such table: [redacted]"
-
-
-@pytest.mark.security
-def test_scrub_error_removes_connection_details_and_parameters():
-    message = (
-        f'connection to server at "DB.example" failed: password {samples.DB_PASSWORD} '
-        'for user "qa" on app, input "TEN-B-0042", id 7'
-    )
-    cleaned = scrub_error(message, samples.PG_URL_WITH_PASSWORD, {"x": "TEN-B-0042", "y": 7})
-    assert cleaned == (
-        'connection to server at "[redacted]" failed: password [redacted] '
-        'for user "[redacted]" on [redacted], input "[redacted]", id 7'
-    )
 
 
 @pytest.mark.security
@@ -102,25 +83,17 @@ def fail_with(database, monkeypatch, error):
     [
         (DataError("SELECT", {}, Exception(samples.PG_DATA_ERROR)), "DataError"),
         (IntegrityError("INSERT", {}, Exception(samples.MYSQL_DUPLICATE)), "IntegrityError"),
-        (
-            ProgrammingError("SELECT", {}, Exception(NOPE_TABLE)),
-            'ProgrammingError: relation "nope" does not exist',
-        ),
+        (ProgrammingError("SELECT", {}, Exception(NOPE_TABLE)), "ProgrammingError"),
+        (OperationalError("SELECT", {}, Exception(samples.PG_DATA_ERROR)), "OperationalError"),
     ],
-    ids=["data-error", "integrity-error", "other-keeps-first-line"],
+    ids=["data-error", "integrity-error", "other", "operational"],
 )
-def test_error_gives_only_the_class_when_the_driver_may_echo_a_stored_value(
+def test_error_gives_only_the_class_whatever_the_driver_says(
     error, expected, sql_database, monkeypatch
 ):
     fail_with(sql_database, monkeypatch, error)
     assert sql_database.query("SELECT 1", {}).error == expected
     assert sql_database.execute(["DELETE FROM ajustes"]) == type(error).__name__
-
-
-def test_error_is_cut_to_200_characters(sql_database):
-    result = sql_database.query(f'SELECT * FROM "{"t" * 300}"', {})
-    assert result.error is not None and len(result.error) == 200
-    assert result.error.startswith("OperationalError: no such table: ttt")
 
 
 @pytest.mark.security
@@ -130,53 +103,6 @@ def test_error_without_a_driver_exception_gives_only_the_class(sql_database):
     assert sql_database.execute(["DELETE FROM ajustes WHERE id = :ssSecretValue99"]) == (
         "StatementError"
     )
-
-
-@pytest.mark.security
-@pytest.mark.parametrize("secret", samples.HARD_SECRETS.values(), ids=samples.HARD_SECRETS)
-def test_secrets_are_scrubbed_before_the_message_is_cut(secret, sqlite_db):
-    database = SqlDatabase(sqlite_db.url, secrets=[secret])
-    try:
-        error = database.execute([f'SELECT * FROM "{secret}"'])
-    finally:
-        database.close()
-    assert error is not None and secret not in error
-
-
-@pytest.mark.security
-def test_scrub_error_masks_every_form_of_connection_values():
-    message = " | ".join(
-        [
-            samples.DB_SECRET_PASSWORD,
-            samples.DB_SECRET_PASSWORD_ENCODED,
-            samples.DB_SSL_SECRET,
-            samples.DB_KEY_SECRET,
-            "port 5432",
-            f"resolved {samples.IPV4} and {samples.IPV6} and [::1]",
-            "kept: runner-ok",
-        ]
-    )
-    cleaned = scrub_error(message, samples.DB_URL_WITH_ENCODED_SECRETS)
-    for hidden in (
-        samples.DB_SECRET_PASSWORD,
-        samples.DB_SECRET_PASSWORD_ENCODED,
-        samples.DB_SSL_SECRET,
-        samples.DB_KEY_SECRET,
-        "5432",
-        samples.IPV4,
-        "2001:db8",
-        "::1",
-    ):
-        assert hidden not in cleaned
-    assert "kept: runner-ok" in cleaned
-
-
-@pytest.mark.security
-def test_scrub_error_masks_the_given_secrets_longest_first():
-    cleaned = scrub_error(
-        "a tok-12345-long b tok-12345 c", "sqlite:///x.db", secrets=["tok-12345", "tok-12345-long"]
-    )
-    assert cleaned == "a [redacted] b [redacted] c"
 
 
 def test_query_without_a_result_set_is_an_error_and_never_commits(sqlite_db, sql_database):
@@ -247,14 +173,28 @@ def test_connection_secrets_has_no_empty_or_repeated_value():
 
 
 @pytest.mark.security
-def test_query_masks_the_form_of_a_url_value_that_the_url_wrote(tmp_path, monkeypatch):
-    url = (
-        "sqlite:///"
-        + (tmp_path / "a.db").as_posix()
-        + "?uri=true&apitoken="
-        + samples.DB_SECRET_PASSWORD_ENCODED
-    )
-    database = SqlDatabase(url)
-    driver = Exception("auth failed for " + samples.DB_SECRET_PASSWORD_ENCODED)
-    fail_with(database, monkeypatch, ProgrammingError("SELECT", {}, driver))
-    assert database.query("SELECT 1", {}).error == "ProgrammingError: auth failed for [redacted]"
+def test_query_error_with_driver_text_equals_the_class_name(sql_database, monkeypatch):
+    driver = Exception("Could not decode to UTF-8 column 'cuenta' with text '" + "STORED99'")
+    fail_with(sql_database, monkeypatch, OperationalError("SELECT", {}, driver))
+    assert sql_database.query("SELECT 1", {}) == QueryResult(error="OperationalError")
+
+
+@pytest.mark.security
+def test_query_with_a_lone_surrogate_in_a_parameter_is_an_error_result(sql_database):
+    result = sql_database.query("SELECT :p", {"p": "ab\ud800cd"})
+    assert result == QueryResult(error="UnicodeEncodeError")
+
+
+@pytest.mark.security
+def test_query_does_not_swallow_a_base_exception(sql_database, monkeypatch):
+    fail_with(sql_database, monkeypatch, KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        sql_database.query("SELECT 1", {})
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("secret", samples.HARD_SECRETS.values(), ids=samples.HARD_SECRETS)
+def test_a_secret_in_the_statement_never_reaches_the_error(secret, sql_database):
+    statement = f'SELECT * FROM "{secret}"'
+    errors = [sql_database.query(statement, {}).error, sql_database.execute([statement])]
+    assert all(e is not None and e.isidentifier() and e.endswith("Error") for e in errors)

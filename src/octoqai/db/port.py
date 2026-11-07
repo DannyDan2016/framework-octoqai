@@ -25,7 +25,11 @@ class DatabasePort(Protocol):
     """Connection to the database of the system under test."""
 
     def query(self, sql: str, params: Mapping[str, Any]) -> QueryResult:
-        """Run a read-only query and never commit; failures are reported in ``error``."""
+        """Run a read-only query and never commit.
+
+        A failure is reported in ``error`` as the exception class name only, never as driver
+        text, which can repeat stored values, parameters or connection details.
+        """
         ...
 
     def execute(self, statements: Sequence[str]) -> str | None:
