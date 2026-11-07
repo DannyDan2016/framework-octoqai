@@ -153,3 +153,17 @@ def test_sql_hook_reports_only_the_class_of_an_exception_from_the_port():
     stages = {"before_trial": [{"sql": ["DELETE FROM ajustes"]}]}
     [outcome] = executor(stages, db=RaisingDatabase()).run("before_trial")
     assert (outcome.ok, outcome.error) == (False, "RuntimeError")
+
+
+def test_http_hook_with_an_undecodable_body_is_a_failed_result(fake_agent):
+    fake_agent.encodes("gzip", content=b"this is not gzip")
+    stages = {"before_run": [{"http": {"url": "http://hooks.local/reset"}}]}
+    [outcome] = executor(stages, agent=fake_agent).run("before_run")
+    assert (outcome.ok, outcome.error) == (False, "cannot send: DecodingError")
+
+
+def test_http_hook_never_follows_a_redirect(fake_agent):
+    fake_agent.fails(302)
+    stages = {"before_run": [{"http": {"url": "http://hooks.local/reset"}}]}
+    [outcome] = executor(stages, agent=fake_agent).run("before_run")
+    assert (outcome.ok, outcome.error, len(fake_agent.requests)) == (False, "HTTP 302", 1)

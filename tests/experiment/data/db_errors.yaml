@@ -203,3 +203,9 @@
     database: {url: "${DB_URL}"}
     cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: [row_count, 1]}]}]}]
   fragments: ["db check expect must be a mapping with exactly one key, got list"]
+
+- id: row-count-true-is-not-a-count
+  overrides:
+    database: {url: "${DB_URL}"}
+    cases: [{id: c1, turns: [{user: Hola, db: [{id: x, query: SELECT 1, expect: {row_count: true}}]}]}]
+  fragments: [row_count expects a non-negative integer]

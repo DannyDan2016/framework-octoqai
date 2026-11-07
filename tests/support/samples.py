@@ -215,3 +215,10 @@ def escaped_reply(password: str) -> str:
 def db_url_with(password: str) -> str:
     """Build a database URL whose password is written as is, never percent-encoded."""
     return "postgresql" + "://qa:" + password + "@db.example/app"
+
+
+HOOK_SQL = {
+    "hook-quoted": "DELETE FROM ajustes WHERE cuenta = '${HARD_SECRET}'",
+    "hook-unquoted": "DELETE FROM ajustes WHERE cuenta = ${HARD_SECRET}",
+    "hook-identifier": 'DELETE FROM "${HARD_SECRET}"',
+}

@@ -592,11 +592,6 @@ def test_database_example_runs_against_a_fake_agent(run_cli, monkeypatch, sqlite
     assert [trial["outcome"] for trial in result.report()["trials"]] == ["pass", "pass"]
 
 
-@pytest.fixture
-def tenant_env(monkeypatch):
-    monkeypatch.setenv("TENANT", "B")
-
-
 @pytest.mark.security
 @pytest.mark.usefixtures("tenant_env")
 @pytest.mark.parametrize(
@@ -616,36 +611,8 @@ def test_placeholder_in_a_forbidden_query_is_a_config_error_not_a_go(
     assert fake_agent.requests == []
 
 
-_HOOK_SQL = {
-    "hook-quoted": "DELETE FROM ajustes WHERE cuenta = '${HARD_SECRET}'",
-    "hook-unquoted": "DELETE FROM ajustes WHERE cuenta = ${HARD_SECRET}",
-    "hook-identifier": 'DELETE FROM "${HARD_SECRET}"',
-}
-
-
-@pytest.fixture
-def hard_secret_experiment(experiment, tmp_path, sqlite_db, monkeypatch):
-    monkeypatch.setenv("DB_URL", sqlite_db.url)
-
-    def _write(secret, where):
-        monkeypatch.setenv("HARD_SECRET", secret)
-        experiment.database().trials(1)
-        check = {
-            "id": "x",
-            "query": "SELECT count(*) FROM nope WHERE cuenta = :c",
-            "params": {"c": "${HARD_SECRET}"},
-            "expect": {"value": 1},
-        }
-        experiment.case("c1", turn("Hola", db=[check]))
-        if where in _HOOK_SQL:
-            experiment.hooks(before_trial=[{"sql": [_HOOK_SQL[where]]}])
-        return str(experiment.write(tmp_path))
-
-    return _write
-
-
 @pytest.mark.security
-@pytest.mark.parametrize("where", ["check", *_HOOK_SQL])
+@pytest.mark.parametrize("where", ["check", *samples.HOOK_SQL])
 @pytest.mark.parametrize("secret", samples.HARD_SECRETS.values(), ids=samples.HARD_SECRETS)
 def test_hard_secrets_never_reach_outputs_through_database_errors(
     secret, where, hard_secret_experiment, run_cli, fake_agent
@@ -889,3 +856,15 @@ def test_a_password_made_of_a_status_word_does_not_mask_the_closed_fields_of_the
     assert report["variants"][0]["name"] == "[redacted]"
     for fragment in (password, "word1"):
         assert_value_hidden(fragment, result.out, result.err, result.report_text())
+
+
+def test_an_http_hook_goes_through_the_hook_transport(experiment, tmp_path, run_cli, fake_agent):
+    hook_agent = FakeJsonAgent()
+    hooks = {"before_run": [{"http": {"url": "http://hooks.local/reset", "body": {"t": "a"}}}]}
+    path = experiment.hooks(**hooks).case("c1", turn("Hola", {"contains": "."})).write(tmp_path)
+    try:
+        run_cli("run", str(path), agent=fake_agent.answers("ok."), hook_agent=hook_agent)
+        assert hook_agent.requests == [{"t": "a"}]
+        assert fake_agent.requests != hook_agent.requests
+    finally:
+        hook_agent.close()

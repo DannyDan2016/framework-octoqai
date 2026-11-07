@@ -237,6 +237,21 @@ def db_case():
     )
 
 
+@pytest.mark.parametrize(
+    "check",
+    [
+        {"query": "SELECT 1", "expect": {"unchanged": True}},
+        {"query": "WITH t AS (SELECT 1) SELECT * FROM t", "expect": {"row_count": 1}},
+        {"query": "  with t AS (SELECT 1) SELECT * FROM t", "expect": {"value": None}},
+    ],
+    ids=["unchanged-true", "with-query", "lowercase-with-null"],
+)
+def test_valid_database_checks_load(check, experiment, tmp_path):
+    experiment.database().case("c1", turn("Hola", db=[{"id": "x", **check}]))
+    exp = load_experiment(experiment.write(tmp_path), process_env={"DB_URL": "sqlite:///a.db"})
+    assert exp.cases[0].turns[0].db[0].id == "x"
+
+
 @pytest.mark.smoke
 def test_database_url_comes_from_env_and_is_redacted(experiment, tmp_path):
     path = experiment.database().case("c1", db_case()).write(tmp_path)

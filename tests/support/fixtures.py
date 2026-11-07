@@ -18,8 +18,9 @@ import pytest
 from octoqai.cli import main
 from octoqai.db import SqlDatabase
 from octoqai.hooks import HookKwargs
+from support import samples
 from support.agents import FakeAgent, FakeClock, FakeJsonAgent
-from support.builders import ExperimentBuilder
+from support.builders import ExperimentBuilder, turn
 from support.databases import BANK_SCHEMA, SqliteFile
 from support.hooks import FakeCommands
 from support.paths import TOY_SSE_AGENT
@@ -184,3 +185,36 @@ def toy_db_agent(tmp_path: Path) -> Iterator[tuple[str, Path]]:
     db_path = tmp_path / "app.db"
     for url in _launch("--db", str(db_path)):
         yield url, db_path
+
+
+@pytest.fixture
+def tenant_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set ``TENANT`` to ``B`` in the environment."""
+    monkeypatch.setenv("TENANT", "B")
+
+
+@pytest.fixture
+def hard_secret_experiment(
+    experiment: ExperimentBuilder,
+    tmp_path: Path,
+    sqlite_db: SqliteFile,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[str, str], str]:
+    """Write an experiment whose check or sql hook uses ``${HARD_SECRET}`` set to a secret."""
+    monkeypatch.setenv("DB_URL", sqlite_db.url)
+
+    def _write(secret: str, where: str) -> str:
+        monkeypatch.setenv("HARD_SECRET", secret)
+        experiment.database().trials(1)
+        check = {
+            "id": "x",
+            "query": "SELECT count(*) FROM nope WHERE cuenta = :c",
+            "params": {"c": "${HARD_SECRET}"},
+            "expect": {"value": 1},
+        }
+        experiment.case("c1", turn("Hola", db=[check]))
+        if where in samples.HOOK_SQL:
+            experiment.hooks(before_trial=[{"sql": [samples.HOOK_SQL[where]]}])
+        return str(experiment.write(tmp_path))
+
+    return _write

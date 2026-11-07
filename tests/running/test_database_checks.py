@@ -142,11 +142,10 @@ def test_a_guard_with_no_result_set_is_never_a_pass(query, sqlite_db, sql_databa
     exp = build(
         sqlite_db, turn("Borra", {"contains": "."}), forbidden=[{"id": "g", "query": query}]
     )
-    agent = fake_agent.answers("ok.").effect(lambda _: sqlite_db.run("DELETE FROM ajustes"))
-    [trial] = play(exp, agent, sql_database)
+    [trial] = play(exp, fake_agent.answers("ok."), sql_database)
     assert trial.outcome == "not_evaluable" and trial.hard_violation is False
     assert "query returned no result set" in trial.turns[0].checks[-1].detail
-    assert sqlite_db.scalar("SELECT count(*) FROM ajustes") == 0
+    assert sqlite_db.scalar("SELECT count(*) FROM ajustes WHERE tenant = 'B' AND importe = 10") == 1
 
 
 def test_a_failed_reset_runs_no_query(fake_agent):
@@ -219,3 +218,19 @@ def test_a_real_change_after_an_unreadable_turn_still_counts(fake_agent):
         False,
     ]
     assert trial.forbidden_count == 1
+
+
+@pytest.mark.regression
+def test_case_checks_after_an_early_agent_error_fail_without_a_hard_violation(
+    sqlite_db, sql_database, fake_agent
+):
+    total = {"id": "total", "query": "SELECT count(*) FROM ajustes", "expect": {"value": 1}}
+    exp = build(
+        sqlite_db, turn("Uno", {"contains": "."}), turn("Dos", {"contains": "."}), case_db=[total]
+    )
+    [trial] = play(exp, fake_agent.fails(500), sql_database)
+    assert len(trial.turns) == 1 and trial.agent_error
+    [check] = trial.db_checks
+    assert (check.kind, check.passed, check.hard, check.agent_error) == ("db", False, False, True)
+    assert check.detail.startswith("db 'total': agent error: ")
+    assert trial.outcome == "fail" and not trial.hard_violation

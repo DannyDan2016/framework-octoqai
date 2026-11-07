@@ -87,3 +87,39 @@
   after: {rows: [[1]]}
   passed: null
   detail: "db 'x': database error: OperationalError"
+
+- id: value-null-matches-null
+  check: {expect: {value: null}}
+  after: {rows: [[null]]}
+  passed: true
+  detail: "db 'x': value matches"
+
+- id: value-null-differs-from-a-number
+  check: {expect: {value: null}}
+  after: {rows: [[0]]}
+  passed: false
+  detail: "db 'x': value differs from expected"
+
+- id: value-expected-but-null-stored
+  check: {expect: {value: 1}}
+  after: {rows: [[null]]}
+  passed: false
+  detail: "db 'x': value differs from expected"
+
+- id: value-date-matches-date
+  check: {expect: {value: 2026-10-31}}
+  after: {rows: [[2026-10-31]]}
+  passed: true
+  detail: "db 'x': value matches"
+
+- id: value-date-differs-from-another-date
+  check: {expect: {value: 2026-10-31}}
+  after: {rows: [[2026-11-01]]}
+  passed: false
+  detail: "db 'x': value differs from expected"
+
+- id: value-date-matches-its-iso-text
+  check: {expect: {value: 2026-10-31}}
+  after: {rows: [["2026-10-31"]]}
+  passed: true
+  detail: "db 'x': value matches"
