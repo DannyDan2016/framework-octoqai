@@ -12,7 +12,7 @@ import httpx
 
 from octoqai import __version__
 from octoqai.agents import AdapterKwargs, adapter_for
-from octoqai.db import SqlDatabase
+from octoqai.db import SqlDatabase, connection_secrets
 from octoqai.errors import ConfigError
 from octoqai.experiment import Experiment, load_experiment
 from octoqai.hooks import HookEnvironment, HookExecutor, HookKwargs
@@ -100,8 +100,16 @@ def _exit_code(verdict: Verdict, cleanup_failed: bool) -> int:
     return 1 if verdict.status == "no-go" else EXIT_ERROR
 
 
+def _with_url_secrets(exp: Experiment) -> Experiment:
+    if exp.database is None:
+        return exp
+    known = list(exp.redacted_values)
+    known += [v for v in connection_secrets(exp.database.url) if v not in known]
+    return exp.model_copy(update={"redacted_values": known})
+
+
 def _run(args: argparse.Namespace, seams: _Seams) -> int:
-    exp = load_experiment(args.experiment, env=args.env)
+    exp = _with_url_secrets(load_experiment(args.experiment, env=args.env))
     redactor = Redactor.for_report(exp.security, exp.redacted_values)
     try:
         return _execute(args, exp, redactor, seams)

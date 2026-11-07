@@ -12,6 +12,7 @@ from support.assertions import (
     assert_value_hidden,
 )
 from support.builders import turn, write_data_set, write_env_file
+from support.databases import FakeDatabase
 from support.hooks import FakeCommands
 from support.paths import EXAMPLES
 from support.samples import ESCAPED_KEY_ANSWERS, ESCAPED_LEAKS, ESCAPED_WRAPPERS, HOSTILE_JSON
@@ -655,3 +656,37 @@ def test_hard_secrets_never_reach_outputs_through_database_errors(
     pieces = re.findall(r"[A-Za-z0-9]{4,}", secret)
     for fragment in (secret, secret[:20], secret[-20:], *pieces):
         assert_not_in_outputs(fragment, *texts)
+
+
+UNPARSEABLE_PASSWORDS = {**samples.PASSWORD_SAMPLES, **samples.HARD_SECRETS}
+
+
+@pytest.fixture
+def fake_sql(monkeypatch):
+    main_module = importlib.import_module("octoqai.cli.main")
+    monkeypatch.setattr(main_module, "SqlDatabase", lambda url, secrets=(): FakeDatabase())
+
+    def _use(password):
+        monkeypatch.setenv("DB_URL", samples.db_url_with(password))
+
+    return _use
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("password", UNPARSEABLE_PASSWORDS.values(), ids=UNPARSEABLE_PASSWORDS)
+def test_a_database_password_the_agent_repeats_is_masked_everywhere(
+    password, experiment, tmp_path, run_cli, fake_sql
+):
+    fake_sql(password)
+    experiment.database().trials(1).case("c1", turn("Hola", {"contains": "."}))
+    agent = FakeJsonAgent().answers("your password is " + password + " ok.")
+    try:
+        result = run_cli("run", str(experiment.write(tmp_path)), agent=agent)
+    finally:
+        agent.close()
+    texts = [result.out, result.err, result.report_text()]
+    for fragment in (password, *re.findall(r"[A-Za-z0-9]{4,}", password)):
+        assert_not_in_outputs(fragment, *texts)
+    if password == samples.AT_PASSWORD:
+        assert_not_in_outputs("zq7", *texts)
+        assert_not_in_outputs("wx8Nc", *texts)

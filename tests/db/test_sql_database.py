@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy.exc import DataError, IntegrityError, ProgrammingError
 
-from octoqai.db import QueryResult, SqlDatabase, scrub_error
+from octoqai.db import QueryResult, SqlDatabase, connection_secrets, scrub_error
 from support import samples
 from support.assertions import assert_config_error
 
@@ -199,3 +199,62 @@ def test_query_without_a_result_set_is_an_error_and_never_commits(sqlite_db, sql
 )
 def test_execute_error_is_exactly_the_exception_class(statement, expected, sql_database):
     assert sql_database.execute([statement]) == expected
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("name", samples.PASSWORD_SAMPLES)
+def test_connection_secrets_finds_a_password_urlsplit_cannot_read(name):
+    password = samples.PASSWORD_SAMPLES[name]
+    found = connection_secrets(samples.db_url_with(password))
+    assert password in found
+
+
+@pytest.mark.security
+def test_connection_secrets_covers_the_text_before_the_first_and_the_last_at_sign():
+    found = connection_secrets(samples.db_url_with(samples.AT_PASSWORD))
+    assert {"zq7", samples.AT_PASSWORD} <= set(found)
+
+
+@pytest.mark.security
+def test_connection_secrets_gives_every_form_of_a_percent_encoded_password():
+    found = connection_secrets(samples.DB_URL_WITH_ENCODED_SECRETS)
+    assert {samples.DB_SECRET_PASSWORD, samples.DB_SECRET_PASSWORD_ENCODED} <= set(found)
+
+
+@pytest.mark.security
+def test_connection_secrets_takes_values_of_sensitive_query_keys_only():
+    found = connection_secrets(samples.DB_URL_WITH_ENCODED_SECRETS)
+    assert {samples.DB_SSL_SECRET, samples.DB_KEY_SECRET} <= set(found)
+    assert "octoqai" not in found
+
+
+@pytest.mark.security
+def test_connection_secrets_of_a_url_the_parser_rejects_still_returns_raw_candidates():
+    found = connection_secrets(samples.DB_URL_BAD_PORT)
+    assert "p@x:" + samples.DB_PASSWORD in found
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("url", ["postgresql://qa" + "@db.example/app", "sqlite:///a.db", "", "::"])
+def test_connection_secrets_without_a_password_is_empty_and_never_raises(url):
+    assert connection_secrets(url) == []
+
+
+@pytest.mark.security
+def test_connection_secrets_has_no_empty_or_repeated_value():
+    found = connection_secrets(samples.DB_URL_WITH_ENCODED_SECRETS)
+    assert "" not in found and len(found) == len(set(found))
+
+
+@pytest.mark.security
+def test_query_masks_the_form_of_a_url_value_that_the_url_wrote(tmp_path, monkeypatch):
+    url = (
+        "sqlite:///"
+        + (tmp_path / "a.db").as_posix()
+        + "?uri=true&apitoken="
+        + samples.DB_SECRET_PASSWORD_ENCODED
+    )
+    database = SqlDatabase(url)
+    driver = Exception("auth failed for " + samples.DB_SECRET_PASSWORD_ENCODED)
+    fail_with(database, monkeypatch, ProgrammingError("SELECT", {}, driver))
+    assert database.query("SELECT 1", {}).error == "ProgrammingError: auth failed for [redacted]"

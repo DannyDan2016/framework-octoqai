@@ -19,6 +19,7 @@ from octoqai.errors import ConfigError
 _MAX_ERROR_CHARS = 200
 _MIN_PARAM_CHARS = 4
 _NO_PARAMS: Mapping[str, Any] = MappingProxyType({})
+_SENSITIVE_KEY = re.compile(r"pass|pwd|secret|token|key", re.IGNORECASE)
 _VALUE_ERRORS = (DataError, IntegrityError)
 _NO_RESULT_SET = "query returned no result set"
 REDACTED = "[redacted]"
@@ -68,7 +69,7 @@ def scrub_error(
     """
     found = _url_secrets(make_url(url)) | {s for s in secrets if s}
     if isinstance(url, str):
-        found |= _raw_secrets(url)
+        found |= _raw_secrets(url) | set(connection_secrets(url))
     found |= {str(v) for v in params.values() if len(str(v)) >= _MIN_PARAM_CHARS}
     values = sorted(found, key=len, reverse=True)
     if values:
@@ -76,6 +77,43 @@ def scrub_error(
             REDACTED, message
         )
     return _ADDRESS.sub(REDACTED, message)
+
+
+def _parsed_secrets(url: str) -> list[str]:
+    try:
+        parsed = make_url(url)
+    except Exception:
+        return []
+    found = [parsed.password]
+    for key, item in parsed.query.items():
+        if _SENSITIVE_KEY.search(key):
+            found.extend((item,) if isinstance(item, str) else item)
+    return [value for value in found if value]
+
+
+def _cut_passwords(url: str) -> list[str]:
+    rest = url.partition("://")[2]
+    cuts = (rest.find("@"), rest.rfind("@"))
+    return [rest[:cut].partition(":")[2] for cut in cuts if cut >= 0]
+
+
+def connection_secrets(url: str) -> list[str]:
+    """List the values of a database URL that must never be shown.
+
+    The password is read as SQLAlchemy reads it and also cut from the raw text, up to the
+    first and up to the last ``@``, so a password with an unencoded ``/``, ``#``, ``?`` or
+    ``@`` is still found. Values of query keys that look like credentials are included.
+
+    Args:
+        url: Database URL; it is never echoed and a malformed one never raises.
+
+    Returns:
+        Each value in its plain, unquoted, percent-encoded and plus-encoded form, without
+        empty strings or duplicates.
+    """
+    found = [*_parsed_secrets(url), *_cut_passwords(url)]
+    forms = [form for value in found if value for form in _forms(value)]
+    return [form for form in dict.fromkeys(forms) if form]
 
 
 def _describe(exc: SQLAlchemyError) -> str:
@@ -115,12 +153,13 @@ class SqlDatabase:
             raise ConfigError(
                 "database.url is not a valid SQLAlchemy URL or its driver is not installed"
             ) from None
+        self._url = url
         self._secrets = tuple(secrets)
         if self._engine.dialect.name == "sqlite":
             _explicit_transactions(self._engine)
 
     def _error(self, exc: SQLAlchemyError, params: Mapping[str, Any] = _NO_PARAMS) -> str:
-        cleaned = scrub_error(_describe(exc), self._engine.url, params, self._secrets)
+        cleaned = scrub_error(_describe(exc), self._url, params, self._secrets)
         return cleaned[:_MAX_ERROR_CHARS]
 
     def query(self, sql: str, params: Mapping[str, Any]) -> QueryResult:

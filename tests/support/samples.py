@@ -102,3 +102,16 @@ PG_DATA_ERROR = 'invalid input syntax for type integer: "juan ' + 'perez cliente
 MYSQL_DUPLICATE = "Duplicate entry 'juan " + "perez' for key 'ajustes.cuenta'"
 IPV4 = "10.1" + ".2.3"
 IPV6 = "[2001:db8" + "::1]"
+SLASH_PASSWORD = "kLm/:x9" + "Zk#Qp"
+QUESTION_PASSWORD = "mn5?" + "rt6Vb"
+AT_PASSWORD = "zq7@" + "wx8Nc"
+PASSWORD_SAMPLES = {
+    "slash-colon-hash": SLASH_PASSWORD,
+    "question": QUESTION_PASSWORD,
+    "unencoded-at": AT_PASSWORD,
+}
+
+
+def db_url_with(password: str) -> str:
+    """Build a database URL whose password is written as is, never percent-encoded."""
+    return "postgresql" + "://qa:" + password + "@db.example/app"
