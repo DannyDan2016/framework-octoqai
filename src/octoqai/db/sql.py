@@ -159,9 +159,12 @@ def connection_secrets(url: str) -> list[str]:
 
     The password is read as SQLAlchemy reads it and also cut from the raw text, up to the
     first and up to the last ``@``, so a password with an unencoded ``/``, ``#``, ``?`` or
-    ``@`` is still found. Values of query keys that look like credentials are included, and so
-    are the whole ``odbc_connect`` value and the credential entries inside it. After an
-    unencoded ``&`` in a credential value, the rest of the query is included too.
+    ``@`` is still found. Values of query keys that look like credentials are included, but not
+    those of keys that only name an authentication method, such as ``authSource``. So are the
+    whole ``odbc_connect`` value and the credential entries inside it, including a value in
+    braces, which may hold ``;`` and an escaped ``}}``. After an unencoded ``&`` in a credential
+    value, the rest of the query and each prefix of it that ends before an ``&`` are included
+    too, up to a bound that keeps the cost linear.
 
     Args:
         url: Database URL; it is never echoed and a malformed one never raises.
