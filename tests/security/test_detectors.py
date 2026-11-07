@@ -1,14 +1,13 @@
 import importlib
 import random
 import re
-import time
 
 import pytest
 
 from octoqai.experiment import SecurityConfig
 from octoqai.security import Detector, Finding, mask
 from support import samples
-from support.assertions import assert_linear_growth, assert_linear_steps
+from support.assertions import assert_linear_growth, assert_linear_steps, assert_runs_within
 from support.paths import cases
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.security]
@@ -139,9 +138,7 @@ def test_repr_never_shows_sensitive_values():
 
 def test_long_alphanumeric_text_is_scanned_in_linear_time():
     text = ("a1b2c3d4e5" * 20) * 1000
-    started = time.perf_counter()
-    Detector(SecurityConfig()).find(text)
-    assert time.perf_counter() - started < 2
+    assert_runs_within(Detector(SecurityConfig()).find, text, 2)
 
 
 def test_dashed_card_followed_by_a_group_is_found():

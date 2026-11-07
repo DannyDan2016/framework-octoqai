@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import json
 import re
 import sys
@@ -47,6 +48,41 @@ def assert_not_in_outputs(value: str, *texts: str) -> None:
         assert value not in text, f"{value!r} leaked into an output"
 
 
+_ATTEMPTS = 3
+
+
+def _timed(run: Callable[[str], object], text: str) -> float:
+    started = time.perf_counter()
+    run(text)
+    return time.perf_counter() - started
+
+
+def _paused_collector[T](measure: Callable[[], T]) -> T:
+    gc.collect()
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        return measure()
+    finally:
+        if was_enabled:
+            gc.enable()
+
+
+def _best_without_collector(run: Callable[[str], object], text: str) -> float:
+    return _paused_collector(lambda: min(_timed(run, text) for _ in range(3)))
+
+
+def _growth(run: Callable[[str], object], small: str, large: str) -> float:
+    def measure() -> float:
+        fast, slow = [], []
+        for _ in range(3):
+            fast.append(_timed(run, small))
+            slow.append(_timed(run, large))
+        return min(slow) / max(min(fast), 1e-6)
+
+    return _paused_collector(measure)
+
+
 def assert_linear_growth(
     run: Callable[[str], object],
     make: Callable[[int], str],
@@ -56,21 +92,34 @@ def assert_linear_growth(
 ) -> None:
     """Check that ``run`` on an input ``factor`` times larger costs less than ``bound`` times more.
 
-    Each size keeps its best of three timings, so a pause of the machine is unlikely to fail
-    the check, although a long one still can, while a quadratic cost grows ``factor ** 2`` times.
+    The garbage collector is collected and paused while timing, the two sizes are timed in turn
+    and each keeps its best of three timings. The check is tried up to three times and fails
+    only when every attempt exceeds ``bound``, so a pause of the machine is unlikely to fail it,
+    while a quadratic cost grows ``factor ** 2`` times in every attempt.
     """
     small, large = make(size), make(size * factor)
+    ratios = []
+    for _ in range(_ATTEMPTS):
+        ratio = _growth(run, small, large)
+        if ratio < bound:
+            return
+        ratios.append(ratio)
+    shown = ", ".join(f"{ratio:.1f}x" for ratio in ratios)
+    raise AssertionError(f"cost grew {shown} in {_ATTEMPTS} attempts for a {factor}x larger input")
 
-    def best(text: str) -> float:
-        timings = []
-        for _ in range(3):
-            started = time.perf_counter()
-            run(text)
-            timings.append(time.perf_counter() - started)
-        return min(timings)
 
-    ratio = best(large) / max(best(small), 1e-6)
-    assert ratio < bound, f"cost grew {ratio:.1f}x for a {factor}x larger input"
+def assert_runs_within(run: Callable[[str], object], text: str, seconds: float) -> None:
+    """Check that ``run(text)`` finishes in less than ``seconds`` in at least one of 3 attempts.
+
+    The garbage collector is collected and paused while timing.
+    """
+    timings = []
+    for _ in range(_ATTEMPTS):
+        timings.append(_best_without_collector(run, text))
+        if timings[-1] < seconds:
+            return
+    shown = ", ".join(f"{timing:.2f}s" for timing in timings)
+    raise AssertionError(f"took {shown} in {_ATTEMPTS} attempts, the limit is {seconds}s")
 
 
 _ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\(.)", re.DOTALL)
