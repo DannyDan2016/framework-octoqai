@@ -26,8 +26,10 @@ variable) or in hooks, and are never written to reports.
   the `.env` files of the experiment, including any secret in them. It never runs through a
   shell, and its whole process tree is killed when it times out.
 - **Command paths.** A relative path with a folder runs from the experiment's folder. A bare
-  program name is found by the operating system, which on Windows can look in the folder
-  `octoqai` runs from first: use a full path when you run from a folder others can write to.
+  program name is looked up by `octoqai` itself, only in the absolute folders of the hook's
+  `PATH`, never in the current folder or a relative entry; on Windows only `.exe` programs are
+  found.
+  Keep writable folders out of that `PATH`, or write the full path.
 - **SQL hooks.** `${VAR}` is rejected in `sql` hooks, because its value would be pasted into the
   statement unescaped. Database checks bind values through `params`.
 - **Database checks** roll every query back, but only a read-only database user guarantees that

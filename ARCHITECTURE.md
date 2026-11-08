@@ -236,9 +236,11 @@ pytest -m security -q         secrets, hygiene and headers
   it; the CLI passes the process environment plus the `.env` files, so a command sees both.
 - A `command` program with a folder in it (`scripts/reset`, `./reset`, `..\bin\reset.exe`)
   runs from the experiment's folder on every platform; one relative to another Windows drive
-  (`D:reset.exe`) never starts. A bare name (`python`) is found by the operating system, and on
-  Windows that search can include the folder `octoqai` runs from, so write the full path when
-  you run from a folder others can write to.
+  (`D:reset.exe`) never starts. A bare name (`python`) is resolved by `octoqai`, not the operating
+  system: the first absolute folder of `PATH` (from the hook environment, or the process one when
+  that is empty; any key casing on Windows) that holds it as a file wins, executable on POSIX and
+  with `.exe` appended on Windows, where `.bat` and `.cmd` names are rejected. Empty, `.` and
+  relative entries are skipped, so the folder `octoqai` runs from is never searched.
 - When a `command` hook times out or the run is interrupted, its whole process tree is killed
   (a new session and `killpg` on POSIX, `taskkill /T` on Windows), so helper processes a reset
   script started do not outlive it. A descendant that detaches into its own session escapes.
