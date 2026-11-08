@@ -1,3 +1,5 @@
+import sqlite3
+from contextlib import closing
 from datetime import date
 from decimal import Decimal
 
@@ -323,6 +325,7 @@ def test_delta_needs_a_real_number_not_a_bool_or_text(amount):
 
 YAML_NUMBER_ROWS = [
     ("99999999999999.99", Decimal("99999999999999.99"), True),
+    ("99999999999999.99", Decimal("99999999999999.98"), False),
     ("1234567890123456.13", Decimal("1234567890123456.2"), False),
     ("1234567890123456.13", Decimal("1234567890123456.13"), True),
 ]
@@ -330,7 +333,9 @@ YAML_NUMBER_ROWS = [
 
 @pytest.mark.security
 @pytest.mark.parametrize("kind", ["value", "rows", "delta"])
-@pytest.mark.parametrize("row", YAML_NUMBER_ROWS, ids=["14-digits", "wide-differs", "wide-equal"])
+@pytest.mark.parametrize(
+    "row", YAML_NUMBER_ROWS, ids=["14-digits", "14-digits-differs", "wide-differs", "wide-equal"]
+)
 def test_a_yaml_float_wider_than_a_double_keeps_the_digits_the_user_wrote(
     kind, row, experiment, tmp_path, monkeypatch
 ):
@@ -342,6 +347,37 @@ def test_a_yaml_float_wider_than_a_double_keeps_the_digits_the_user_wrote(
     loaded = load_experiment(write_with_numbers(experiment, tmp_path, NUMBER=text))
     outcome = evaluate_db(loaded.cases[0].turns[0].db[0], result([0]), result([stored]))
     assert outcome.passed is passed
+
+
+FLOAT_COLUMN_NUMBERS = [
+    "99999999999999.99",
+    "3.14159265358979323846",
+    "0.10000000000000001",
+]
+
+
+def stored_in_a_real_column(text):
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("CREATE TABLE t (x REAL)")
+        db.execute("INSERT INTO t VALUES (" + text + ")")
+        return db.execute("SELECT x FROM t").fetchone()[0]
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("kind", ["value", "rows"])
+@pytest.mark.parametrize("text", FLOAT_COLUMN_NUMBERS)
+def test_a_yaml_float_with_many_digits_matches_the_double_a_real_column_stores(
+    kind, text, experiment, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("DB_URL", "sqlite:///unused.db")
+    value = [["NUMBER"]] if kind == "rows" else "NUMBER"
+    db = {"id": "x", "query": "SELECT 1", "expect": {kind: value}}
+    experiment.database().case("c1", turn("Hola", db=[db]))
+    loaded = load_experiment(write_with_numbers(experiment, tmp_path, NUMBER=text))
+    stored = stored_in_a_real_column(text)
+    assert isinstance(stored, float)
+    outcome = evaluate_db(loaded.cases[0].turns[0].db[0], result([0]), result([stored]))
+    assert outcome.passed is True
 
 
 def test_a_failed_delta_says_that_it_is_not_equal_without_more_digits():

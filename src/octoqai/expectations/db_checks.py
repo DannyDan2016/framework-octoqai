@@ -87,6 +87,13 @@ def _same(stored: Any, expected: Any) -> bool:
         return stored is expected or (_one_or_zero(_plain(stored)) and bool(stored) is expected)
     if isinstance(stored, bool):
         return False
+    if (
+        isinstance(stored, float)
+        and isinstance(expected, float)
+        and math.isfinite(stored)
+        and math.isfinite(expected)
+    ):
+        return stored == float(expected)
     return bool(_plain(stored) == _plain(expected))
 
 
