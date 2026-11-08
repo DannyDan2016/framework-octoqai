@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import subprocess
@@ -22,7 +23,7 @@ from support import samples
 from support.agents import FakeAgent, FakeClock, FakeJsonAgent
 from support.builders import ExperimentBuilder, turn
 from support.databases import BANK_SCHEMA, SqliteFile
-from support.hooks import FakeCommands
+from support.hooks import FakeCommands, fake_program
 from support.paths import TOY_SSE_AGENT
 
 
@@ -185,6 +186,15 @@ def toy_db_agent(tmp_path: Path) -> Iterator[tuple[str, Path]]:
     db_path = tmp_path / "app.db"
     for url in _launch("--db", str(db_path)):
         yield url, db_path
+
+
+@pytest.fixture
+def python_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Put a fake ``python`` program first in ``PATH`` so a bare ``python`` hook resolves."""
+    folder = tmp_path / "path-bin"
+    program = fake_program(folder, "python")
+    monkeypatch.setenv("PATH", os.pathsep.join([str(folder), os.environ.get("PATH", "")]))
+    return program
 
 
 @pytest.fixture

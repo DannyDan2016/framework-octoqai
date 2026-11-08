@@ -2,29 +2,19 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, TypedDict, Unpack, get_args
 
 import httpx
 
 from octoqai.experiment import Hook, HooksConfig, HookStage
 from octoqai.hooks._process import run_tree
+from octoqai.hooks._programs import ProgramError, resolve_program
 from octoqai.hooks.port import HookEnvironment, HookResult
 
 RunCommand = Callable[..., subprocess.CompletedProcess[Any]]
-
-
-def _program_path(program: str, base_dir: Path | None) -> str | None:
-    if base_dir is None or Path(program).is_absolute():
-        return program
-    if not os.path.split(program)[0] and not os.path.splitdrive(program)[0]:
-        return program
-    anchored = Path(base_dir).absolute() / program
-    return str(anchored) if anchored.is_absolute() else None
 
 
 class HookKwargs(TypedDict, total=False):
@@ -84,12 +74,12 @@ class HookExecutor:
 
     def _command(self, hook: Hook) -> str | None:
         argv = list(hook.command or [])
-        program = _program_path(argv[0], self._environment.base_dir)
-        if program is None:
-            return "cannot start the command: its path is relative to another drive"
-        argv[0] = program
-        timeout = hook.effective_timeout_s()
         env = self._environment.env
+        try:
+            argv[0] = resolve_program(argv[0], self._environment.base_dir, env)
+        except ProgramError as exc:
+            return f"cannot start the command: {exc}"
+        timeout = hook.effective_timeout_s()
         try:
             completed = self._run_command(
                 argv,

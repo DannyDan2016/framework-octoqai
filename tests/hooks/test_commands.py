@@ -54,6 +54,18 @@ def test_relative_program_ignores_a_decoy_in_the_current_folder(prefix, tmp_path
     assert (outcome.ok, outcome.error) == (True, None)
 
 
+@pytest.mark.security
+def test_bare_program_ignores_a_decoy_in_the_current_folder(tmp_path, monkeypatch):
+    real, decoy = tmp_path / "bin", tmp_path / "elsewhere"
+    install_program(real, "tool", exit_code=0)
+    install_program(decoy, "tool", exit_code=2)
+    monkeypatch.chdir(decoy)
+    env = {**os.environ, "PATH": os.pathsep.join([".", str(real)])}
+    hooks = HooksConfig.model_validate({"before_run": [{"command": ["tool"]}]})
+    [outcome] = HookExecutor(hooks, HookEnvironment(base_dir=tmp_path, env=env)).run("before_run")
+    assert (outcome.ok, outcome.error) == (True, None)
+
+
 def tree_hook(tmp_path, timeout_s):
     pid_file = tmp_path / "grandchild.pid"
     command = [sys.executable, "-c", process_tree_code(pid_file)]

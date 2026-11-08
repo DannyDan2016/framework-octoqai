@@ -1,53 +1,72 @@
 import datetime
+import os
 import string
 import subprocess
 import sys
 
 import pytest
 
-from octoqai.experiment import HooksConfig
+from octoqai.experiment import Hook, HooksConfig
 from octoqai.hooks import HookEnvironment, HookExecutor, HookResult
 from support.agents import FakeClock
 from support.databases import FakeDatabase
-from support.hooks import FakeCommands
+from support.hooks import FakeCommands, fake_program
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
 RESET = ["python", "reset.py", "--tenant", "a && del *"]
+DB_ENV = {"DB_URL": "sqlite:///a.db"}
+NOT_FOUND = "cannot start the command: program not found in PATH"
 
 
-def executor(stages, *, commands=None, agent=None, clock=None, **environment):
-    hooks = HooksConfig.model_validate(stages)
+def on_path(path):
+    return {**DB_ENV, "PATH": str(path)}
+
+
+def executor(stages, *, commands=None, agent=None, clock=None, env=None, **environment):
+    hooks = stages if isinstance(stages, HooksConfig) else HooksConfig.model_validate(stages)
     seams = {"run_command": commands or FakeCommands(), "clock": clock or FakeClock()}
     if agent is not None:
         seams["transport"] = agent.transport()
-    env = HookEnvironment(env={"DB_URL": "sqlite:///a.db"}, **environment)
-    return HookExecutor(hooks, env, **seams)
+    variables = DB_ENV if env is None else env
+    return HookExecutor(hooks, HookEnvironment(env=variables, **environment), **seams)
+
+
+@pytest.fixture
+def bin_dir(tmp_path):
+    folder = tmp_path / "bin"
+    for name in ("python", "a", "b", "tool"):
+        fake_program(folder, name)
+    return folder
 
 
 @pytest.mark.smoke
 @pytest.mark.security
-def test_command_runs_without_shell_in_the_experiment_folder(tmp_path):
+def test_command_runs_without_shell_in_the_experiment_folder(tmp_path, bin_dir):
     commands = FakeCommands()
     results = executor(
-        {"before_trial": [{"command": RESET}]}, commands=commands, base_dir=tmp_path
+        {"before_trial": [{"command": RESET}]},
+        commands=commands,
+        base_dir=tmp_path,
+        env=on_path(bin_dir),
     ).run("before_trial")
     assert results == [HookResult("before_trial", 0, "command", True, 0.0, None)]
     [(args, kwargs)] = commands.calls
-    assert args == RESET
+    assert args == [str(fake_program(bin_dir, "python")), *RESET[1:]]
     assert (kwargs["shell"], kwargs["cwd"], kwargs["timeout"]) == (False, tmp_path, 30.0)
     assert kwargs["stdout"] == kwargs["stderr"] == kwargs["stdin"] == subprocess.DEVNULL
-    assert kwargs["env"] == {"DB_URL": "sqlite:///a.db"}
+    assert kwargs["env"] == {**DB_ENV, "PATH": str(bin_dir)}
 
 
 WINDOWS_ONLY = pytest.mark.skipif(sys.platform != "win32", reason="Windows path syntax")
 POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="POSIX path syntax")
 
 
-def program_run(program, base_dir):
+def program_run(program, base_dir, **environment):
     commands = FakeCommands()
     stages = {"before_trial": [{"command": [program, "--flag"]}]}
-    [outcome] = executor(stages, commands=commands, base_dir=base_dir).run("before_trial")
+    hooks = executor(stages, commands=commands, base_dir=base_dir, **environment)
+    [outcome] = hooks.run("before_trial")
     return outcome, commands.calls
 
 
@@ -70,14 +89,113 @@ def test_relative_program_runs_from_the_experiment_folder_not_the_current_one(pr
     assert args == [str(tmp_path.absolute() / program), "--flag"]
 
 
-@pytest.mark.parametrize(
-    "program",
-    ["tool", "python", pytest.param("sub\\tool", marks=POSIX_ONLY)],
-    ids=["bare", "interpreter", "posix-backslash-is-a-name"],
-)
-def test_bare_program_name_is_left_to_the_system_search(program, tmp_path):
-    _, [(args, _)] = program_run(program, tmp_path)
-    assert args[0] == program
+def batch_hook(program):
+    hook = Hook.model_construct(command=[program, "--flag"], http=None, sql=None, timeout_s=None)
+    return HooksConfig.model_construct(before_trial=[hook])
+
+
+@pytest.mark.security
+class TestBareProgramLookup:
+    @pytest.mark.parametrize("base", ["experiment", None], ids=["with-folder", "without-folder"])
+    def test_found_only_in_absolute_path_folders_in_order(self, base, tmp_path, monkeypatch):
+        cwd = tmp_path / "cwd"
+        fake_program(cwd, "tool")
+        fake_program(cwd / "bin", "tool")
+        monkeypatch.chdir(cwd)
+        first, second = tmp_path / "first", tmp_path / "second"
+        expected = fake_program(second, "tool")
+        fake_program(tmp_path / "third", "tool")
+        relative = ["", ".", "bin"] + ([cwd.drive + "bin"] if sys.platform == "win32" else [])
+        folders = [*relative, str(first), str(second), str(tmp_path / "third")]
+        first.mkdir()
+        base_dir = tmp_path / base if base else None
+        outcome, [(args, _)] = program_run("tool", base_dir, env=on_path(os.pathsep.join(folders)))
+        assert outcome.ok
+        assert args == [str(expected), "--flag"]
+
+    @pytest.mark.parametrize(
+        "program",
+        ["python", "a", pytest.param("sub\\tool", marks=POSIX_ONLY)],
+        ids=["interpreter", "short", "posix-backslash-is-a-name"],
+    )
+    def test_bare_name_resolves_to_the_absolute_program(self, program, tmp_path):
+        expected = fake_program(tmp_path / "bin", program)
+        _, [(args, _)] = program_run(program, tmp_path, env=on_path(tmp_path / "bin"))
+        assert args[0] == str(expected)
+
+    def test_dotted_name_keeps_its_dots(self, tmp_path):
+        expected = fake_program(tmp_path / "bin", "python3.12")
+        _, [(args, _)] = program_run("python3.12", tmp_path, env=on_path(tmp_path / "bin"))
+        assert args[0] == str(expected)
+
+    def test_folder_named_like_the_program_is_skipped(self, tmp_path):
+        decoy = fake_program(tmp_path / "bin", "tool")
+        decoy.unlink()
+        decoy.mkdir()
+        expected = fake_program(tmp_path / "later", "tool")
+        folders = os.pathsep.join([str(tmp_path / "bin"), str(tmp_path / "later")])
+        _, [(args, _)] = program_run("tool", tmp_path, env=on_path(folders))
+        assert args[0] == str(expected)
+
+    @pytest.mark.parametrize(
+        "env",
+        [on_path(""), DB_ENV, on_path("bin")],
+        ids=["empty-path", "env-without-path", "only-relative"],
+    )
+    def test_missing_program_never_starts(self, env, tmp_path, bin_dir, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("PATH", str(bin_dir))
+        outcome, calls = program_run("tool", tmp_path, env=env)
+        assert (outcome.ok, outcome.error, calls) == (False, NOT_FOUND, [])
+
+    def test_empty_hook_env_uses_the_process_path(self, tmp_path, bin_dir, monkeypatch):
+        monkeypatch.setenv("PATH", str(bin_dir))
+        _, [(args, kwargs)] = program_run("tool", tmp_path, env={})
+        assert (args[0], kwargs["env"]) == (str(fake_program(bin_dir, "tool")), None)
+
+    @pytest.mark.parametrize(
+        "program",
+        ["to\x00ol", "t" * 5000, ".", "..", "tool.", "secret-tool-77"],
+        ids=["nul", "long", "dot", "dot-dot", "trailing-dot", "unknown"],
+    )
+    def test_hostile_or_unknown_name_is_a_fixed_error(self, program, tmp_path, bin_dir):
+        outcome, calls = program_run(program, tmp_path, env=on_path(bin_dir))
+        assert (outcome.ok, outcome.error, calls) == (False, NOT_FOUND, [])
+
+    @WINDOWS_ONLY
+    def test_uppercase_exe_suffix_is_not_doubled(self, tmp_path, bin_dir):
+        _, [(args, _)] = program_run("TOOL.EXE", tmp_path, env=on_path(bin_dir))
+        assert args[0] == str(bin_dir / "TOOL.EXE")
+
+    @WINDOWS_ONLY
+    @pytest.mark.parametrize("key", ["Path", "path"])
+    def test_path_key_is_case_insensitive_on_windows(self, key, tmp_path, bin_dir):
+        _, [(args, _)] = program_run("tool", tmp_path, env={**DB_ENV, key: str(bin_dir)})
+        assert args[0] == str(bin_dir / "tool.exe")
+
+    @WINDOWS_ONLY
+    def test_last_path_spelling_wins_like_in_the_child(self, tmp_path, bin_dir):
+        env = {"PATH": str(tmp_path / "empty"), "Path": str(bin_dir)}
+        _, [(args, _)] = program_run("tool", tmp_path, env=env)
+        assert args[0] == str(bin_dir / "tool.exe")
+
+    @WINDOWS_ONLY
+    @pytest.mark.parametrize("program", ["reset.bat", "RESET.CMD", "reset.bat. "])
+    def test_batch_file_is_never_looked_up(self, program, tmp_path):
+        fake_program(tmp_path / "bin", program.rstrip(". "))
+        commands = FakeCommands()
+        hooks = executor(batch_hook(program), commands=commands, env=on_path(tmp_path / "bin"))
+        [outcome] = hooks.run("before_trial")
+        assert outcome.error == "cannot start the command: only .exe programs are looked up in PATH"
+        assert commands.calls == []
+
+    @POSIX_ONLY
+    def test_file_without_execute_permission_is_skipped(self, tmp_path):
+        fake_program(tmp_path / "first", "tool", mode=0o644)
+        expected = fake_program(tmp_path / "second", "tool")
+        folders = os.pathsep.join([str(tmp_path / "first"), str(tmp_path / "second")])
+        _, [(args, _)] = program_run("tool", tmp_path, env=on_path(folders))
+        assert args[0] == str(expected)
 
 
 def test_absolute_program_and_missing_folder_leave_the_path_alone(tmp_path):
@@ -115,31 +233,33 @@ def test_program_relative_to_another_drive_never_starts(tmp_path):
     ],
     ids=["exit-code", "timeout", "missing-program"],
 )
-def test_command_failures(commands, error):
+def test_command_failures(commands, error, bin_dir):
     stages = {"before_run": [{"command": RESET, "timeout_s": 5}]}
-    [outcome] = executor(stages, commands=commands).run("before_run")
+    [outcome] = executor(stages, commands=commands, env=on_path(bin_dir)).run("before_run")
     assert (outcome.ok, outcome.error) == (False, error)
 
 
-def test_before_stage_stops_at_first_failure():
+def test_before_stage_stops_at_first_failure(bin_dir):
     commands = FakeCommands().exits(1, 0)
     stages = {"before_trial": [{"command": ["a"]}, {"command": ["b"]}]}
-    assert len(executor(stages, commands=commands).run("before_trial")) == 1
+    assert len(executor(stages, commands=commands, env=on_path(bin_dir)).run("before_trial")) == 1
     assert len(commands.calls) == 1
 
 
-def test_after_stage_runs_every_hook():
+def test_after_stage_runs_every_hook(bin_dir):
     commands = FakeCommands().exits(1, 0)
     stages = {"after_trial": [{"command": ["a"]}, {"command": ["b"]}]}
-    results = executor(stages, commands=commands).run("after_trial")
+    results = executor(stages, commands=commands, env=on_path(bin_dir)).run("after_trial")
     assert [r.ok for r in results] == [False, True]
 
 
-def test_duration_comes_from_the_injected_clock():
+def test_duration_comes_from_the_injected_clock(bin_dir):
     clock = FakeClock()
     commands = FakeCommands(clock=clock, took_s=0.25)
     stages = {"after_run": [{"command": ["a"]}]}
-    [outcome] = executor(stages, commands=commands, clock=clock).run("after_run")
+    [outcome] = executor(stages, commands=commands, clock=clock, env=on_path(bin_dir)).run(
+        "after_run"
+    )
     assert outcome.duration_ms == pytest.approx(250)
 
 

@@ -80,6 +80,18 @@ class RecordingHooks:
         self.closed = True
 
 
+def fake_program(folder: Path, name: str, mode: int = 0o755) -> Path:
+    """Create an empty program file that a PATH lookup can find and return its path.
+
+    On Windows the file gets the ``.exe`` suffix; elsewhere ``mode`` sets its permissions.
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    program = folder / (f"{name}.exe" if sys.platform == "win32" else name)
+    program.touch()
+    program.chmod(mode)
+    return program
+
+
 def wait_until(predicate: Callable[[], bool], limit_s: float = 10.0) -> bool:
     """Poll ``predicate`` until it holds or ``limit_s`` passes, without sleeping."""
     deadline = time.monotonic() + limit_s

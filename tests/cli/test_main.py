@@ -438,6 +438,7 @@ def test_invalid_database_url_never_prints_the_password(experiment, tmp_path, ru
     assert_not_in_outputs(samples.DB_PASSWORD, result.out, result.err)
 
 
+@pytest.mark.usefixtures("python_on_path")
 def test_failed_before_run_exits_3_without_running_trials(
     experiment, tmp_path, run_cli, fake_agent
 ):
@@ -448,6 +449,7 @@ def test_failed_before_run_exits_3_without_running_trials(
     assert fake_agent.requests == []
 
 
+@pytest.mark.usefixtures("python_on_path")
 def test_reset_failing_in_every_trial_exits_3(experiment, tmp_path, run_cli, fake_agent):
     path = str(experiment.hooks(before_trial=[{"command": ["python", "reset.py"]}]).write(tmp_path))
     result = run_cli("run", path, agent=fake_agent, commands=FakeCommands().exits(2))
@@ -456,6 +458,7 @@ def test_reset_failing_in_every_trial_exits_3(experiment, tmp_path, run_cli, fak
     assert fake_agent.requests == []
 
 
+@pytest.mark.usefixtures("python_on_path")
 def test_failed_reset_then_agent_errors_report_the_agent_error(
     experiment, tmp_path, run_cli, fake_agent
 ):
@@ -467,6 +470,7 @@ def test_failed_reset_then_agent_errors_report_the_agent_error(
     assert "StopIteration" not in result.err
 
 
+@pytest.mark.usefixtures("python_on_path")
 def test_after_run_failure_exits_3_with_a_warning(experiment, tmp_path, run_cli, fake_agent):
     path = str(experiment.hooks(after_run=[{"command": ["python", "limpia.py"]}]).write(tmp_path))
     result = run_cli("run", path, agent=fake_agent.answers("ok."), commands=FakeCommands().exits(1))
@@ -475,6 +479,7 @@ def test_after_run_failure_exits_3_with_a_warning(experiment, tmp_path, run_cli,
     assert result.report()["hooks"][-1]["ok"] is False
 
 
+@pytest.mark.usefixtures("python_on_path")
 def test_after_run_failure_keeps_a_no_go(thirty_cases, experiment, run_cli, fake_agent):
     experiment.hooks(after_run=[{"command": ["python", "limpia.py"]}])
     fake_agent.answers("conciliado con datos de TENANT-B")
@@ -484,6 +489,7 @@ def test_after_run_failure_keeps_a_no_go(thirty_cases, experiment, run_cli, fake
 
 
 @pytest.mark.security
+@pytest.mark.usefixtures("python_on_path")
 def test_hook_env_values_are_never_printed(experiment, tmp_path, run_cli, fake_agent, monkeypatch):
     monkeypatch.setenv("TENANT_TOKEN", "tt-55443322")
     path = str(
@@ -507,6 +513,7 @@ def test_malformed_database_url_never_prints_the_password(
     assert_not_in_outputs("db.example", result.out, result.err)
 
 
+@pytest.mark.usefixtures("python_on_path")
 def test_failed_before_run_still_reports_a_failed_after_run(
     experiment, tmp_path, run_cli, fake_agent
 ):
@@ -521,6 +528,7 @@ def test_failed_before_run_still_reports_a_failed_after_run(
     assert "Warning: hook after_run[0] (command) exited with code 1" in result.err
 
 
+@pytest.mark.usefixtures("python_on_path")
 def test_after_run_failure_is_warned_when_every_trial_fails_to_reset(
     experiment, tmp_path, run_cli, fake_agent
 ):
@@ -555,6 +563,7 @@ def test_hook_errors_never_print_the_expanded_token(stage, token_experiment, run
     assert_not_in_outputs("tt-55443322", result.out, result.err)
 
 
+@pytest.mark.usefixtures("python_on_path")
 def test_go_with_a_failed_after_run_exits_3(thirty_cases, experiment, run_cli, fake_agent):
     experiment.hooks(after_run=[{"command": ["python", "limpia.py"]}])
     result = run_cli(
@@ -567,6 +576,7 @@ def test_go_with_a_failed_after_run_exits_3(thirty_cases, experiment, run_cli, f
     assert "VERDICT: go" in result.out
 
 
+@pytest.mark.usefixtures("python_on_path")
 def test_reset_failing_in_some_trials_is_never_a_go(experiment, tmp_path, run_cli, fake_agent):
     hooks = {"before_trial": [{"command": ["python", "reset.py"]}]}
     experiment.hooks(**hooks).trials(4).case("c1", turn("Hola", {"contains": "."}))
@@ -578,6 +588,7 @@ def test_reset_failing_in_some_trials_is_never_a_go(experiment, tmp_path, run_cl
     assert "VERDICT: go" not in result.out
 
 
+@pytest.mark.usefixtures("python_on_path")
 def test_database_example_runs_against_a_fake_agent(run_cli, monkeypatch, sqlite_db):
     monkeypatch.setenv("DB_URL", sqlite_db.url)
     result = run_cli(
