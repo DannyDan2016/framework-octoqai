@@ -193,7 +193,9 @@ pytest -m security -q         secrets, hygiene and headers
 1. Add the field to `Hook` in `experiment/model.py` and its validation.
 2. Add the method to `HookExecutor`. Commands run without a shell and their output is discarded;
    never capture it.
-3. Test it with a fake (`FakeCommands`, `FakeJsonAgent`, `FakeDatabase`), never with a real process.
+3. Test it with a fake (`FakeCommands`, `FakeJsonAgent`, `FakeDatabase`). Real processes belong
+   only in `tests/hooks/test_commands.py`, for what a fake cannot show (process trees, path
+   resolution), and wait with `support.hooks.wait_until`, never with a sleep.
 
 ### Add a CLI option
 
@@ -212,7 +214,16 @@ pytest -m security -q         secrets, hygiene and headers
   `sql` hooks.
 - Queries run through SQLAlchemy `text()`: a literal `:` in the SQL is written `\:`, and values
   go through `params` (`:name`). A query never accepts `{{ }}` or `${VAR}`, and neither do expected
-  values or `sql` hooks (`{{ }}` only); a placeholder there would be sent as literal text.
+  values or `sql` hooks. In a `sql` hook a `${VAR}` is rejected when the file loads, before it is
+  expanded, because its value would be pasted into the statement unescaped; keep those statements
+  fixed or move the logic to a `command` hook.
+- A query returns at most `MAX_ROWS` (10,000) rows. More is an error with no rows, so a flooded
+  table cannot exhaust memory: it fails a `row_count` or `rows` check that expects fewer rows, and
+  an `unchanged` check or a forbidden change when the other snapshot was readable; anything else
+  is not evaluable. The cap counts rows, not bytes, so a single huge value is still read whole,
+  and a driver that buffers the whole result on the client (psycopg 2 without a server-side
+  cursor) reads it before the cap applies. Bound watched queries with `count(*)`, `WHERE` or
+  `LIMIT`.
 - `postgresql://` uses psycopg 3. Octoqai does not install any driver: install the one your
   URL needs.
 - A relative SQLite path resolves against the directory `octoqai` runs from, while hooks run in
@@ -223,6 +234,14 @@ pytest -m security -q         secrets, hygiene and headers
   and pool), not to the whole call.
 - A `command` hook with a non-empty `env` replaces the child's environment instead of extending
   it; the CLI passes the process environment plus the `.env` files, so a command sees both.
+- A `command` program with a folder in it (`scripts/reset`, `./reset`, `..\bin\reset.exe`)
+  runs from the experiment's folder on every platform; one relative to another Windows drive
+  (`D:reset.exe`) never starts. A bare name (`python`) is found by the operating system, and on
+  Windows that search can include the folder `octoqai` runs from, so write the full path when
+  you run from a folder others can write to.
+- When a `command` hook times out or the run is interrupted, its whole process tree is killed
+  (a new session and `killpg` on POSIX, `taskkill /T` on Windows), so helper processes a reset
+  script started do not outlive it. A descendant that detaches into its own session escapes.
 - A query that starts with `SELECT` or `WITH` can still hold a second statement
   (`SELECT ...; DROP ...`) or a data-modifying `WITH`. Only the rollback and a read-only database
   user stop them, so use that user.
