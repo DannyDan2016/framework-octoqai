@@ -1,8 +1,8 @@
 import importlib
 import pkgutil
-import shutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -18,8 +18,15 @@ def _subpackages() -> list[str]:
     return [m.name for m in pkgutil.iter_modules(octoqai.__path__, "octoqai.") if m.ispkg]
 
 
+def _installed_script(name: str) -> Path | None:
+    folders = (Path(sysconfig.get_path("scripts")), Path(sys.executable).parent)
+    suffix = ".exe" if sys.platform == "win32" else ""
+    found = [folder / f"{name}{suffix}" for folder in folders]
+    return next((path for path in found if path.is_file()), None)
+
+
 def test_import_contracts_hold():
-    exe = shutil.which("lint-imports", path=str(Path(sys.executable).parent))
+    exe = _installed_script("lint-imports")
     assert exe is not None, "lint-imports is not installed"
     result = subprocess.run(
         [exe], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace"
