@@ -111,11 +111,14 @@ def process_alive(pid: int) -> bool:
 def process_tree_code(pid_file: Path) -> str:
     """Python code for a child that starts a grandchild and both block forever.
 
-    The grandchild writes its pid to ``pid_file`` once it runs.
+    The grandchild writes its pid to a temporary file and renames it to ``pid_file``, so
+    ``pid_file`` only exists once it holds the whole pid.
     """
+    partial = pid_file.with_name(pid_file.name + ".partial")
     grandchild = (
         "import os, pathlib, threading; "
-        f"pathlib.Path({pid_file.as_posix()!r}).write_text(str(os.getpid())); "
+        f"pathlib.Path({partial.as_posix()!r}).write_text(str(os.getpid())); "
+        f"os.replace({partial.as_posix()!r}, {pid_file.as_posix()!r}); "
         "threading.Event().wait()"
     )
     return (
