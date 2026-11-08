@@ -99,7 +99,8 @@ class Redactor:
         the JSON escapes reveals a value that the raw text does not show as often, the text is
         masked with those escapes undone. It becomes ``REDACTED`` when an escape alters a value
         that the raw text shows, or when undoing the escapes a second time reveals one more
-        value; escapes nested deeper than that are not followed.
+        value or alters one that the first undoing shows; escapes nested deeper than that are not
+        followed.
 
         Args:
             text: The text to clean.
@@ -131,7 +132,10 @@ class Redactor:
         if plain == text:
             return self._mask(text, raw)
         unescaped = self._detector.candidates(plain)
-        if not _covers(unescaped, self._detector.candidates(unescape(plain))):
+        twice = unescape(plain)
+        if _destroys(plain, twice, unescaped):
+            return REDACTED
+        if not _covers(unescaped, self._detector.candidates(twice)):
             return REDACTED
         if _destroys(text, plain, raw):
             return REDACTED

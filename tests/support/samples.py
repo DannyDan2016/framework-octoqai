@@ -200,6 +200,10 @@ PREFIX_ESCAPE_ROWS = {
         "dato ab" + _BACKSLASH + "ncd12 y ab" + _BACKSLASH * 2 + "ncd12 fin",
     ),
 }
+SECOND_LEVEL_COPIES = (
+    'bfc1e"' + "23a",
+    _BACKSLASH * 2 + 'bfc1e"23a' + chr(10) + "bfc1e" + _BACKSLASH * 3 + '"23a',
+)
 COUNTED_COPIES = (
     'abcd@ef"' + "gh12",
     'x abcd@ef"gh12 y abcd@ef' + _BACKSLASH + '"gh12 z',

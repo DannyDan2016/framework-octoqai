@@ -219,3 +219,10 @@ def test_two_copies_of_a_password_one_plain_and_one_escaped_are_both_masked():
     password, text = samples.COUNTED_COPIES
     result = password_redactor(password).redact(text)
     assert result == "x [redacted] y [redacted] z"
+
+
+def test_a_second_escape_level_never_leaves_a_copy_that_two_unescapes_reveal():
+    password, text = samples.SECOND_LEVEL_COPIES
+    cleaned = password_redactor(password).redact(text)
+    assert cleaned == "[redacted]"
+    assert_value_hidden(password, cleaned, UNESCAPE(cleaned), UNESCAPE(UNESCAPE(cleaned)))
