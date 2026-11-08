@@ -44,6 +44,8 @@ def resolve_program(program: str, base_dir: Path | None, env: Mapping[str, str])
 
 
 def _search_path(name: str, env: Mapping[str, str]) -> str:
+    if not name.strip():
+        raise ProgramError("program not found in PATH")
     candidate = _candidate(name)
     for folder in _path_value(env).split(os.pathsep):
         if not Path(folder).is_absolute():

@@ -162,6 +162,12 @@ class TestBareProgramLookup:
         outcome, calls = program_run(program, tmp_path, env=on_path(bin_dir))
         assert (outcome.ok, outcome.error, calls) == (False, NOT_FOUND, [])
 
+    @pytest.mark.parametrize("program", ["", "   "], ids=["empty", "blank"])
+    def test_empty_name_never_matches_a_bare_suffix_file(self, program, tmp_path, bin_dir):
+        (bin_dir / ".exe").write_bytes(b"")
+        outcome, calls = program_run(program, tmp_path, env=on_path(bin_dir))
+        assert (outcome.ok, outcome.error, calls) == (False, NOT_FOUND, [])
+
     @WINDOWS_ONLY
     def test_uppercase_exe_suffix_is_not_doubled(self, tmp_path, bin_dir):
         _, [(args, _)] = program_run("TOOL.EXE", tmp_path, env=on_path(bin_dir))
