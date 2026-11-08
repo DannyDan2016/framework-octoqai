@@ -10,6 +10,7 @@ from typing import Any, TypedDict, Unpack, get_args
 import httpx
 
 from octoqai.experiment import Hook, HooksConfig, HookStage
+from octoqai.hooks._process import run_tree
 from octoqai.hooks.port import HookEnvironment, HookResult
 
 RunCommand = Callable[..., subprocess.CompletedProcess[Any]]
@@ -36,7 +37,7 @@ class HookExecutor:
         """Create an executor; the http client exists only when some hook needs it."""
         self._hooks = hooks
         self._environment = environment
-        self._run_command: RunCommand = seams.get("run_command", subprocess.run)
+        self._run_command: RunCommand = seams.get("run_command", run_tree)
         self._clock = seams.get("clock", time.perf_counter)
         self._client: httpx.Client | None = None
         if any(hook.http for stage in get_args(HookStage) for hook in hooks.stage(stage)):

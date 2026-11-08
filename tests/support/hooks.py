@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
+import time
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Self
 
 from octoqai.experiment import HookStage
@@ -73,3 +78,48 @@ class RecordingHooks:
     def close(self) -> None:
         """Mark the port as closed."""
         self.closed = True
+
+
+def wait_until(predicate: Callable[[], bool], limit_s: float = 10.0) -> bool:
+    """Poll ``predicate`` until it holds or ``limit_s`` passes, without sleeping."""
+    deadline = time.monotonic() + limit_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+    return False
+
+
+def process_alive(pid: int) -> bool:
+    """Whether a process exists and is not a zombie waiting to be reaped."""
+    if sys.platform == "win32":
+        tasklist = os.path.join(os.environ["SYSTEMROOT"], "System32", "tasklist.exe")
+        listing = subprocess.run(
+            [tasklist, "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+        return f'"{pid}"' in listing
+    stat = Path(f"/proc/{pid}/stat")
+    try:
+        state = stat.read_text().rpartition(")")[2].split()[0]
+    except (FileNotFoundError, ProcessLookupError, IndexError):
+        return False
+    return state != "Z"
+
+
+def process_tree_code(pid_file: Path) -> str:
+    """Python code for a child that starts a grandchild and both block forever.
+
+    The grandchild writes its pid to ``pid_file`` once it runs.
+    """
+    grandchild = (
+        "import os, pathlib, threading; "
+        f"pathlib.Path({pid_file.as_posix()!r}).write_text(str(os.getpid())); "
+        "threading.Event().wait()"
+    )
+    return (
+        "import subprocess, sys, threading; "
+        f"subprocess.Popen([sys.executable, '-c', {grandchild!r}]); "
+        "threading.Event().wait()"
+    )
