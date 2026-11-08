@@ -1,5 +1,8 @@
+import os
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +28,30 @@ def test_metacharacters_reach_the_process_literally(tmp_path):
     code = "import sys, pathlib; pathlib.Path('arg.txt').write_text(sys.argv[1])"
     assert run_real(tmp_path, code, "a && echo pwned | more").ok
     assert (tmp_path / "arg.txt").read_text() == "a && echo pwned | more"
+
+
+def install_program(folder, name, exit_code):
+    folder.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        system = Path(os.environ["SYSTEMROOT"]) / "System32"
+        source = {0: "whoami.exe", 2: "findstr.exe"}[exit_code]
+        shutil.copy(system / source, folder / f"{name}.exe")
+        return
+    script = folder / name
+    script.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+    script.chmod(0o755)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("prefix", ["sub/", "./"], ids=["subfolder", "dot"])
+def test_relative_program_ignores_a_decoy_in_the_current_folder(prefix, tmp_path, monkeypatch):
+    base, decoy = tmp_path / "experiment", tmp_path / "elsewhere"
+    install_program(base / prefix, "tool", exit_code=0)
+    install_program(decoy / prefix, "tool", exit_code=2)
+    monkeypatch.chdir(decoy)
+    hooks = HooksConfig.model_validate({"before_run": [{"command": [f"{prefix}tool"]}]})
+    [outcome] = HookExecutor(hooks, HookEnvironment(base_dir=base)).run("before_run")
+    assert (outcome.ok, outcome.error) == (True, None)
 
 
 def tree_hook(tmp_path, timeout_s):

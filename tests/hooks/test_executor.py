@@ -1,5 +1,7 @@
 import datetime
+import string
 import subprocess
+import sys
 
 import pytest
 
@@ -36,6 +38,72 @@ def test_command_runs_without_shell_in_the_experiment_folder(tmp_path):
     assert (kwargs["shell"], kwargs["cwd"], kwargs["timeout"]) == (False, tmp_path, 30.0)
     assert kwargs["stdout"] == kwargs["stderr"] == kwargs["stdin"] == subprocess.DEVNULL
     assert kwargs["env"] == {"DB_URL": "sqlite:///a.db"}
+
+
+WINDOWS_ONLY = pytest.mark.skipif(sys.platform != "win32", reason="Windows path syntax")
+POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="POSIX path syntax")
+
+
+def program_run(program, base_dir):
+    commands = FakeCommands()
+    stages = {"before_trial": [{"command": [program, "--flag"]}]}
+    [outcome] = executor(stages, commands=commands, base_dir=base_dir).run("before_trial")
+    return outcome, commands.calls
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "program",
+    [
+        "sub/tool",
+        "./tool",
+        "../bin/tool",
+        pytest.param("sub\\tool.exe", marks=WINDOWS_ONLY),
+        pytest.param(".\\tool.exe", marks=WINDOWS_ONLY),
+        pytest.param("..\\bin\\tool.exe", marks=WINDOWS_ONLY),
+    ],
+    ids=["slash", "dot-slash", "parent", "backslash", "dot-backslash", "parent-backslash"],
+)
+def test_relative_program_runs_from_the_experiment_folder_not_the_current_one(program, tmp_path):
+    outcome, [(args, _)] = program_run(program, tmp_path)
+    assert outcome.ok
+    assert args == [str(tmp_path.absolute() / program), "--flag"]
+
+
+@pytest.mark.parametrize(
+    "program",
+    ["tool", "python", pytest.param("sub\\tool", marks=POSIX_ONLY)],
+    ids=["bare", "interpreter", "posix-backslash-is-a-name"],
+)
+def test_bare_program_name_is_left_to_the_system_search(program, tmp_path):
+    _, [(args, _)] = program_run(program, tmp_path)
+    assert args[0] == program
+
+
+def test_absolute_program_and_missing_folder_leave_the_path_alone(tmp_path):
+    absolute = str(tmp_path.absolute() / "bin" / "tool")
+    assert program_run(absolute, tmp_path)[1][0][0][0] == absolute
+    assert program_run("sub/tool", None)[1][0][0][0] == "sub/tool"
+
+
+@WINDOWS_ONLY
+@pytest.mark.security
+def test_drive_and_root_relative_programs_resolve_against_the_experiment_drive(tmp_path):
+    base = tmp_path.absolute()
+    drive_relative = program_run(base.drive + "tool.exe", tmp_path)[1][0][0][0]
+    root_relative = program_run("\\tools\\tool.exe", tmp_path)[1][0][0][0]
+    assert drive_relative == str(base / "tool.exe")
+    assert root_relative == base.drive + "\\tools\\tool.exe"
+
+
+@WINDOWS_ONLY
+@pytest.mark.security
+def test_program_relative_to_another_drive_never_starts(tmp_path):
+    drive = tmp_path.absolute().drive
+    other = next(f"{letter}:" for letter in string.ascii_uppercase if f"{letter}:" != drive)
+    outcome, calls = program_run(other + "tool.exe", tmp_path)
+    assert calls == []
+    assert outcome.error == "cannot start the command: its path is relative to another drive"
 
 
 @pytest.mark.parametrize(
