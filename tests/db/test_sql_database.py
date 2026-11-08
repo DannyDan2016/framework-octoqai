@@ -3,7 +3,7 @@ from urllib.parse import quote_plus
 import pytest
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError, ProgrammingError
 
-from octoqai.db import QueryResult, SqlDatabase, connection_secrets
+from octoqai.db import MAX_ROWS, QueryResult, SqlDatabase, connection_secrets
 from support import samples
 from support.assertions import assert_config_error, assert_linear_growth
 
@@ -22,6 +22,26 @@ def test_query_returns_columns_and_rows(sqlite_db, sql_database):
 
 def test_scalar_of_empty_result_is_none(sql_database):
     assert sql_database.query("SELECT id FROM ajustes", {}).scalar is None
+
+
+def numbers(stop: str) -> str:
+    return f"WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n{stop}) SELECT i FROM n"
+
+
+TOO_MANY = f"query returned more than {MAX_ROWS} rows; bound it with count(*), WHERE or LIMIT"
+
+
+def test_query_returns_up_to_the_row_cap(sql_database):
+    result = sql_database.query(numbers(f" WHERE i < {MAX_ROWS}"), {})
+    assert result.error is None and len(result.rows) == MAX_ROWS
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "stop", [f" WHERE i < {MAX_ROWS + 1}", ""], ids=["one-over-the-cap", "endless"]
+)
+def test_query_over_the_row_cap_is_an_error_without_rows(stop, sql_database):
+    assert sql_database.query(numbers(stop), {}) == QueryResult(error=TOO_MANY, overflow=True)
 
 
 @pytest.mark.security

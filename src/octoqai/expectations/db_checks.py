@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from typing import Any
 
-from octoqai.db.port import QueryResult
+from octoqai.db.port import MAX_ROWS, QueryResult
 from octoqai.expectations.checks import CheckResult
 from octoqai.experiment import DbCheck, ForbiddenChange, SourceFloat
 
@@ -187,6 +187,23 @@ _DB_CHECKS: dict[str, Callable[[DbCheck, QueryResult | None, QueryResult], _Outc
 }
 
 
+def _one_side_overflows(before: QueryResult, after: QueryResult) -> bool:
+    return (before.overflow and after.error is None) or (after.overflow and before.error is None)
+
+
+def _overflow_failure(check: DbCheck, before: QueryResult | None, after: QueryResult) -> str | None:
+    label = f"db {check.id!r}"
+    if check.kind == "unchanged" and before is not None and _one_side_overflows(before, after):
+        return f"{label}: changed (one snapshot has more than {MAX_ROWS} rows)"
+    if not after.overflow:
+        return None
+    if check.kind == "row_count" and check.value <= MAX_ROWS:
+        return f"{label}: more than {MAX_ROWS} row(s) (expected {check.value})"
+    if check.kind == "rows" and len(check.value) <= MAX_ROWS:
+        return f"{label}: rows differ (got more than {MAX_ROWS}, expected {len(check.value)})"
+    return None
+
+
 def _database_error(check: DbCheck, before: QueryResult | None, after: QueryResult) -> str | None:
     if after.error is not None:
         return after.error
@@ -226,6 +243,10 @@ def evaluate_db(
         after: Result of the check query after the turn.
         agent_error: Error of the agent reply, if any; it fails the check.
 
+    A result over ``MAX_ROWS`` rows fails only what it proves: ``row_count`` or ``rows``
+    expecting fewer rows, and ``unchanged`` when the other snapshot was readable. Anything
+    else it touches is not evaluable.
+
     Returns:
         The check result; ``passed`` is ``None`` when the database could not be read or a
         ``delta`` cannot be computed. Details never include values read from the database,
@@ -234,6 +255,9 @@ def evaluate_db(
     if agent_error is not None:
         detail = f"db {check.id!r}: agent error: {agent_error}"
         return CheckResult(DB_KIND, False, check.hard, detail, True)
+    proven = _overflow_failure(check, before, after)
+    if proven is not None:
+        return CheckResult(DB_KIND, False, check.hard, proven)
     error = _database_error(check, before, after)
     if error is not None:
         return CheckResult(DB_KIND, None, check.hard, f"db {check.id!r}: database error: {error}")
@@ -255,13 +279,16 @@ def forbidden_check(
     Returns:
         A hard failure when the rows changed, a hard non-evaluable result when the database
         could not be read, and ``None`` when nothing changed. Numbers are compared exactly, so
-        a change in the last digit of a wide ``NUMERIC`` is a change.
+        a change in the last digit of a wide ``NUMERIC`` is a change. A snapshot over
+        ``MAX_ROWS`` rows against a readable one is a change, since the readable one fits.
     """
+    changed = CheckResult(
+        FORBIDDEN_KIND, False, True, f"forbidden change {change.id!r} after turn {turn_number}"
+    )
+    if _one_side_overflows(before, after):
+        return changed
     error = after.error if after.error is not None else before.error
     if error is not None:
         detail = f"forbidden {change.id!r}: database error: {error}"
         return CheckResult(FORBIDDEN_KIND, None, True, detail)
-    if _same_rows(before, after):
-        return None
-    detail = f"forbidden change {change.id!r} after turn {turn_number}"
-    return CheckResult(FORBIDDEN_KIND, False, True, detail)
+    return None if _same_rows(before, after) else changed

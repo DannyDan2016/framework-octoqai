@@ -5,10 +5,11 @@ from decimal import Decimal
 
 import pytest
 
+from octoqai.db import MAX_ROWS
 from octoqai.expectations import evaluate_db, forbidden_check
 from octoqai.experiment import DbCheck, ForbiddenChange, load_experiment
 from support.builders import turn, write_with_numbers
-from support.databases import result
+from support.databases import overflowed, result
 from support.paths import cases
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
@@ -89,6 +90,71 @@ def test_forbidden_check_with_an_unreadable_snapshot_is_hard_and_not_evaluable(b
     outcome = forbidden_check(change, before, after, 1)
     assert (outcome.passed, outcome.hard) == (None, True)
     assert outcome.detail.startswith("forbidden 'g': database error: ")
+
+
+FLOODED_CHANGE = [
+    (result([0]), overflowed()),
+    (overflowed(), result([0])),
+    (result(), overflowed()),
+    (overflowed(), result()),
+]
+FLOODED_IDS = ["grew-over", "shrank-under", "empty-grew-over", "emptied"]
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(("before", "after"), FLOODED_CHANGE, ids=FLOODED_IDS)
+def test_a_snapshot_over_the_row_cap_against_a_readable_one_is_a_forbidden_change(before, after):
+    change = ForbiddenChange(id="b", query="SELECT * FROM ajustes")
+    outcome = forbidden_check(change, before, after, 3)
+    assert (outcome.passed, outcome.hard, outcome.detail) == (
+        False,
+        True,
+        "forbidden change 'b' after turn 3",
+    )
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(("before", "after"), FLOODED_CHANGE, ids=FLOODED_IDS)
+def test_a_snapshot_over_the_row_cap_against_a_readable_one_is_changed(before, after):
+    outcome = evaluate_db(check(expect={"unchanged": True}), before, after)
+    assert (outcome.passed, outcome.detail) == (
+        False,
+        f"db 'x': changed (one snapshot has more than {MAX_ROWS} rows)",
+    )
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [(overflowed(), overflowed()), (result([0], error="OperationalError"), overflowed())],
+    ids=["both-over", "other-error"],
+)
+def test_snapshots_over_the_row_cap_without_a_readable_side_are_not_evaluable(before, after):
+    change = ForbiddenChange(id="b", query="SELECT * FROM ajustes")
+    assert forbidden_check(change, before, after, 1).passed is None
+    assert evaluate_db(check(expect={"unchanged": True}), before, after).passed is None
+
+
+@pytest.mark.parametrize(
+    ("expect", "before", "passed", "detail"),
+    [
+        ({"row_count": 5}, None, False, f"more than {MAX_ROWS} row(s) (expected 5)"),
+        ({"row_count": MAX_ROWS + 5}, None, None, "database error: query returned more"),
+        ({"rows": [[1]]}, None, False, f"rows differ (got more than {MAX_ROWS}, expected 1)"),
+        ({"value": 1}, None, None, "database error: query returned more"),
+        ({"delta": 1}, result([0]), None, "database error: query returned more"),
+    ],
+    ids=["row-count", "row-count-over-cap", "rows", "value", "delta"],
+)
+def test_a_result_over_the_row_cap_fails_only_what_it_proves(expect, before, passed, detail):
+    outcome = evaluate_db(check(expect=expect), before, overflowed())
+    assert outcome.passed is passed
+    assert outcome.detail.startswith(f"db 'x': {detail}")
+
+
+def test_an_agent_error_still_wins_over_a_result_over_the_row_cap():
+    outcome = evaluate_db(check(expect={"row_count": 1}), None, overflowed(), agent_error="HTTP 5")
+    assert (outcome.passed, outcome.agent_error) == (False, True)
 
 
 NON_FINITE = [

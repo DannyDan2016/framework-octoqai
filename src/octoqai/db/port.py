@@ -6,14 +6,22 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+MAX_ROWS = 10_000
+
 
 @dataclass(frozen=True)
 class QueryResult:
-    """Rows returned by one query, or the error that prevented them."""
+    """Rows returned by one query, or the error that prevented them.
+
+    A query that returns more than ``MAX_ROWS`` rows keeps no rows: it has an ``error`` and
+    ``overflow`` set, so code that ignores ``overflow`` treats it as unreadable, never as a
+    pass.
+    """
 
     columns: tuple[str, ...] = ()
     rows: tuple[tuple[Any, ...], ...] = ()
     error: str | None = None
+    overflow: bool = False
 
     @property
     def scalar(self) -> Any:

@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Connection, Engine, make_url
 from sqlalchemy.pool import NullPool
 
-from octoqai.db.port import QueryResult
+from octoqai.db.port import MAX_ROWS, QueryResult
 from octoqai.errors import ConfigError
 from octoqai.experiment import is_sensitive_key
 
@@ -20,6 +20,7 @@ _BLANK = re.compile(r"\s*")
 _MAX_CUTS = 8
 _MAX_PAIRS = 32
 _NO_RESULT_SET = "query returned no result set"
+_TOO_MANY_ROWS = f"query returned more than {MAX_ROWS} rows; bound it with count(*), WHERE or LIMIT"
 _IN_MEMORY = "in-memory SQLite cannot be used: each check opens a new connection; use a file"
 
 
@@ -227,7 +228,8 @@ class SqlDatabase:
 
         Returns:
             The rows, or only the class name of the exception when it fails: a driver message
-            can repeat a stored value, a parameter or a connection detail.
+            can repeat a stored value, a parameter or a connection detail. More than
+            ``MAX_ROWS`` rows is an error too, so a flooded table cannot exhaust memory.
         """
         try:
             with self._engine.connect() as conn:
@@ -236,7 +238,10 @@ class SqlDatabase:
                     if not result.returns_rows:
                         return QueryResult(error=_NO_RESULT_SET)
                     columns = tuple(result.keys())
-                    rows = tuple(tuple(r) for r in result.fetchall())
+                    fetched = result.fetchmany(MAX_ROWS + 1)
+                    if len(fetched) > MAX_ROWS:
+                        return QueryResult(error=_TOO_MANY_ROWS, overflow=True)
+                    rows = tuple(tuple(r) for r in fetched)
                 finally:
                     conn.rollback()
         except Exception as exc:

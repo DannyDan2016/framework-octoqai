@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from octoqai.db.port import QueryResult
+from octoqai.db.port import MAX_ROWS, QueryResult
 
 BANK_SCHEMA = (
     "CREATE TABLE ajustes (id INTEGER PRIMARY KEY, tenant TEXT NOT NULL, "
@@ -90,6 +90,11 @@ def result(*rows: Sequence[Any], error: str | None = None) -> QueryResult:
         rows=tuple(tuple(row) for row in rows),
         error=error,
     )
+
+
+def overflowed() -> QueryResult:
+    """Build the result of a query that returned more than ``MAX_ROWS`` rows."""
+    return QueryResult(error=f"query returned more than {MAX_ROWS} rows", overflow=True)
 
 
 class FakeDatabase:

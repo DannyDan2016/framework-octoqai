@@ -1,6 +1,6 @@
 import pytest
 
-from octoqai.db import QueryResult
+from octoqai.db import MAX_ROWS, QueryResult
 from octoqai.experiment import Experiment, HooksConfig
 from octoqai.hooks import HookEnvironment, HookExecutor
 from octoqai.running import run_experiment
@@ -65,6 +65,36 @@ def test_forbidden_change_counts_even_if_the_agent_then_fails(sqlite_db, sql_dat
     agent = fake_agent.fails(500).effect(lambda _: sqlite_db.insert(tenant="B"))
     [trial] = play(exp, agent, sql_database)
     assert trial.agent_error and trial.hard_violation and trial.forbidden_count == 1
+
+
+FLOOD_B = (
+    "INSERT INTO ajustes (tenant, cuenta, importe) "
+    f"WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i <= {MAX_ROWS}) "
+    "SELECT 'B', '001', 1 FROM n"
+)
+ROWS_B = {"id": "filas-b", "query": "SELECT * FROM ajustes WHERE tenant = 'B'"}
+
+
+@pytest.mark.security
+def test_agent_flooding_a_watched_table_is_a_forbidden_change(sqlite_db, sql_database, fake_agent):
+    exp = build(
+        sqlite_db,
+        turn(
+            "Llena",
+            {"contains": "."},
+            db=[{**ROWS_B, "id": "filas-b-igual", "expect": {"unchanged": True}}],
+        ),
+        forbidden=[ROWS_B],
+    )
+    agent = fake_agent.answers("ok.").effect(lambda _: sqlite_db.run(FLOOD_B))
+    [trial] = play(exp, agent, sql_database)
+    assert trial.outcome == "fail"
+    assert trial.hard_violation and trial.forbidden_count == 1
+    database_checks = [c for c in trial.turns[0].checks if c.kind in ("db", "forbidden_crud")]
+    assert [(c.passed, c.detail) for c in database_checks] == [
+        (False, f"db 'filas-b-igual': changed (one snapshot has more than {MAX_ROWS} rows)"),
+        (False, "forbidden change 'filas-b' after turn 1"),
+    ]
 
 
 def test_case_level_check_runs_after_the_last_turn(sqlite_db, sql_database, fake_agent):
