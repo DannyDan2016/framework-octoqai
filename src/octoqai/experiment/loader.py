@@ -269,7 +269,33 @@ def _url_secrets(url: str) -> list[str]:
 
 def _expand_hooks(data: dict[str, Any], variables: _Variables) -> None:
     if "hooks" in data:
+        _reject_sql_variables(data["hooks"])
         data["hooks"] = _expand_values(data["hooks"], variables)
+
+
+def _reject_sql_variables(hooks: Any) -> None:
+    if not isinstance(hooks, dict):
+        return
+    for stage, items in hooks.items():
+        if not isinstance(items, list):
+            continue
+        for index, hook in enumerate(items):
+            if isinstance(hook, dict):
+                _reject_statement_variables(f"hooks.{stage}[{index}].sql", hook.get("sql"))
+
+
+def _reject_statement_variables(location: str, statements: Any) -> None:
+    if isinstance(statements, str):
+        statements = [statements]
+    if not isinstance(statements, list):
+        return
+    for position, statement in enumerate(statements):
+        if isinstance(statement, str) and _ENV_PATTERN.search(statement):
+            raise ConfigError(
+                f"{location}[{position}]: sql hooks cannot use ${{VAR}}: the value would be "
+                "pasted into the statement unescaped; keep the statements fixed or move the "
+                "logic to a command hook"
+            )
 
 
 def _expand_values(value: Any, variables: _Variables) -> Any:

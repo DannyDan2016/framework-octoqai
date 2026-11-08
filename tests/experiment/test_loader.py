@@ -287,18 +287,31 @@ def test_hook_values_expand_env_and_are_redacted(experiment, tmp_path):
 
 
 @pytest.mark.security
-def test_sql_hook_with_a_variable_holding_a_template_marker_fails_without_the_value(
-    experiment, tmp_path
-):
+@pytest.mark.parametrize(
+    "value",
+    ["A' OR '1'='1", "A'; DELETE FROM t; --", "tenant-{{-77"],
+    ids=["or", "stack", "marker"],
+)
+def test_sql_hook_rejects_a_variable_before_pasting_its_value(value, experiment, tmp_path):
     experiment.database().hooks(before_trial=[{"sql": ["DELETE FROM t WHERE a = '${TENANT}'"]}])
     path = experiment.write(tmp_path)
     assert_config_error(
-        lambda: load_experiment(
-            path, process_env={"DB_URL": "sqlite:///a.db", "TENANT": "tenant-{{-77"}
-        ),
-        r"sql hooks cannot use \{\{ \}\} placeholders, and a \$\{VAR\} value used there",
-        absent=["tenant-", "-77"],
+        lambda: load_experiment(path, process_env={"DB_URL": "sqlite:///a.db", "TENANT": value}),
+        r"sql hooks cannot use \$\{VAR\}: the value would be pasted into the statement unescaped",
+        absent=[value, "1'='1", "-77"],
     )
+
+
+@pytest.mark.parametrize(
+    "statement",
+    ["SELECT '${ not a variable }'", "SELECT '$TENANT'", "SELECT '${1A}'"],
+    ids=["spaces", "no-braces", "invalid-name"],
+)
+def test_sql_hook_keeps_dollar_text_that_is_not_a_variable(statement, experiment, tmp_path):
+    experiment.database().hooks(before_trial=[{"sql": [statement]}])
+    path = experiment.write(tmp_path)
+    exp = load_experiment(path, process_env={"DB_URL": "sqlite:///a.db", "TENANT": "x"})
+    assert exp.hooks.before_trial[0].sql == [statement]
 
 
 def test_db_params_render_data_values(experiment, tmp_path):

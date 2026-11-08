@@ -180,6 +180,30 @@
     hooks: {before_trial: [{sql: ["DELETE FROM ajustes WHERE tenant = '{{ data.tenant }}'"]}]}
   fragments: ['sql hooks cannot use [{][{] [}][}] placeholders, and a [$][{]VAR[}] value used there cannot contain [{][{]']
 
+- id: sql-hook-env-placeholder-unset
+  overrides:
+    database: {url: "${DB_URL}"}
+    hooks: {before_trial: [{sql: ["DELETE FROM ajustes WHERE tenant = '${TENANT}'"]}]}
+  fragments: ['hooks\.before_trial\[0\]\.sql\[0\]: sql hooks cannot use [$][{]VAR[}]']
+
+- id: sql-hook-env-placeholder-second-statement
+  overrides:
+    database: {url: "${DB_URL}"}
+    hooks: {after_run: [{command: [python, a.py]}, {sql: ["DELETE FROM ajustes", "DELETE FROM t WHERE a = ${A}"]}]}
+  fragments: ['hooks\.after_run\[1\]\.sql\[1\]: sql hooks cannot use [$][{]VAR[}]']
+
+- id: sql-hook-env-placeholder-doubled-dollar
+  overrides:
+    database: {url: "${DB_URL}"}
+    hooks: {before_run: [{sql: ["SELECT '$${TENANT}'"]}]}
+  fragments: ['hooks\.before_run\[0\]\.sql\[0\]: sql hooks cannot use [$][{]VAR[}]']
+
+- id: sql-hook-env-placeholder-after-trial
+  overrides:
+    database: {url: "${DB_URL}"}
+    hooks: {after_trial: [{sql: ["UPDATE t SET a = 1 WHERE b = '${DB_URL}'"]}]}
+  fragments: ['hooks\.after_trial\[0\]\.sql\[0\]: sql hooks cannot use [$][{]VAR[}]']
+
 - id: shorthand-expect-with-kind
   overrides:
     database: {url: "${DB_URL}"}
