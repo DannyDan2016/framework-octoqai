@@ -18,5 +18,6 @@ Last review: 2026-11-04.
 | mypy (dev) | `>=2.4,<3` | 2.4.1 | unknown | Strict type checking only; no runtime impact | Read the release notes and fix new findings before raising the ceiling |
 | types-PyYAML (dev) | `>=6.0,<7` | 6.0.12.20261030 | follows PyYAML | Type stubs for `yaml`; no runtime impact | Raise together with PyYAML |
 | import-linter (dev) | `>=2.15,<3` | 2.15 | none announced | Enforces package layers in `pyproject.toml`; no runtime impact | None |
+| grimp (dev, via import-linter) | `>=3.17,<3.18` | 3.18 | none announced | Import graph engine of import-linter. Held below 3.18 because Windows Smart App Control blocks the 3.18 Windows binary; 3.17 loads | Lift the ceiling once a newer build loads on Windows |
 
 Rejected: `typer` (still 0.x, minor releases may break the CLI). The CLI uses the standard library `argparse`.

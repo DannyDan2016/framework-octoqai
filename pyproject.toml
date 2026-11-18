@@ -26,6 +26,7 @@ dev = [
     "mypy>=2.4,<3",
     "types-PyYAML>=6.0,<7",
     "import-linter>=2.15,<3",
+    "grimp>=3.17,<3.18",
 ]
 
 [project.scripts]
