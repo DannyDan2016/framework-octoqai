@@ -40,6 +40,7 @@ From top to bottom; a package may import only from packages below it:
 Additional contracts in `[tool.importlinter]`:
 
 - `httpx` is imported only inside `octoqai.agents`, `octoqai.hooks`, `octoqai.providers` and `octoqai.cli`.
+- `anthropic` and `httpx2` are imported only inside `octoqai.providers`. The Anthropic SDK is built on `httpx2`, a separate package from `httpx`, so the `httpx` rules and contract do not cover it (an `httpx` client is even rejected by the SDK); the "anthropic and httpx2 only inside providers" contract guards it, and `octoqai.cli` only calls `provider_for`.
 - `sqlalchemy` is imported only inside `octoqai.db`; `octoqai.providers` is in its list of forbidden importers.
 - Only `octoqai.hooks` starts processes (`tests/quality/test_architecture.py`), always with an argument list and never a shell.
 - The core (`running`, `security`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse`, `octoqai.agents.factory`, `octoqai.db.sql` or `octoqai.hooks.executor`; it imports the ports (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`).
