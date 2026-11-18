@@ -13,6 +13,7 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `experiment/` | Pydantic model, YAML loader, `${VAR}` expansion from `.env` files (`envfiles.py`), per-environment data sets (`datasets.py`), `{{ }}` templates, `SourceFloat` (`sourcefloat.py`, a YAML float that keeps the text it was written with) and `is_sensitive_key` (`urlkeys.py`, which connection-string keys hold a secret) | `errors` |
 | `stats/` | Pure estimators: Wilson interval, paired bootstrap, pass@k | `errors` |
 | `agents/` | `port.py` (`AgentPort`, `AgentReply`), `sse_events.py` (SSE parser), adapters such as `http_json.py` and `sse.py`, and `factory.py` (`adapter_for` picks the adapter from the config) | `experiment`, `errors` |
+| `providers/` | Language model port (`port.py`: `LlmPort`, `LlmRequest`, `LlmReply`) and the call cap `BudgetedLlm` (`budget.py`); later the Anthropic and Ollama adapters. The provider settings (`ProviderSettings`, `JudgeConfig`, `SimulatedUserConfig`) live in `experiment/` | `experiment`, `errors` |
 | `db/` | Database port (`DatabasePort`, `QueryResult`) and the SQLAlchemy adapter `SqlDatabase`, with `connection_secrets` to list the connection values the report must mask | `experiment`, `errors` |
 | `hooks/` | Lifecycle hooks: `LifecyclePort`, `HookExecutor` for http, sql and command (argv list, never a shell) | `db.port`, `experiment`, `errors` |
 | `expectations/` | Registry of deterministic checks applied to an agent reply, plus the evaluation of database checks and forbidden changes | `agents.port`, `db.port`, `experiment` |
@@ -21,9 +22,6 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `verdict/` | Go/no-go decision, hard gates and A/B recommendation | `running`, `stats` |
 | `reports/` | Report writers (JSON today) | `verdict`, `running` |
 | `cli/` | `argparse` entry point; wires concrete adapters | everything |
-
-Planned package: `providers/` (LLM provider port and adapters). It gets a row here, an import
-contract and a mirror test folder when it is created.
 
 ## Layers
 
@@ -34,18 +32,18 @@ From top to bottom; a package may import only from packages below it:
 3. `octoqai.verdict`
 4. `octoqai.running`
 5. `octoqai.expectations` and `octoqai.security` (independent of each other)
-6. `octoqai.agents` and `octoqai.hooks` (independent of each other)
+6. `octoqai.agents`, `octoqai.hooks` and `octoqai.providers` (independent of each other)
 7. `octoqai.db`
 8. `octoqai.stats` and `octoqai.experiment` (independent of each other)
 9. `octoqai.errors`
 
 Additional contracts in `[tool.importlinter]`:
 
-- `httpx` is imported only inside `octoqai.agents`, `octoqai.hooks` and `octoqai.cli`.
-- `sqlalchemy` is imported only inside `octoqai.db`.
+- `httpx` is imported only inside `octoqai.agents`, `octoqai.hooks`, `octoqai.providers` and `octoqai.cli`.
+- `sqlalchemy` is imported only inside `octoqai.db`; `octoqai.providers` is in its list of forbidden importers.
 - Only `octoqai.hooks` starts processes (`tests/quality/test_architecture.py`), always with an argument list and never a shell.
 - The core (`running`, `security`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse`, `octoqai.agents.factory`, `octoqai.db.sql` or `octoqai.hooks.executor`; it imports the ports (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`).
-- `octoqai.stats` is pure: it imports nothing from Octoqai except `errors`, and never imports `octoqai.db` or `octoqai.hooks`.
+- `octoqai.stats` is pure: it imports nothing from Octoqai except `errors`, and never imports `octoqai.db`, `octoqai.hooks` or `octoqai.providers`.
 
 ## Ports and adapters
 
@@ -81,7 +79,7 @@ Both adapters share these rules (`agents/_delivery.py`):
 Every package exports its public names in `__init__.py` and lists them in `__all__`. Other packages
 and tests import from the package (`from octoqai.experiment import load_experiment`), not from its
 modules. A module that is not public starts with `_`. The only exceptions are the ports imported
-directly (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`) to keep the core away from concrete adapters.
+directly (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`, `octoqai.providers.port`, `octoqai.providers.budget`) to keep the core away from concrete adapters.
 
 ## Tests
 
@@ -90,7 +88,7 @@ directly (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`) to kee
 ```
 tests/
   conftest.py        only: pytest_plugins = ["support.fixtures"]
-  support/           test kit: builders.py, agents.py, databases.py, hooks.py, assertions.py, paths.py, samples.py, fixtures.py
+  support/           test kit: builders.py, agents.py, databases.py, hooks.py, providers.py, netguard.py, assertions.py, paths.py, samples.py, fixtures.py
   <package>/         test_<topic>.py and data/<name>.yaml with the tabular cases of that package
   quality/           style, hygiene, architecture and layout checks
   e2e/               real agent process on 127.0.0.1
@@ -127,6 +125,8 @@ tests/
   root: `python tests/e2e/toy_sse_agent.py --port 8000 --db examples/database/conciliaciones.db`;
   in another terminal, inside `examples/database`: `copy .env.example .env`, then
   `octoqai run experiment.yaml`.
+- **Language models:** `FakeLlm` is an `LlmPort` that answers from a queue (`judges`, `returns_text`, `script`, `fails`, `times_out`, `refuses`, `truncates`, `serves_model`, `uses`) and records `requests`; an exhausted script gives the fixed error `fake script exhausted`, never a text that could read as a pass. `ScriptedUser` adds `says(*messages, done_after=None)`. No test makes a real call.
+- **Hermetic network:** an autouse fixture (`support/netguard.py`) lets a test connect only to loopback (`127.0.0.1`, `::1`, `localhost`) and fails it with a clear message otherwise; it covers `socket.connect`, `connect_ex`, `getaddrinfo` and the asyncio loops, and it clears the `ANTHROPIC_*` variables from the environment. Subprocesses such as the toy agent are not affected.
 - **Hooks and databases:** `FakeCommands` stands in for the process runner (`exits`, `times_out`, `missing`) and never starts a process; `RecordingHooks` is a `LifecyclePort` that records stages and fails the ones it is told to; `FakeDatabase` is a `DatabasePort` that records the statements and queries; `sqlite_db` and `sql_database` give a real SQLite file in `tmp_path`. Http hooks are tested against `FakeJsonAgent` as the endpoint.
 - **Experiments:** build them with `ExperimentBuilder` and `turn(...)`, or the `experiment` fixture.
 - **CLI:** use the `run_cli` fixture; it returns the exit code, captured output and report.

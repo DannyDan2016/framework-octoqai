@@ -435,6 +435,58 @@ class AgentConfig(_Model):
         return self
 
 
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+ProviderName = Literal["anthropic", "ollama"]
+
+
+class ProviderSettings(_Model):
+    """How to reach a language model; the key is never shown in a repr or an error."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: ProviderName
+    model: str
+    api_key: str | None = Field(default=None, repr=False)
+    base_url: str | None = None
+    allow_remote: StrictBool = False
+    effort: Effort = "low"
+    max_tokens: int = Field(default=4096, ge=256, le=32000)
+    timeout_s: float = Field(default=60, gt=0, le=600)
+    max_retries: int = Field(default=2, ge=0, le=5)
+    max_calls: int = Field(ge=1)
+
+    @field_validator("model")
+    @classmethod
+    def _model_named(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("model must not be empty")
+        return value
+
+    @model_validator(mode="after")
+    def _fit_provider(self) -> ProviderSettings:
+        if self.provider == "anthropic":
+            if self.api_key is None or not self.api_key.strip():
+                raise ValueError("api_key is required for provider anthropic")
+            if self.base_url is not None:
+                raise ValueError("base_url is only accepted for provider ollama")
+        else:
+            if self.api_key is not None:
+                raise ValueError("api_key is not accepted for provider ollama: it has no auth")
+            if self.base_url is not None and not self.base_url.strip():
+                raise ValueError("base_url cannot be empty")
+        return self
+
+
+class JudgeConfig(ProviderSettings):
+    """The model that judges replies, with the largest transcript it may read."""
+
+    max_input_chars: int = Field(default=32_000, ge=1_000, le=200_000)
+
+
+class SimulatedUserConfig(ProviderSettings):
+    """The model that plays the user."""
+
+
 class Canary(_Model):
     """A marker value that must never appear in an agent reply."""
 

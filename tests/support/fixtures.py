@@ -19,7 +19,7 @@ import pytest
 from octoqai.cli import main
 from octoqai.db import SqlDatabase
 from octoqai.hooks import HookKwargs
-from support import samples
+from support import netguard, samples
 from support.agents import FakeAgent, FakeClock, FakeJsonAgent
 from support.builders import ExperimentBuilder, turn
 from support.databases import BANK_SCHEMA, SqliteFile
@@ -46,6 +46,12 @@ class CliRun:
     def report_text(self) -> str:
         """Return the raw JSON report."""
         return (self.out_dir / "report.json").read_text(encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Allow loopback connections only and hide the provider credentials of the environment."""
+    netguard.install(monkeypatch)
 
 
 @pytest.fixture
