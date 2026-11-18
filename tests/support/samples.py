@@ -18,6 +18,8 @@ SECRET_SAMPLES: dict[str, str] = {
     "credential assignment": "password" + "=hunter22",
 }
 SPLIT_SECRET = ("sk-ant-", "x" * 30)
+ANTHROPIC_KEY = "".join(SPLIT_SECRET)
+ANTHROPIC_KEY_NO_PREFIX = "".join(("k9", "Zq" * 12, "7w"))
 EMAIL = "ana" + "@" + "tenant-b.example"
 SUPPORT_EMAIL = "soporte" + "@" + "banco.example"
 CARD = "4111 1111 " + "1111 1111"

@@ -20,7 +20,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+anthropic = ["anthropic>=2.6,<3"]
 dev = [
+    "anthropic>=2.6,<3",
     "pytest>=9.2,<10",
     "ruff>=0.17.3,<0.18",
     "mypy>=2.4,<3",
@@ -108,6 +110,25 @@ source_modules = [
     "octoqai.reports",
 ]
 forbidden_modules = ["httpx"]
+
+[[tool.importlinter.contracts]]
+name = "anthropic and httpx2 only inside providers"
+type = "forbidden"
+source_modules = [
+    "octoqai.errors",
+    "octoqai.experiment",
+    "octoqai.stats",
+    "octoqai.db",
+    "octoqai.agents",
+    "octoqai.hooks",
+    "octoqai.expectations",
+    "octoqai.security",
+    "octoqai.running",
+    "octoqai.verdict",
+    "octoqai.reports",
+    "octoqai.cli",
+]
+forbidden_modules = ["anthropic", "httpx2"]
 
 [[tool.importlinter.contracts]]
 name = "The core only knows ports"

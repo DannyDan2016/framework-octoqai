@@ -1,0 +1,84 @@
+- id: bad-request
+  exception: BadRequestError
+  status: 400
+  expected: BadRequestError
+  request_id: req_bad
+
+- id: authentication
+  exception: AuthenticationError
+  status: 401
+  expected: AuthenticationError
+  request_id: req_auth
+
+- id: permission-denied
+  exception: PermissionDeniedError
+  status: 403
+  expected: PermissionDeniedError
+  request_id: req_perm
+
+- id: not-found
+  exception: NotFoundError
+  status: 404
+  expected: NotFoundError
+  request_id: req_nf
+
+- id: rate-limit
+  exception: RateLimitError
+  status: 429
+  expected: RateLimitError
+  request_id: req_rate
+
+- id: internal-server
+  exception: InternalServerError
+  status: 500
+  expected: InternalServerError
+  request_id: req_500
+
+- id: overloaded
+  exception: OverloadedError
+  status: 529
+  expected: OverloadedError
+  request_id: req_over
+
+- id: status-without-request-id
+  exception: BadRequestError
+  status: 400
+  expected: BadRequestError
+  request_id: null
+
+- id: generic-status-error
+  exception: APIStatusError
+  status: 418
+  expected: APIStatusError
+  request_id: req_teapot
+
+- id: connection
+  exception: APIConnectionError
+  expected: APIConnectionError
+  request_id: null
+
+- id: sdk-timeout
+  exception: APITimeoutError
+  expected: APITimeoutError
+  request_id: null
+
+- id: response-validation
+  exception: APIResponseValidationError
+  status: 200
+  expected: APIResponseValidationError
+  request_id: null
+
+- id: credentials
+  exception: CredentialsError
+  expected: CredentialsError
+  request_id: null
+
+- id: builtin-timeout
+  exception: TimeoutError
+  expected: provider failure
+  request_id: null
+
+- id: value-error
+  exception: ValueError
+  expected: provider failure
+  request_id: null
