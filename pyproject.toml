@@ -20,9 +20,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-anthropic = ["anthropic>=2.6,<3"]
+anthropic = ["anthropic>=2.10,<3"]
 dev = [
-    "anthropic>=2.6,<3",
+    "anthropic>=2.10,<3",
     "pytest>=9.2,<10",
     "ruff>=0.17.3,<0.18",
     "mypy>=2.4,<3",

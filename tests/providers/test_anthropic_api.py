@@ -292,7 +292,7 @@ def test_provider_for_without_the_extra_raises_the_fixed_config_error(monkeypatc
 
     def refuse_sdk(name: str, *args: Any, **kwargs: Any) -> Any:
         if name.split(".")[0] == "anthropic":
-            raise ImportError(f"no {samples.ANTHROPIC_KEY}")
+            raise ModuleNotFoundError(f"no {samples.ANTHROPIC_KEY}", name="anthropic")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", refuse_sdk)
@@ -369,7 +369,7 @@ def test_real_sdk_over_a_mock_transport_sends_the_expected_request_and_maps_a_40
     def factory(**kwargs: Any) -> Any:
         client = httpx2.Client(transport=httpx2.MockTransport(handler))
         return anthropic.Anthropic(
-            base_url=HOST, http_client=client, **{**kwargs, "max_retries": 0}
+            base_url=HOST, http_client=client, open_telemetry=False, **{**kwargs, "max_retries": 0}
         )
 
     provider = AnthropicProvider(make_settings(max_tokens=512), client_factory=factory)
@@ -400,3 +400,145 @@ def test_real_sdk_over_a_mock_transport_sends_the_expected_request_and_maps_a_40
     )
     leaked = leaks(all_fields(failed))
     assert not leaked
+
+
+class ExplodingMessage:
+    content: list[Any] = []
+
+    @property
+    def usage(self) -> Any:
+        raise RuntimeError(f"boom {samples.ANTHROPIC_KEY}")
+
+
+def test_a_response_whose_attribute_raises_is_an_error_value_not_an_exception():
+    reply = provider_with(FakeClient(ExplodingMessage())).complete(request())
+    assert reply.error == "provider failure"
+    assert (reply.text, reply.model, reply.stop_reason) == (None, None, None)
+    leaked = leaks(all_fields(reply))
+    assert not leaked
+
+
+def test_base_exceptions_still_propagate():
+    with pytest.raises(KeyboardInterrupt):
+        provider_with(FakeClient(KeyboardInterrupt())).complete(request())
+
+
+def sdk_provider(handler: Any) -> AnthropicProvider:
+    anthropic = pytest.importorskip("anthropic")
+    httpx2 = pytest.importorskip("httpx2")
+
+    def factory(**kwargs: Any) -> Any:
+        client = httpx2.Client(transport=httpx2.MockTransport(handler))
+        return anthropic.Anthropic(
+            base_url=HOST, http_client=client, open_telemetry=False, **{**kwargs, "max_retries": 0}
+        )
+
+    return AnthropicProvider(make_settings(), client_factory=factory)
+
+
+@pytest.mark.parametrize("row", cases(__file__, "anthropic_odd_bodies"))
+def test_odd_200_bodies_through_the_real_sdk_never_raise(row):
+    httpx2 = pytest.importorskip("httpx2")
+
+    def handler(req: Any) -> Any:
+        if "raw" in row:
+            return httpx2.Response(200, content=row["raw"], headers={"content-type": "text/html"})
+        return httpx2.Response(200, json=row["body"])
+
+    reply = sdk_provider(handler).complete(request())
+    assert (reply.error, reply.text) == (row["error"], row["text"])
+    leaked = leaks(all_fields(reply))
+    assert not leaked
+
+
+def test_default_client_is_built_with_telemetry_off_and_explicit_settings(monkeypatch):
+    anthropic = pytest.importorskip("anthropic")
+    seen: dict[str, Any] = {}
+
+    class Recorder:
+        def __init__(self, **kwargs: Any) -> None:
+            seen.update(kwargs)
+
+    monkeypatch.setattr(anthropic, "Anthropic", Recorder)
+    AnthropicProvider(make_settings())
+    assert seen["open_telemetry"] is False
+    assert set(seen) == {"open_telemetry", "api_key", "timeout", "max_retries"}
+
+
+def test_provider_for_sdk_import_error_inside_the_sdk_is_a_fixed_config_error(monkeypatch):
+    anthropic = pytest.importorskip("anthropic")
+
+    def boom(**_: Any) -> Any:
+        raise ImportError(f"socksio missing {samples.ANTHROPIC_KEY}", name="socksio")
+
+    monkeypatch.setattr(anthropic, "Anthropic", boom)
+    with pytest.raises(ConfigError) as caught:
+        provider_for(make_settings())
+    assert str(caught.value) == "the anthropic client could not be built: ImportError"
+    assert caught.value.__suppress_context__
+
+
+def test_provider_for_injected_factory_import_error_propagates_unchanged():
+    def factory(**_: Any) -> Any:
+        raise ImportError("from test code")
+
+    with pytest.raises(ImportError, match="from test code"):
+        provider_for(make_settings(), client_factory=factory)
+
+
+def recording_provider(trace: Any, recorded: list[str]) -> Any:
+    class Span(trace.NonRecordingSpan):
+        def is_recording(self) -> bool:
+            return True
+
+        def set_attribute(self, key: str, value: Any) -> None:
+            recorded.append(f"{key}={value}")
+
+        def add_event(self, name: str, attributes: Any = None, timestamp: Any = None) -> None:
+            recorded.append(f"{name}={attributes}")
+
+    class Tracer(trace.Tracer):
+        def start_span(self, name: str, *args: Any, **kwargs: Any) -> Any:
+            recorded.append(f"span:{name}")
+            for key, value in (kwargs.get("attributes") or {}).items():
+                recorded.append(f"{key}={value}")
+            return Span(trace.INVALID_SPAN_CONTEXT)
+
+        def start_as_current_span(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+    class Provider(trace.TracerProvider):
+        def get_tracer(self, *args: Any, **kwargs: Any) -> Any:
+            return Tracer()
+
+    return Provider()
+
+
+def test_telemetry_is_silent_even_with_content_mode_and_a_recording_provider(monkeypatch):
+    trace = pytest.importorskip("opentelemetry.trace")
+    httpx2 = pytest.importorskip("httpx2")
+    recorded: list[str] = []
+    monkeypatch.setattr(trace, "_TRACER_PROVIDER", recording_provider(trace, recorded))
+    monkeypatch.setenv("ANTHROPIC_OPEN_TELEMETRY_TRACES_CONTENT_MODE", "content")
+    seen: list[Any] = []
+
+    def handler(req: Any) -> Any:
+        seen.append(req)
+        body = {
+            "id": "m",
+            "type": "message",
+            "role": "assistant",
+            "model": "fake-judge-1",
+            "content": [{"type": "text", "text": "REPLY-CANARY"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+        return httpx2.Response(200, json=body)
+
+    ask = LlmRequest(
+        role="judge", system="SYSTEM-CANARY", messages=(LlmMessage("user", "PROMPT-CANARY"),)
+    )
+    reply = sdk_provider(handler).complete(ask)
+    assert reply.text == "REPLY-CANARY"
+    assert recorded == []
+    assert "traceparent" not in seen[0].headers and "baggage" not in seen[0].headers

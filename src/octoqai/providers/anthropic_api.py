@@ -25,7 +25,7 @@ class _Client(Protocol):
 def _sdk_client(**kwargs: Any) -> Any:
     import anthropic
 
-    return anthropic.Anthropic(**kwargs)
+    return anthropic.Anthropic(open_telemetry=False, **kwargs)
 
 
 def _sdk_classes() -> tuple[type[Exception], type[Exception]] | None:
@@ -93,8 +93,15 @@ class AnthropicProvider:
         start = self._clock()
         try:
             message = self._client.messages.create(**self._arguments(request))
+            return self._reply(message, start)
         except Exception as exc:
             return self._failure(exc, self._elapsed_ms(start))
+
+    def close(self) -> None:
+        """Close the SDK client."""
+        self._client.close()
+
+    def _reply(self, message: Any, start: float) -> LlmReply:
         return LlmReply(
             text=_text(message),
             model=_optional_str(getattr(message, "model", None)),
@@ -103,10 +110,6 @@ class AnthropicProvider:
             latency_ms=self._elapsed_ms(start),
             request_id=_as_request_id(getattr(message, "_request_id", None)),
         )
-
-    def close(self) -> None:
-        """Close the SDK client."""
-        self._client.close()
 
     def _arguments(self, request: LlmRequest) -> dict[str, Any]:
         output_config: dict[str, Any] = {"effort": self._settings.effort}

@@ -10,6 +10,7 @@ from octoqai.errors import ConfigError
 from octoqai.experiment import ProviderSettings
 from octoqai.providers.port import LlmPort
 
+SDK_NAME = "anthropic"
 ENDPOINT_VARIABLES = ("ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS")
 
 
@@ -20,14 +21,18 @@ def _anthropic(settings: ProviderSettings, **seams: Any) -> LlmPort:
                 f"{variable} is set in the environment: unset it, "
                 "the judge only talks to the default Anthropic endpoint"
             )
-    try:
-        from octoqai.providers.anthropic_api import AnthropicProvider
+    from octoqai.providers.anthropic_api import AnthropicProvider
 
+    try:
         return AnthropicProvider(settings, **seams)
-    except ImportError:
-        raise ConfigError(
-            "the anthropic provider needs: pip install 'octoqai[anthropic]'"
-        ) from None
+    except ImportError as exc:
+        if seams.get("client_factory") is not None:
+            raise
+        if exc.name == SDK_NAME:
+            raise ConfigError(
+                "the anthropic provider needs: pip install 'octoqai[anthropic]'"
+            ) from None
+        raise ConfigError("the anthropic client could not be built: ImportError") from None
 
 
 def _ollama(settings: ProviderSettings, **seams: Any) -> LlmPort:
