@@ -8,6 +8,7 @@ from typing import Any
 
 from octoqai.errors import ConfigError
 from octoqai.experiment import ProviderSettings
+from octoqai.providers.ollama_api import OllamaProvider
 from octoqai.providers.port import LlmPort
 
 SDK_NAME = "anthropic"
@@ -36,7 +37,7 @@ def _anthropic(settings: ProviderSettings, **seams: Any) -> LlmPort:
 
 
 def _ollama(settings: ProviderSettings, **seams: Any) -> LlmPort:
-    raise ConfigError("the ollama provider is not available yet")
+    return OllamaProvider(settings, **seams)
 
 
 _BUILDERS: dict[str, Callable[..., LlmPort]] = {"anthropic": _anthropic, "ollama": _ollama}

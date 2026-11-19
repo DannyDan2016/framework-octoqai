@@ -326,12 +326,6 @@ def test_provider_for_passes_seams_to_the_adapter():
     assert len(client.calls) == 1
 
 
-def test_provider_for_ollama_is_not_available_yet():
-    settings = ProviderSettings(provider="ollama", model="fake-local-1", max_calls=1)
-    with pytest.raises(ConfigError, match="ollama provider is not available yet"):
-        provider_for(settings)
-
-
 def test_provider_for_unknown_provider_is_a_config_error():
     settings = SimpleNamespace(provider="mystery")
     with pytest.raises(ConfigError, match="unknown provider"):

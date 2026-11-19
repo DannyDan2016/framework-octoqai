@@ -3,6 +3,7 @@
 from octoqai.providers.anthropic_api import AnthropicProvider
 from octoqai.providers.budget import BUDGET_EXHAUSTED, BudgetedLlm
 from octoqai.providers.factory import provider_for
+from octoqai.providers.ollama_api import OllamaProvider
 from octoqai.providers.port import (
     LlmMessage,
     LlmPort,
@@ -22,5 +23,6 @@ __all__ = [
     "LlmRequest",
     "LlmRole",
     "LlmUsage",
+    "OllamaProvider",
     "provider_for",
 ]

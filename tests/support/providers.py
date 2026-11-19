@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Self
+from typing import Any, Self
+
+import httpx
+import pytest
 
 from octoqai.providers.port import LlmReply, LlmRequest, LlmUsage
 
@@ -122,3 +126,116 @@ class ScriptedUser(FakeLlm):
             return self._reply(_Planned(text=""))
         self._said += 1
         return super().complete(request)
+
+
+class FakeClock:
+    """A clock that only moves when told to, so deadlines never wait."""
+
+    def __init__(self, now: float = 100.0) -> None:
+        """Start at ``now`` seconds."""
+        self.now = now
+
+    def __call__(self) -> float:
+        """Return the current fake time."""
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        """Move the fake time forward."""
+        self.now += seconds
+
+
+class _Chunks(httpx.SyncByteStream):
+    def __init__(self, parts: list[bytes], clock: FakeClock, seconds_per_chunk: float) -> None:
+        self._parts = parts
+        self._clock = clock
+        self._seconds = seconds_per_chunk
+
+    def __iter__(self) -> Iterator[bytes]:
+        for part in self._parts:
+            self._clock.advance(self._seconds)
+            yield part
+
+
+class FakeOllama:
+    """A fake Ollama server over ``httpx.MockTransport`` that records what it was sent."""
+
+    def __init__(self) -> None:
+        """Answer every request with an empty chat reply until told otherwise."""
+        self.clock = FakeClock()
+        self.requests: list[httpx.Request] = []
+        self.transport = httpx.MockTransport(self._handle)
+        self._seconds_per_request = 0.0
+        self._respond: Callable[[httpx.Request], httpx.Response] = lambda _: self._json({})
+
+    def answers(self, content: str, **fields: Any) -> Self:
+        """Answer with a chat reply whose ``message.content`` is ``content``."""
+        reply: dict[str, Any] = {"message": {"role": "assistant", "content": content}}
+        reply.update(fields)
+        return self.body(json.dumps(reply).encode())
+
+    def status(self, code: int, body: bytes = b"") -> Self:
+        """Answer with this status and body, without following redirects."""
+        return self.body(body, status=code)
+
+    def raises(self, exc: BaseException) -> Self:
+        """Raise this exception from the transport."""
+
+        def respond(_: httpx.Request) -> httpx.Response:
+            raise exc
+
+        self._respond = respond
+        return self
+
+    def body(self, raw: bytes, headers: dict[str, str] | None = None, *, status: int = 200) -> Self:
+        """Answer with these exact bytes and headers."""
+        return self.chunks([raw], headers, status=status)
+
+    def chunks(
+        self,
+        parts: list[bytes],
+        headers: dict[str, str] | None = None,
+        *,
+        seconds_per_chunk: float = 0.0,
+        status: int = 200,
+    ) -> Self:
+        """Answer with these chunks, advancing the fake clock before each one."""
+        self._respond = lambda _: httpx.Response(
+            status, headers=headers, stream=_Chunks(parts, self.clock, seconds_per_chunk)
+        )
+        return self
+
+    def takes(self, seconds: float) -> Self:
+        """Advance the fake clock this much on every request."""
+        self._seconds_per_request = seconds
+        return self
+
+    @property
+    def sent(self) -> dict[str, Any]:
+        """The JSON body of the last request received."""
+        parsed: dict[str, Any] = json.loads(self.requests[-1].content)
+        return parsed
+
+    def record_default_transports(self, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+        """Replace the transport httpx builds for itself; return the arguments each one got."""
+        built: list[dict[str, Any]] = []
+        fake = self
+
+        class Recording(httpx.BaseTransport):
+            def __init__(self, **kwargs: Any) -> None:
+                built.append(kwargs)
+
+            def handle_request(self, request: httpx.Request) -> httpx.Response:
+                return fake.transport.handle_request(request)
+
+        monkeypatch.setattr(httpx._client, "HTTPTransport", Recording)
+        return built
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        request.read()
+        self.requests.append(request)
+        self.clock.advance(self._seconds_per_request)
+        return self._respond(request)
+
+    @staticmethod
+    def _json(payload: dict[str, Any]) -> httpx.Response:
+        return httpx.Response(200, json=payload)

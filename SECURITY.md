@@ -35,5 +35,12 @@ variable) or in hooks, and are never written to reports.
 - **Database checks** roll every query back, but only a read-only database user guarantees that
   nothing is written. A query returns at most 10,000 rows; bound watched queries, because the
   cap does not limit the size of a single value.
+- **Ollama has no authentication.** By default `base_url` must be loopback (`127.0.0.1`,
+  `localhost` or `[::1]`). With `allow_remote: true` the prompts, which can contain agent replies
+  and test data, travel to that server unauthenticated and, over `http`, unencrypted: use it
+  only on a network you trust. The URL may not carry credentials, a path, a query or a fragment.
+  Proxy variables from the environment (`HTTP_PROXY` and similar) are ignored on purpose, so a
+  prompt never goes through a proxy. Responses are capped at 1 MiB, never decompressed and never
+  repeated in an error.
 - **Errors** from database drivers and hooks are reported as their class name or a fixed
   message, never as their text, which can repeat stored values or connection details.
