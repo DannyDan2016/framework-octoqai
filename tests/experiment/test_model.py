@@ -150,7 +150,7 @@ def test_database_url_and_hook_secrets_hidden_from_repr(experiment):
     assert "secreto" not in repr(exp) and "k-123456" not in repr(exp)
 
 
-def test_judge_check_defaults(experiment):
+def test_judge_checks_are_rejected_until_runner_support(experiment):
     experiment.judge().case("c1", turn("Hola", {"contains": "."}, judge=[judge_check("j")]))
     with pytest.raises(ValidationError, match="does not run yet"):
         Experiment.model_validate(experiment.build())
@@ -189,7 +189,7 @@ def test_variant_cannot_carry_judge_settings(experiment):
         Experiment.model_validate(data)
 
 
-def test_simulated_case_without_turns_validates_until_runner_support(experiment):
+def test_simulated_case_without_turns_is_rejected_until_runner_support(experiment):
     experiment.simulated_user().case("c1", simulated=simulated(each_turn=[{"contains": "."}]))
     with pytest.raises(ValidationError, match="does not run yet"):
         Experiment.model_validate(experiment.build())

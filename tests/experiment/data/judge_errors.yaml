@@ -148,3 +148,11 @@
     simulated_user: {provider: ollama, model: m, max_calls: 3}
     cases: [{id: c1, simulated: {goal: g, max_turns: 3}}]
   fragments: ["case 'c1' has no expectation"]
+
+- id: anthropic-judge-without-api-key
+  overrides: {judge: {provider: anthropic, model: m, max_calls: 3}}
+  fragments: ["judge.api_key must come from an environment variable", "ANTHROPIC_API_KEY"]
+
+- id: anthropic-simulated-user-without-api-key
+  overrides: {simulated_user: {provider: anthropic, model: m, max_calls: 3}}
+  fragments: ["simulated_user.api_key must come from an environment variable"]
