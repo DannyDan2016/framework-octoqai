@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from http.cookiejar import CookieJar, DefaultCookiePolicy
+from typing import Any, Protocol
 
 import httpx
 
@@ -33,6 +35,32 @@ LOOPBACK_MESSAGE = (
 )
 
 
+class Watchdog(Protocol):
+    """A wall-clock alarm armed for one call."""
+
+    def cancel(self) -> None:
+        """Disarm the alarm so that it never fires."""
+
+
+WatchdogFactory = Callable[[float, Callable[[], None]], Watchdog]
+
+
+def timer_watchdog(seconds: float, fire: Callable[[], None]) -> Watchdog:
+    """Call ``fire`` from a daemon thread after ``seconds`` of real time.
+
+    Args:
+        seconds: Wall-clock time before the alarm fires.
+        fire: Called once when the time runs out, unless the alarm was cancelled.
+
+    Returns:
+        The started ``threading.Timer``.
+    """
+    timer = threading.Timer(seconds, fire)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
 class _Failed(Exception):
     def __init__(self, error: str) -> None:
         super().__init__(error)
@@ -50,7 +78,9 @@ def _is_loopback(host: str) -> bool:
 
 def _parse_url(raw: str) -> httpx.URL:
     try:
-        return httpx.URL(raw)
+        url = httpx.URL(raw)
+        _ = url.host
+        return url
     except Exception:
         raise ConfigError("ollama base_url is not a valid url") from None
 
@@ -116,6 +146,7 @@ class OllamaProvider:
         *,
         transport: httpx.BaseTransport | None = None,
         clock: Callable[[], float] = time.perf_counter,
+        watchdog: WatchdogFactory = timer_watchdog,
     ) -> None:
         """Validate the base URL and build the client with explicit timeouts.
 
@@ -126,14 +157,10 @@ class OllamaProvider:
         self._settings = settings
         self._clock = clock
         self._url = _endpoint(settings)
-        limit = settings.timeout_s
-        short = min(SHORT_TIMEOUT_S, limit)
-        self._client = httpx.Client(
-            transport=transport,
-            trust_env=False,
-            follow_redirects=False,
-            timeout=httpx.Timeout(connect=short, read=limit, write=short, pool=short),
-        )
+        self._transport = transport
+        self._watchdog = watchdog
+        self._closed = False
+        self._client = self._new_client()
 
     def __repr__(self) -> str:
         """Show only the model, never the address or any prompt."""
@@ -143,7 +170,7 @@ class OllamaProvider:
         """Run one call; a failure is returned as a fixed value, never as the server's text."""
         start = self._clock()
         try:
-            return self._reply(self._exchange(request, start), start)
+            return self._reply(self._watched(request, start), start)
         except _Failed as exc:
             error = exc.error
         except httpx.HTTPError as exc:
@@ -153,11 +180,50 @@ class OllamaProvider:
         return LlmReply(None, None, None, LlmUsage(), self._elapsed_ms(start), error=error)
 
     def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the HTTP client for good."""
+        self._closed = True
         self._client.close()
 
-    def _exchange(self, request: LlmRequest, start: float) -> dict[str, Any]:
-        with self._client.stream(
+    def _new_client(self) -> httpx.Client:
+        limit = self._settings.timeout_s
+        short = min(SHORT_TIMEOUT_S, limit)
+        return httpx.Client(
+            transport=self._transport,
+            trust_env=False,
+            follow_redirects=False,
+            cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            timeout=httpx.Timeout(connect=short, read=limit, write=short, pool=short),
+        )
+
+    def _watched(self, request: LlmRequest, start: float) -> dict[str, Any]:
+        if self._client.is_closed and not self._closed:
+            self._client = self._new_client()
+        client = self._client
+        fired = threading.Event()
+        done = threading.Event()
+        lock = threading.Lock()
+
+        def fire() -> None:
+            with lock:
+                if done.is_set():
+                    return
+                fired.set()
+                client.close()
+
+        alarm = self._watchdog(self._settings.timeout_s, fire)
+        try:
+            return self._exchange(client, request, start)
+        except Exception:
+            if fired.is_set():
+                raise _Failed(DEADLINE_EXCEEDED) from None
+            raise
+        finally:
+            with lock:
+                done.set()
+            alarm.cancel()
+
+    def _exchange(self, client: httpx.Client, request: LlmRequest, start: float) -> dict[str, Any]:
+        with client.stream(
             "POST",
             self._url,
             json=self._body(request),

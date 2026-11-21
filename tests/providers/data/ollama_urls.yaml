@@ -112,3 +112,13 @@
   base_url: http://127.0.0.1:abc
   allow_remote: false
   accepted: false
+
+- id: malformed-idna-remote-allowed
+  base_url: http://xn--ab-secret.example
+  allow_remote: true
+  accepted: false
+
+- id: malformed-idna-under-invalid-tld
+  base_url: http://xn--localhost-.invalid
+  allow_remote: true
+  accepted: false

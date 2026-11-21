@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Any, Self
+from typing import Any, NoReturn, Self
 
 import httpx
 import pytest
 
 from octoqai.providers.port import LlmReply, LlmRequest, LlmUsage
+from support.agents import FakeWatchdog
 
 EXHAUSTED_SCRIPT = "fake script exhausted"
 DEFAULT_MODEL = "fake-judge-1"
@@ -156,12 +157,23 @@ class _Chunks(httpx.SyncByteStream):
             yield part
 
 
+class _Stalled(httpx.SyncByteStream):
+    def __init__(self, first: bytes, block: Callable[[], NoReturn]) -> None:
+        self._first = first
+        self._block = block
+
+    def __iter__(self) -> Iterator[bytes]:
+        yield self._first
+        self._block()
+
+
 class FakeOllama:
     """A fake Ollama server over ``httpx.MockTransport`` that records what it was sent."""
 
     def __init__(self) -> None:
         """Answer every request with an empty chat reply until told otherwise."""
         self.clock = FakeClock()
+        self.watchdog = FakeWatchdog()
         self.requests: list[httpx.Request] = []
         self.transport = httpx.MockTransport(self._handle)
         self._seconds_per_request = 0.0
@@ -202,6 +214,25 @@ class FakeOllama:
         self._respond = lambda _: httpx.Response(
             status, headers=headers, stream=_Chunks(parts, self.clock, seconds_per_chunk)
         )
+        return self
+
+    def stalls(self, after: bytes | None = None) -> Self:
+        """Block until the watchdog fires, before any header or after ``after`` of the body.
+
+        The blocked read then fails as on a socket closed by the alarm.
+        """
+        watchdog = self.watchdog
+
+        def blocked(request: httpx.Request) -> NoReturn:
+            watchdog.fire()
+            raise httpx.ReadError("closed", request=request)
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            if after is None:
+                blocked(request)
+            return httpx.Response(200, stream=_Stalled(after, lambda: blocked(request)))
+
+        self._respond = respond
         return self
 
     def takes(self, seconds: float) -> Self:

@@ -73,7 +73,12 @@ def request(
 
 
 def provider_on(fake: FakeOllama, **overrides: Any) -> OllamaProvider:
-    return OllamaProvider(make_settings(**overrides), transport=fake.transport, clock=fake.clock)
+    return OllamaProvider(
+        make_settings(**overrides),
+        transport=fake.transport,
+        clock=fake.clock,
+        watchdog=fake.watchdog,
+    )
 
 
 def all_fields(reply: LlmReply) -> str:
@@ -458,3 +463,48 @@ def test_provider_for_does_not_hide_an_import_error_from_the_constructor(monkeyp
     monkeypatch.setattr(httpx, "Client", boom)
     with pytest.raises(ImportError, match="from the client"):
         provider_for(make_settings())
+
+
+@pytest.mark.parametrize("after", [None, b'{"message": '], ids=["headers", "mid-body"])
+def test_the_alarm_ends_a_blocked_call_with_deadline_exceeded(after):
+    fake = FakeOllama().stalls(after)
+    reply = provider_on(fake, timeout_s=7).complete(request())
+    assert reply.error == "deadline exceeded"
+    assert reply.text is None
+    assert fake.watchdog.armed == [7]
+    assert fake.watchdog.cancelled == 1
+
+
+def test_the_next_call_after_an_alarm_works():
+    fake = FakeOllama().stalls()
+    provider = provider_on(fake)
+    assert provider.complete(request()).error == "deadline exceeded"
+    fake.answers("ok")
+    reply = provider.complete(request())
+    assert (reply.error, reply.text) == (None, "ok")
+    assert len(fake.requests) == 2
+
+
+def test_a_normal_call_arms_and_cancels_the_alarm():
+    fake = FakeOllama().answers("ok")
+    assert provider_on(fake, timeout_s=9).complete(request()).error is None
+    assert fake.watchdog.armed == [9]
+    assert fake.watchdog.cancelled == 1
+
+
+def test_a_late_alarm_of_an_earlier_call_never_breaks_the_next():
+    fake = FakeOllama().answers("one")
+    provider = provider_on(fake)
+    provider.complete(request())
+    fake.watchdog.fire()
+    fake.answers("two")
+    assert provider.complete(request()).text == "two"
+
+
+@pytest.mark.security
+def test_cookies_set_by_the_server_are_never_sent_back():
+    fake = FakeOllama().body(b'{"message": {"content": "ok"}}', {"set-cookie": "track=abc; Path=/"})
+    provider = provider_on(fake)
+    provider.complete(request())
+    provider.complete(request())
+    assert [r.headers.get("cookie") for r in fake.requests] == [None, None]
