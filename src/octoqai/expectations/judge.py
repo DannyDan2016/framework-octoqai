@@ -78,6 +78,7 @@ _INPUT_DETAIL = {
     "nonce_collision": "delimiter collision",
     "too_long": "transcript too long",
     "empty_transcript": "empty transcript",
+    "split_secret": "sensitive data split across turns",
 }
 
 
@@ -92,7 +93,7 @@ class _Verdict(BaseModel):
 class JudgeInputError:
     """Why a judge request could not be built; the check is not evaluable."""
 
-    reason: Literal["nonce_collision", "too_long", "empty_transcript"]
+    reason: Literal["nonce_collision", "too_long", "empty_transcript", "split_secret"]
 
 
 @dataclass

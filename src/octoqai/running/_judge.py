@@ -11,6 +11,7 @@ from octoqai.expectations import (
     JUDGE_KIND,
     CheckResult,
     JudgeInputError,
+    JudgeResult,
     judge_input_failed,
     judge_request,
     judge_result,
@@ -28,6 +29,17 @@ _ATTEMPTS = 2
 
 def _rubric_sha256(check: JudgeCheck) -> str:
     return hashlib.sha256(f"{check.rubric}\n{check.reference or ''}".encode()).hexdigest()
+
+
+def _not_configured(check: JudgeCheck, digest: str) -> JudgeResult:
+    return JudgeResult(
+        JUDGE_KIND,
+        None,
+        check.hard,
+        NO_JUDGE_DETAIL.format(id=check.id),
+        check_id=check.id,
+        rubric_sha256=digest,
+    )
 
 
 class JudgeProbe:
@@ -74,16 +86,27 @@ class JudgeProbe:
                 break
         return built
 
+    def _split(self, safe: JudgeCheck, clean: Sequence[tuple[str, str]]) -> bool:
+        context = [safe.rubric, safe.reference or ""]
+        users = [user for user, _ in clean]
+        agents = [agent for _, agent in clean]
+        every = [*context, *(text for pair in clean for text in pair)]
+        splits = self._session.redactor.splits_across
+        return any(splits(texts) for texts in (every, [*context, *agents], users))
+
     def _evaluate(
         self, check: JudgeCheck, transcript: Sequence[tuple[str, str]], focus_last: bool
     ) -> CheckResult:
         port = self._session.judge
         judge = self._session.exp.judge
-        if port is None or judge is None:
-            return CheckResult(JUDGE_KIND, None, check.hard, NO_JUDGE_DETAIL.format(id=check.id))
         safe = self._safe(check)
         digest = _rubric_sha256(safe)
-        built = self._request(safe, self._redacted(transcript), focus_last, judge.max_input_chars)
+        if port is None or judge is None:
+            return _not_configured(check, digest)
+        clean = self._redacted(transcript)
+        built = self._request(safe, clean, focus_last, judge.max_input_chars)
+        if not isinstance(built, JudgeInputError) and self._split(safe, clean):
+            built = JudgeInputError("split_secret")
         if isinstance(built, JudgeInputError):
             return judge_input_failed(
                 check, built, expected_model=judge.model, rubric_sha256=digest

@@ -36,9 +36,12 @@ variable) or in hooks, and are never written to reports.
   nothing is written. A query returns at most 10,000 rows; bound watched queries, because the
   cap does not limit the size of a single value.
 - **Judge requests** carry the transcript, the rubric and the reference to the configured provider,
-  after each text is redacted: canaries, secrets, environment values and personal data become
-  placeholders. Redaction can over-mask: an environment value such as `pass` also erases that word
-  from the rubric and the replies the judge reads, so keep short common words out of `.env`.
+  after each text is redacted: canaries, secrets, personal data and the values referenced through
+  `${VAR}` (plus the secrets of the database URL) become placeholders. A value that only sits in
+  hook environment or in an `.env` entry no `${VAR}` refers to is not known to the redactor.
+  A sensitive value split across two texts is not sent: the check is not evaluable. Redaction can
+  over-mask: a referenced value such as `pass` also erases that word from the rubric and the
+  replies the judge reads, so keep short common words out of `${VAR}` values.
 - **Ollama has no authentication.** By default `base_url` must be loopback (`127.0.0.1`,
   `localhost` or `[::1]`). With `allow_remote: true` the prompts, which can contain agent replies
   and test data, travel to that server unauthenticated and, over `http`, unencrypted: use it

@@ -12,6 +12,7 @@ from octoqai.security._json_text import decode_json, plain_forms, string_leaves,
 from octoqai.security.detectors import PRIORITY, Detector, Finding
 
 REDACTED = "[redacted]"
+_JOINERS = ("", " ", "\n")
 
 
 def _placeholder(finding: Finding) -> str:
@@ -118,6 +119,34 @@ class Redactor:
         except RecursionError:
             return REDACTED
         return self._mask_escaped(json.dumps(cleaned, ensure_ascii=False))
+
+    def splits_across(self, texts: Sequence[str]) -> bool:
+        """Tell whether a sensitive value spans the boundary between two texts.
+
+        The non-empty texts are joined with no separator, a space and a newline, because a
+        reader can put adjacent texts together in any of those ways; each join is scanned with
+        the same detectors that ``redact`` uses.
+
+        Args:
+            texts: Texts already redacted one by one, in the order a reader sees them.
+
+        Returns:
+            Whether any finding overlaps two different texts.
+        """
+        parts = [text for text in texts if text]
+        return any(self._crosses(parts, separator) for separator in _JOINERS)
+
+    def _crosses(self, parts: list[str], separator: str) -> bool:
+        spans: list[tuple[int, int]] = []
+        position = 0
+        for part in parts:
+            spans.append((position, position + len(part)))
+            position += len(part) + len(separator)
+        for finding in self._detector.candidates(separator.join(parts)):
+            touched = sum(1 for start, end in spans if finding.start < end and finding.end > start)
+            if touched > 1:
+                return True
+        return False
 
     def _hides(self, decoded: Any) -> bool:
         return any(

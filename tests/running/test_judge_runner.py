@@ -4,12 +4,19 @@ from urllib.parse import quote_plus
 
 import pytest
 
-from octoqai.experiment import Experiment
+from octoqai.agents.port import AgentReply
+from octoqai.experiment import Experiment, load_experiment
 from octoqai.providers.budget import BUDGET_EXHAUSTED
 from octoqai.running import run_experiment
 from octoqai.security import Redactor
 from support import samples
-from support.builders import ExperimentBuilder, judge_check, turn
+from support.builders import (
+    ExperimentBuilder,
+    judge_check,
+    turn,
+    write_data_set,
+    write_env_file,
+)
 from support.providers import DEFAULT_MODEL, FakeLlm
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
@@ -360,3 +367,96 @@ def test_each_text_is_redacted_once_however_many_turn_judges(fake_agent, monkeyp
     play(exp, fake_agent.answers("R."), llm)
     assert [seen.count(u) for u in ("U1", "U2", "U3")] == [1, 1, 1]
     assert seen.count("R.") == 3
+
+
+class Talker:
+    def __init__(self, *answers):
+        self.answers = list(answers)
+
+    def send(self, context):
+        return AgentReply(self.answers.pop(0), None, None, 1.0, None)
+
+    def close(self):
+        pass
+
+
+def two_turns(judge_on_turn=False, judge_on_case=True):
+    turn_judge = [judge_check("t")] if judge_on_turn else []
+    case_judge = [judge_check("w", "ok")] if judge_on_case else []
+    return build(
+        scripted("c1", turn("Uno"), turn("Dos", judge=turn_judge), judge=case_judge),
+        security={"canaries": [{"value": CANARY, "label": "tenant-b"}]},
+        env_values=[ENV_VALUE],
+    )
+
+
+PREFIX, REST = samples.SPLIT_SECRET
+SPLITS = {
+    "key": (f"clave {PREFIX}{REST[:5]}", f"{REST[5:]} fin"),
+    "canary": ("codigo TEN-B-", "0042 listo"),
+    "env-value": (f"valor {ENV_VALUE[:10]}", ENV_VALUE[10:]),
+}
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("name", sorted(SPLITS))
+@pytest.mark.parametrize("level", ["case", "turn"])
+def test_secret_split_across_turns_is_never_sent(name, level):
+    exp = two_turns(judge_on_turn=level == "turn", judge_on_case=level == "case")
+    llm = FakeLlm().judges("pass")
+    [trial] = run_experiment(exp, Talker(*SPLITS[name]), judge=llm, nonce=counter_nonce()).trials
+    assert llm.requests == []
+    checks = trial.judge_checks if level == "case" else trial.turns[1].checks
+    [check] = [c for c in checks if c.kind == "judge"]
+    assert check.passed is None
+    assert (
+        check.detail
+        == f"judge '{'w' if level == 'case' else 't'}': sensitive data split across turns"
+    )
+    assert trial.outcome == "not_evaluable"
+
+
+@pytest.mark.security
+def test_halves_in_the_user_turns_are_caught_too():
+    exp = build(
+        scripted("c1", turn("codigo TEN-B-"), turn("0042 listo"), judge=[judge_check("w", "ok")]),
+        security={"canaries": [{"value": CANARY, "label": "tenant-b"}]},
+    )
+    llm = FakeLlm().judges("pass")
+    run_experiment(exp, Talker("a", "b"), judge=llm, nonce=counter_nonce())
+    assert llm.requests == []
+
+
+@pytest.mark.security
+def test_non_split_secret_is_still_redacted_and_called():
+    exp = two_turns()
+    llm = FakeLlm().judges("pass")
+    run_experiment(
+        exp, Talker(f"clave {samples.ANTHROPIC_KEY}", "fin"), judge=llm, nonce=counter_nonce()
+    )
+    assert len(llm.requests) == 1
+    assert samples.ANTHROPIC_KEY not in texts(llm)[0]
+
+
+def test_harmless_text_at_a_boundary_still_calls_the_judge():
+    exp = two_turns()
+    llm = FakeLlm().judges("pass")
+    [trial] = run_experiment(exp, Talker("codigo TEN", "listo 42"), judge=llm).trials
+    assert len(llm.requests) == 1 and trial.outcome == "pass"
+
+
+@pytest.mark.security
+def test_data_set_secret_in_a_rubric_arrives_redacted(experiment, tmp_path, fake_agent):
+    secret = samples.ANTHROPIC_KEY_NO_PREFIX
+    write_env_file(tmp_path, ".env", SECRET=secret)
+    write_data_set(tmp_path, "qa", {"v": "${SECRET}"})
+    experiment.environments("qa").judge(model=DEFAULT_MODEL).trials(1)
+    experiment.case(
+        "c1", turn("Hola", {"contains": "R"}, judge=[judge_check("j", "Never say {{ data.v }}")])
+    )
+    exp = load_experiment(experiment.write(tmp_path), env="qa", process_env={})
+    llm = FakeLlm().judges("pass")
+    [trial] = play(exp, fake_agent.answers("R."), llm).trials
+    content = llm.requests[0].messages[0].content
+    assert "Never say [redacted]" in content and secret not in texts(llm)[0]
+    assert trial.outcome == "pass"
