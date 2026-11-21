@@ -1,0 +1,26 @@
+- {id: pass, reply: {text: '{"verdict": "pass", "rationale": "cumple"}', stop_reason: end_turn}, passed: true, verdict: pass, detail: null}
+- {id: fail, reply: {text: '{"verdict": "fail", "rationale": "no cumple"}', stop_reason: end_turn}, passed: false, verdict: fail, detail: null}
+- {id: pass-ollama-stop, reply: {text: '{"verdict": "pass", "rationale": "ok"}', stop_reason: stop}, passed: true, verdict: pass, detail: null}
+- {id: pass-no-stop-reason, reply: {text: '{"verdict": "pass", "rationale": "ok"}', stop_reason: null}, passed: true, verdict: pass, detail: null}
+- {id: pass-latest-tag, reply: {text: '{"verdict": "pass", "rationale": "ok"}', model: 'm1:latest'}, passed: true, verdict: pass, detail: null}
+- {id: pass-model-not-reported, reply: {text: '{"verdict": "pass", "rationale": "ok"}', model: null}, passed: true, verdict: pass, detail: null}
+- {id: unsure, reply: {text: '{"verdict": "unsure", "rationale": "ambiguo"}'}, passed: null, verdict: unsure, detail: "judge 'q1': unsure"}
+- {id: empty-text, reply: {text: ''}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: none-text, reply: {text: null}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: broken-json, reply: {text: '{"verdict": "pass", '}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: json-array, reply: {text: '[{"verdict": "pass", "rationale": "x"}]'}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: extra-key, reply: {text: '{"verdict": "pass", "rationale": "x", "score": 9}'}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: uppercase-verdict, reply: {text: '{"verdict": "PASS", "rationale": "x"}'}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: boolean-verdict, reply: {text: '{"verdict": true, "rationale": "x"}'}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: missing-rationale, reply: {text: '{"verdict": "pass"}'}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: rationale-not-string, reply: {text: '{"verdict": "pass", "rationale": 3}'}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: refusal, reply: {text: '{"verdict": "pass", "rationale": "x"}', stop_reason: refusal}, passed: null, verdict: null, detail: "judge 'q1': refused"}
+- {id: max-tokens, reply: {text: '{"verdict": "pass", "rationale": "x"}', stop_reason: max_tokens}, passed: null, verdict: null, detail: "judge 'q1': truncated"}
+- {id: length, reply: {text: '{"verdict": "pass", "rationale": "x"}', stop_reason: length}, passed: null, verdict: null, detail: "judge 'q1': truncated"}
+- {id: context-window, reply: {text: null, stop_reason: model_context_window_exceeded}, passed: null, verdict: null, detail: "judge 'q1': truncated"}
+- {id: stopped-early, reply: {text: '{"verdict": "pass", "rationale": "x"}', stop_reason: pause_turn}, passed: null, verdict: null, detail: "judge 'q1': stopped early"}
+- {id: provider-error, reply: {text: null, error: RateLimitError}, passed: null, verdict: null, detail: "judge 'q1': provider error: RateLimitError"}
+- {id: provider-error-http, reply: {text: null, error: HTTP 503}, passed: null, verdict: null, detail: "judge 'q1': provider error: HTTP 503"}
+- {id: other-model, reply: {text: '{"verdict": "pass", "rationale": "x"}', model: m2}, passed: null, verdict: null, detail: "judge 'q1': model changed (asked m1, served m2)"}
+- {id: budget-exhausted, reply: {text: null, model: null, error: call budget exhausted}, passed: null, verdict: null, detail: "judge 'q1': call budget exhausted"}
+- {id: error-wins-over-model, reply: {text: null, model: m2, error: APIError}, passed: null, verdict: null, detail: "judge 'q1': provider error: APIError"}
