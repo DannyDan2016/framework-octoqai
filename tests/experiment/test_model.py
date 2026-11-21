@@ -3,9 +3,9 @@ import datetime
 import pytest
 from pydantic import ValidationError
 
-from octoqai.experiment import EffectiveWait, Experiment
+from octoqai.experiment import EffectiveWait, Experiment, JudgeCheck, SimulatedUser
 from support.assertions import assert_config_error
-from support.builders import turn
+from support.builders import judge_check, simulated, turn
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
 
@@ -148,3 +148,48 @@ def test_database_url_and_hook_secrets_hidden_from_repr(experiment):
     )
     exp = Experiment.model_validate(experiment.build())
     assert "secreto" not in repr(exp) and "k-123456" not in repr(exp)
+
+
+def test_judge_check_defaults(experiment):
+    experiment.judge().case("c1", turn("Hola", {"contains": "."}, judge=[judge_check("j")]))
+    with pytest.raises(ValidationError, match="does not run yet"):
+        Experiment.model_validate(experiment.build())
+
+
+def test_judge_check_fields_parse():
+    check = JudgeCheck.model_validate(judge_check("j", reference="ref", hard=True))
+    assert (check.reference, check.hard) == ("ref", True)
+    assert JudgeCheck.model_validate(judge_check("j")).hard is False
+
+
+def test_simulated_user_defaults():
+    user = SimulatedUser.model_validate(simulated())
+    assert (user.persona, user.opening, user.stop_when) == ("", None, None)
+    assert (user.each_turn, user.each_turn_judge) == ([], [])
+
+
+def test_case_with_only_judge_counts_as_asserting_but_is_not_run_yet(experiment):
+    experiment.judge().case("c1", turn("Hola"), judge=[judge_check("j")])
+    with pytest.raises(ValidationError, match="judge checks, which this version does not run yet"):
+        Experiment.model_validate(experiment.build())
+
+
+def test_case_with_only_each_turn_judge_counts_as_asserting_but_is_not_run_yet(experiment):
+    experiment.judge().simulated_user().case(
+        "c1", simulated=simulated(each_turn_judge=[judge_check("j")])
+    )
+    with pytest.raises(ValidationError, match="judge checks, which this version does not run yet"):
+        Experiment.model_validate(experiment.build())
+
+
+def test_variant_cannot_carry_judge_settings(experiment):
+    data = experiment.build()
+    data["variants"][0]["judge"] = {"provider": "ollama", "model": "m", "max_calls": 1}
+    with pytest.raises(ValidationError, match="judge"):
+        Experiment.model_validate(data)
+
+
+def test_simulated_case_without_turns_validates_until_runner_support(experiment):
+    experiment.simulated_user().case("c1", simulated=simulated(each_turn=[{"contains": "."}]))
+    with pytest.raises(ValidationError, match="does not run yet"):
+        Experiment.model_validate(experiment.build())

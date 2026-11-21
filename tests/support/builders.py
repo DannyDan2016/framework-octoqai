@@ -12,16 +12,35 @@ import yaml
 from support.agents import SSE_RESPONSE_MAP
 
 DEFAULT_URL = "http://agent.local/chat"
+CASE_CHECK_KEYS = frozenset({"db", "forbidden", "judge"})
+LLM_DEFAULTS: dict[str, Any] = {"provider": "ollama", "model": "m", "max_calls": 3}
 
 
 def turn(
-    user: str, *expect: dict[str, Any], db: list[dict[str, Any]] | None = None
+    user: str,
+    *expect: dict[str, Any],
+    db: list[dict[str, Any]] | None = None,
+    judge: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Build one conversation turn with its expectations and database checks."""
+    """Build one conversation turn with its expectations, database and judge checks."""
     built: dict[str, Any] = {"user": user, "expect": list(expect)}
     if db:
         built["db"] = list(db)
+    if judge:
+        built["judge"] = list(judge)
     return built
+
+
+def judge_check(
+    check_id: str, rubric: str = "The answer is correct and polite.", **settings: Any
+) -> dict[str, Any]:
+    """Build one judge check; ``settings`` can add ``reference`` or ``hard``."""
+    return {"id": check_id, "rubric": rubric, **settings}
+
+
+def simulated(goal: str = "Get a refund", max_turns: int = 3, **settings: Any) -> dict[str, Any]:
+    """Build the ``simulated`` part of a case; ``settings`` add ``each_turn`` and the like."""
+    return {"goal": goal, "max_turns": max_turns, **settings}
 
 
 def write_env_file(directory: Path, name: str, **values: str) -> Path:
@@ -104,17 +123,26 @@ class ExperimentBuilder:
         case_id: str,
         *turns: dict[str, Any],
         tags: Iterable[str] = (),
-        db: Iterable[dict[str, Any]] = (),
-        forbidden: Iterable[dict[str, Any]] = (),
+        simulated: dict[str, Any] | None = None,
+        **checks: Iterable[dict[str, Any]],
     ) -> ExperimentBuilder:
-        """Add a case made of ``turn(...)`` items, with optional case-level database checks."""
-        case: dict[str, Any] = {"id": case_id, "turns": list(turns)}
+        """Add a case of ``turn(...)`` items or a ``simulated`` user.
+
+        ``checks`` are the case-level lists: ``db``, ``forbidden`` and ``judge``.
+        """
+        unknown = set(checks) - CASE_CHECK_KEYS
+        if unknown:
+            raise TypeError(f"unknown case checks: {sorted(unknown)}")
+        case: dict[str, Any] = {"id": case_id}
+        if turns:
+            case["turns"] = list(turns)
+        if simulated is not None:
+            case["simulated"] = dict(simulated)
         if tags:
             case["tags"] = list(tags)
-        if db:
-            case["db"] = list(db)
-        if forbidden:
-            case["forbidden"] = list(forbidden)
+        for key, items in checks.items():
+            if items:
+                case[key] = list(items)
         self._cases.append(case)
         return self
 
@@ -144,6 +172,14 @@ class ExperimentBuilder:
     ) -> ExperimentBuilder:
         """Declare the database section with its optional forbidden changes."""
         return self.merge({"database": {"url": url, "forbidden": list(forbidden)}})
+
+    def judge(self, **settings: Any) -> ExperimentBuilder:
+        """Declare the ``judge`` section; defaults to a local model with a call budget."""
+        return self.merge({"judge": {**LLM_DEFAULTS, **settings}})
+
+    def simulated_user(self, **settings: Any) -> ExperimentBuilder:
+        """Declare the ``simulated_user`` section; defaults to a local model with a budget."""
+        return self.merge({"simulated_user": {**LLM_DEFAULTS, **settings}})
 
     def hooks(self, **stages: list[dict[str, Any]]) -> ExperimentBuilder:
         """Set lifecycle hooks per stage, e.g. ``before_trial=[{"sql": [...]}]``."""

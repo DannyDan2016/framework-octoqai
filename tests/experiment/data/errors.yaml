@@ -135,3 +135,11 @@
 - id: base-dir-is-reserved
   overrides: {base_dir: /tmp}
   fragments: [base_dir is filled in by octoqai]
+
+- id: case-without-turns-key
+  overrides: {cases: [{id: c1}]}
+  fragments: ["case 'c1'", "exactly one of turns or simulated"]
+
+- id: case-with-empty-turns
+  overrides: {cases: [{id: c1, turns: []}]}
+  fragments: ["case 'c1'", "exactly one of turns or simulated"]

@@ -5,7 +5,11 @@ from octoqai.expectations import evaluate
 from octoqai.experiment import load_experiment
 from support import samples
 from support.assertions import assert_config_error
-from support.builders import turn, write_data_set, write_env_file
+from support.builders import (
+    turn,
+    write_data_set,
+    write_env_file,
+)
 from support.paths import cases
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
@@ -228,6 +232,39 @@ def test_invalid_database_or_hooks_is_config_error(row, experiment, tmp_path):
     assert_config_error(
         lambda: load_experiment(path, process_env={"DB_URL": "sqlite:///x.db"}),
         *row["fragments"],
+    )
+
+
+@pytest.mark.parametrize("row", cases(__file__, "judge_errors"))
+def test_invalid_judge_or_simulated_user_is_config_error(row, experiment, tmp_path):
+    path = experiment.merge(row["overrides"]).write(tmp_path)
+    assert_config_error(
+        lambda: load_experiment(path, process_env={"DB_URL": "sqlite:///x.db"}),
+        *row["fragments"],
+        absent=row.get("absent", ()),
+    )
+
+
+def test_judge_and_simulated_sections_load_in_short_form(experiment, tmp_path):
+    exp = load_experiment(experiment.judge().simulated_user().write(tmp_path))
+    assert (exp.judge.provider, exp.judge.max_calls, exp.judge.max_input_chars) == (
+        "ollama",
+        3,
+        32_000,
+    )
+    assert exp.simulated_user.model == "m"
+
+
+@pytest.mark.security
+def test_judge_and_simulated_user_keys_hidden_from_repr(experiment, tmp_path):
+    key = "".join(samples.SPLIT_SECRET)
+    experiment.judge(provider="anthropic", api_key=key).simulated_user(
+        provider="anthropic", api_key=key
+    )
+    exp = load_experiment(experiment.write(tmp_path))
+    assert exp.judge.api_key == key
+    assert (
+        key not in repr(exp) and key not in repr(exp.judge) and key not in repr(exp.simulated_user)
     )
 
 
