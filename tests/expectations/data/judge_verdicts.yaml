@@ -24,3 +24,8 @@
 - {id: other-model, reply: {text: '{"verdict": "pass", "rationale": "x"}', model: m2}, passed: null, verdict: null, detail: "judge 'q1': model changed (asked m1, served m2)"}
 - {id: budget-exhausted, reply: {text: null, model: null, error: call budget exhausted}, passed: null, verdict: null, detail: "judge 'q1': call budget exhausted"}
 - {id: error-wins-over-model, reply: {text: null, model: m2, error: APIError}, passed: null, verdict: null, detail: "judge 'q1': provider error: APIError"}
+- {id: duplicate-verdict-key, reply: {text: '{"verdict": "fail", "verdict": "pass", "rationale": "x"}'}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: duplicate-rationale-key, reply: {text: '{"verdict": "pass", "rationale": "a", "rationale": "b"}'}, passed: null, verdict: null, detail: "judge 'q1': unreadable verdict"}
+- {id: delimiter-collision, input_error: nonce_collision, passed: null, verdict: null, detail: "judge 'q1': delimiter collision"}
+- {id: transcript-too-long, input_error: too_long, passed: null, verdict: null, detail: "judge 'q1': transcript too long"}
+- {id: empty-transcript, input_error: empty_transcript, passed: null, verdict: null, detail: "judge 'q1': empty transcript"}
