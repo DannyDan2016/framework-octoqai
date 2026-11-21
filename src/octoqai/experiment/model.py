@@ -733,14 +733,6 @@ def _llm_declared(exp: Experiment) -> None:
             )
 
 
-def _judge_checks_pending(exp: Experiment) -> None:
-    for case in exp.cases:
-        if _judge_checks(case):
-            raise ValueError(
-                f"case {case.id!r} uses judge checks, which this version does not run yet"
-            )
-
-
 def _simulated_user_pending(exp: Experiment) -> None:
     for case in exp.cases:
         if case.simulated is not None:
@@ -787,7 +779,6 @@ _EXPERIMENT_CHECKS: tuple[Callable[[Experiment], None], ...] = (
     _cases_have_expectations,
     _database_declared,
     _unique_check_ids,
-    _judge_checks_pending,
     _simulated_user_pending,
     _json_serializable,
     _variants_cover_template,

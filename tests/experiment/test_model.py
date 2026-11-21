@@ -150,10 +150,10 @@ def test_database_url_and_hook_secrets_hidden_from_repr(experiment):
     assert "secreto" not in repr(exp) and "k-123456" not in repr(exp)
 
 
-def test_judge_checks_are_rejected_until_runner_support(experiment):
+def test_judge_checks_are_valid_with_a_judge_section(experiment):
     experiment.judge().case("c1", turn("Hola", {"contains": "."}, judge=[judge_check("j")]))
-    with pytest.raises(ValidationError, match="does not run yet"):
-        Experiment.model_validate(experiment.build())
+    exp = Experiment.model_validate(experiment.build())
+    assert exp.cases[0].turns[0].judge[0].id == "j"
 
 
 def test_judge_check_fields_parse():
@@ -168,17 +168,19 @@ def test_simulated_user_defaults():
     assert (user.each_turn, user.each_turn_judge) == ([], [])
 
 
-def test_case_with_only_judge_counts_as_asserting_but_is_not_run_yet(experiment):
+def test_case_with_only_judge_counts_as_asserting(experiment):
     experiment.judge().case("c1", turn("Hola"), judge=[judge_check("j")])
-    with pytest.raises(ValidationError, match="judge checks, which this version does not run yet"):
-        Experiment.model_validate(experiment.build())
+    exp = Experiment.model_validate(experiment.build())
+    assert exp.cases[0].judge[0].id == "j"
 
 
-def test_case_with_only_each_turn_judge_counts_as_asserting_but_is_not_run_yet(experiment):
+def test_case_with_only_each_turn_judge_counts_as_asserting_but_simulation_is_not_run_yet(
+    experiment,
+):
     experiment.judge().simulated_user().case(
         "c1", simulated=simulated(each_turn_judge=[judge_check("j")])
     )
-    with pytest.raises(ValidationError, match="judge checks, which this version does not run yet"):
+    with pytest.raises(ValidationError, match="uses a simulated user, which this version"):
         Experiment.model_validate(experiment.build())
 
 

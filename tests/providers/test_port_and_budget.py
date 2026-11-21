@@ -152,3 +152,31 @@ def test_budget_close_closes_the_inner_port():
     inner = FakeLlm()
     BudgetedLlm(inner, max_calls=1).close()
     assert inner.closed
+
+
+def test_stats_summarise_calls_errors_tokens_and_served_models():
+    fake = FakeLlm().uses(3, 4).judges("pass").judges("pass").fails("APITimeoutError")
+    budget = BudgetedLlm(fake, max_calls=3)
+    for _ in range(4):
+        budget.complete(REQUEST)
+    stats = budget.stats()
+    assert stats.calls == 3
+    assert stats.errors_by_class == {"APITimeoutError": 1, BUDGET_EXHAUSTED: 1}
+    assert (stats.input_tokens, stats.output_tokens) == (6, 8)
+    assert stats.served_models == {"fake-judge-1": 2}
+
+
+def test_stats_are_a_frozen_copy():
+    budget = BudgetedLlm(FakeLlm().judges("pass"), max_calls=1)
+    budget.complete(REQUEST)
+    stats = budget.stats()
+    budget.complete(REQUEST)
+    assert stats.errors_by_class == {}
+    with pytest.raises(AttributeError):
+        stats.calls = 9
+
+
+def test_stats_of_an_unused_budget_are_empty():
+    stats = BudgetedLlm(FakeLlm(), max_calls=1).stats()
+    assert (stats.calls, stats.errors_by_class, stats.served_models) == (0, {}, {})
+    assert (stats.input_tokens, stats.output_tokens) == (None, None)

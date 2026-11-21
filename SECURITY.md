@@ -35,6 +35,10 @@ variable) or in hooks, and are never written to reports.
 - **Database checks** roll every query back, but only a read-only database user guarantees that
   nothing is written. A query returns at most 10,000 rows; bound watched queries, because the
   cap does not limit the size of a single value.
+- **Judge requests** carry the transcript, the rubric and the reference to the configured provider,
+  after each text is redacted: canaries, secrets, environment values and personal data become
+  placeholders. Redaction can over-mask: an environment value such as `pass` also erases that word
+  from the rubric and the replies the judge reads, so keep short common words out of `.env`.
 - **Ollama has no authentication.** By default `base_url` must be loopback (`127.0.0.1`,
   `localhost` or `[::1]`). With `allow_remote: true` the prompts, which can contain agent replies
   and test data, travel to that server unauthenticated and, over `http`, unencrypted: use it

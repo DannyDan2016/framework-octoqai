@@ -1,7 +1,7 @@
 """Language model port and its call budget."""
 
 from octoqai.providers.anthropic_api import AnthropicProvider
-from octoqai.providers.budget import BUDGET_EXHAUSTED, BudgetedLlm
+from octoqai.providers.budget import BUDGET_EXHAUSTED, BudgetedLlm, LlmStats
 from octoqai.providers.factory import provider_for
 from octoqai.providers.ollama_api import OllamaProvider
 from octoqai.providers.port import (
@@ -21,6 +21,7 @@ __all__ = [
     "LlmPort",
     "LlmReply",
     "LlmRequest",
+    "LlmStats",
     "LlmRole",
     "LlmUsage",
     "OllamaProvider",

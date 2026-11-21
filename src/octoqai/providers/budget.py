@@ -3,10 +3,22 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 
 from octoqai.providers.port import LlmPort, LlmReply, LlmRequest, LlmUsage
 
 BUDGET_EXHAUSTED = "call budget exhausted"
+
+
+@dataclass(frozen=True)
+class LlmStats:
+    """What one role asked of its model during a run."""
+
+    calls: int
+    errors_by_class: dict[str, int]
+    input_tokens: int | None
+    output_tokens: int | None
+    served_models: dict[str, int]
 
 
 def _add(total: int | None, extra: int | None) -> int | None:
@@ -27,6 +39,7 @@ class BudgetedLlm:
         self.calls = 0
         self.errors: Counter[str] = Counter()
         self.usage_total = LlmUsage()
+        self.served_models: Counter[str] = Counter()
 
     def complete(self, request: LlmRequest) -> LlmReply:
         """Forward the call while budget remains; later calls get a fixed error reply."""
@@ -37,11 +50,23 @@ class BudgetedLlm:
         reply = self._inner.complete(request)
         if reply.error is not None:
             self.errors[reply.error] += 1
+        if reply.model is not None:
+            self.served_models[reply.model] += 1
         self.usage_total = LlmUsage(
             _add(self.usage_total.input_tokens, reply.usage.input_tokens),
             _add(self.usage_total.output_tokens, reply.usage.output_tokens),
         )
         return reply
+
+    def stats(self) -> LlmStats:
+        """Return a snapshot of the calls, errors, tokens and served models so far."""
+        return LlmStats(
+            self.calls,
+            dict(self.errors),
+            self.usage_total.input_tokens,
+            self.usage_total.output_tokens,
+            dict(self.served_models),
+        )
 
     def close(self) -> None:
         """Close the wrapped port."""

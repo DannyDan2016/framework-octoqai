@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import secrets
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -12,8 +14,11 @@ from octoqai.db.port import DatabasePort
 from octoqai.expectations import FORBIDDEN_KIND, CheckResult, evaluate
 from octoqai.experiment import Case, Experiment, HookStage, Turn, Variant
 from octoqai.hooks.port import HookResult, LifecyclePort
+from octoqai.providers.budget import BudgetedLlm, LlmStats
+from octoqai.providers.port import LlmPort, LlmRole
 from octoqai.running._database import DbProbe
-from octoqai.security import Detector, Leak, scan_reply
+from octoqai.running._judge import JudgeProbe
+from octoqai.security import Detector, Leak, Redactor, scan_reply
 
 Outcome = Literal["pass", "fail", "not_evaluable"]
 
@@ -39,10 +44,12 @@ class TrialResult:
     hooks: list[HookResult] = field(default_factory=list)
     setup_error: str | None = None
     db_checks: list[CheckResult] = field(default_factory=list)
+    judge_checks: list[CheckResult] = field(default_factory=list)
 
     @property
     def _checks(self) -> list[CheckResult]:
-        return [check for turn in self.turns for check in turn.checks] + self.db_checks
+        turn_checks = [check for turn in self.turns for check in turn.checks]
+        return turn_checks + self.db_checks + self.judge_checks
 
     @property
     def outcome(self) -> Outcome:
@@ -121,6 +128,7 @@ class RunResult:
     finished_at: str
     hooks: list[HookResult] = field(default_factory=list)
     setup_error: str | None = None
+    llm: dict[LlmRole, LlmStats] = field(default_factory=dict)
 
 
 class _NoHooks:
@@ -147,6 +155,17 @@ class _Session:
     detector: Detector
     db: DatabasePort | None
     hooks: LifecyclePort
+    redactor: Redactor
+    nonce: Callable[[], str]
+    judge: BudgetedLlm | None = None
+    simulator: BudgetedLlm | None = None
+
+
+@dataclass
+class _Probes:
+    db: DbProbe
+    judge: JudgeProbe
+    transcript: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _leak_check(leak: Leak) -> CheckResult:
@@ -157,21 +176,23 @@ def _leak_check(leak: Leak) -> CheckResult:
 
 def _play_turn(
     session: _Session,
-    probe: DbProbe,
+    probes: _Probes,
     request: dict[str, Any],
     turn: Turn,
     said: list[str],
 ) -> TurnResult:
-    probe.before_turn(turn)
+    probes.db.before_turn(turn)
     reply = session.agent.send(request)
     said.append(turn.user)
+    probes.transcript.append((turn.user, reply.answer or ""))
     leaks = scan_reply(session.detector, reply, said)
     checks = [evaluate(e, reply) for e in turn.expect] + [_leak_check(x) for x in leaks]
-    checks += probe.after_turn(turn, reply, len(said))
+    checks += probes.db.after_turn(turn, reply, len(said))
+    checks += probes.judge.after_turn(turn, probes.transcript, reply)
     return TurnResult(turn.user, reply, checks, leaks)
 
 
-def _play(session: _Session, probe: DbProbe, variant: Variant, case: Case) -> list[TurnResult]:
+def _play(session: _Session, probes: _Probes, variant: Variant, case: Case) -> list[TurnResult]:
     exp = session.exp
     said: list[str] = []
     conversation_id = str(uuid.uuid4())
@@ -187,7 +208,7 @@ def _play(session: _Session, probe: DbProbe, variant: Variant, case: Case) -> li
             "data": exp.data_values,
             "env": exp.environment,
         }
-        result = _play_turn(session, probe, request, turn, said)
+        result = _play_turn(session, probes, request, turn, said)
         turns.append(result)
         if result.reply.error is not None:
             break
@@ -205,15 +226,19 @@ def _run_trial(session: _Session, variant: Variant, case: Case, index: int) -> T
     setup_error = _first_failure(before)
     turns: list[TurnResult] = []
     db_checks: list[CheckResult] = []
+    judge_checks: list[CheckResult] = []
     try:
         if setup_error is None:
-            probe = DbProbe(session.db, session.exp, case)
-            turns = _play(session, probe, variant, case)
+            probes = _Probes(DbProbe(session.db, session.exp, case), JudgeProbe(session, case))
+            turns = _play(session, probes, variant, case)
             failure = next((t.reply.error for t in turns if t.reply.error), None)
-            db_checks = probe.finish(failure)
+            db_checks = probes.db.finish(failure)
+            judge_checks = probes.judge.finish(probes.transcript, failure)
     finally:
         after = session.hooks.run("after_trial")
-    return TrialResult(variant.name, case.id, index, turns, before + after, setup_error, db_checks)
+    return TrialResult(
+        variant.name, case.id, index, turns, before + after, setup_error, db_checks, judge_checks
+    )
 
 
 def _run_all(session: _Session) -> list[TrialResult]:
@@ -226,12 +251,29 @@ def _run_all(session: _Session) -> list[TrialResult]:
     ]
 
 
+def _budgeted(port: LlmPort | None, max_calls: int | None) -> BudgetedLlm | None:
+    if port is None or max_calls is None:
+        return None
+    return BudgetedLlm(port, max_calls)
+
+
+def _llm_stats(session: _Session) -> dict[LlmRole, LlmStats]:
+    roles: dict[LlmRole, BudgetedLlm | None] = {
+        "judge": session.judge,
+        "simulated_user": session.simulator,
+    }
+    return {role: budget.stats() for role, budget in roles.items() if budget is not None}
+
+
 def run_experiment(
     exp: Experiment,
     agent: AgentPort,
     *,
     db: DatabasePort | None = None,
     hooks: LifecyclePort | None = None,
+    judge: LlmPort | None = None,
+    simulator: LlmPort | None = None,
+    nonce: Callable[[], str] = secrets.token_hex,
 ) -> RunResult:
     """Run every variant, case and trial in series, with a reset before each trial.
 
@@ -240,9 +282,15 @@ def run_experiment(
         agent: Adapter connected to the agent under test.
         db: Database the experiment checks, if any.
         hooks: Lifecycle hooks to run around the run and each trial.
+        judge: Model that judges replies, if the experiment configures one; it is wrapped in
+            the call budget of ``exp.judge`` and never closed here.
+        simulator: Model that plays the user, if the experiment configures one; budgeted by
+            ``exp.simulated_user`` and never closed here.
+        nonce: Source of the unpredictable token that delimits judge data; lowercase hex.
 
     Returns:
-        The collected trial results and the outcome of the run hooks.
+        The collected trial results, the outcome of the run hooks and the calls made to each
+        language model role.
 
     Raises:
         Exception: Whatever a trial raises, such as an agent adapter failing unexpectedly. The
@@ -251,7 +299,15 @@ def run_experiment(
     """
     started_at = _now()
     session = _Session(
-        agent, exp, Detector(exp.security), db, hooks if hooks is not None else _NoHooks()
+        agent,
+        exp,
+        Detector(exp.security),
+        db,
+        hooks if hooks is not None else _NoHooks(),
+        Redactor.for_report(exp.security, exp.redacted_values),
+        nonce,
+        _budgeted(judge, exp.judge.max_calls if exp.judge is not None else None),
+        _budgeted(simulator, exp.simulated_user.max_calls if exp.simulated_user else None),
     )
     before = session.hooks.run("before_run")
     setup_error = _first_failure(before)
@@ -261,4 +317,6 @@ def run_experiment(
             trials = _run_all(session)
     finally:
         after = session.hooks.run("after_run")
-    return RunResult(exp, trials, started_at, _now(), before + after, setup_error)
+    return RunResult(
+        exp, trials, started_at, _now(), before + after, setup_error, _llm_stats(session)
+    )
