@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from octoqai.agents import AgentReply
@@ -754,3 +756,30 @@ def test_data_value_with_placeholder_text_is_neither_expanded_nor_rendered_again
     check = JudgeCheck(id="j", rubric="Valor {{ data.raw }}")
     rendered = _render(_bare_case(judge=[check]))
     assert rendered.judge[0].rubric == "Valor ${X}{{ data.nope }}"
+
+
+@pytest.mark.security
+def test_data_value_with_placeholders_reaches_the_judge_rubric_literally(experiment, tmp_path):
+    write_data_set(tmp_path, "qa", {"v": "Valor ${X} y {{ nope }}"})
+    experiment.environments("qa").judge().merge(
+        {"cases": [{"id": "c1", "turns": [turn("Hola", judge=[judge_check("j", "{{ data.v }}")])]}]}
+    )
+    exp = load_experiment(
+        experiment.write(tmp_path), env="qa", process_env={"X": "${Y} {{ data.v }}", "Y": "boom"}
+    )
+    assert exp.cases[0].turns[0].judge[0].rubric == "Valor ${Y} {{ data.v }} y {{ nope }}"
+    assert "boom" not in repr(exp.cases)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("section", ["judge", "simulated_user"])
+@pytest.mark.parametrize("scalar", ["plain-scalar-key-9", 12345, True, ["list-scalar-9"]])
+def test_non_mapping_llm_section_never_carries_the_scalar(section, scalar, experiment, tmp_path):
+    experiment.merge({section: scalar})
+    with pytest.raises(ConfigError) as info:
+        load_experiment(experiment.write(tmp_path), process_env={})
+    assert re.search(rf"{section}\.api_key must come from an environment variable", str(info.value))
+    chain = [info.value.__cause__, info.value.__context__]
+    for text in [str(info.value), *(repr(link) for link in chain)]:
+        assert "plain-scalar-key-9" not in text and "list-scalar-9" not in text
+    assert chain == [None, None]

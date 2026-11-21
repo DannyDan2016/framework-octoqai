@@ -288,7 +288,9 @@ def _expand_database(data: dict[str, Any], variables: _Variables) -> None:
 def _expand_llm(data: dict[str, Any], variables: _Variables) -> None:
     for section in ("judge", "simulated_user"):
         config = data.get(section)
-        if not isinstance(config, dict):
+        if config is not None and not isinstance(config, dict):
+            raise _api_key_error(section)
+        if config is None:
             continue
         if isinstance(config.get("model"), str):
             config["model"] = variables.expand(config["model"])
