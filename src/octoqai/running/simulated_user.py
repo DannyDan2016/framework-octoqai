@@ -22,6 +22,7 @@ SIMULATOR_PROMPT_VERSION = "simulated-user-v1"
 INCOMPLETE_DETAIL = "conversation incomplete: simulated user failed"
 SPLIT_REASON = "sensitive data split across turns"
 COLLISION_REASON = "delimiter collision"
+TOO_LONG_REASON = "transcript too long"
 NOT_CONFIGURED_REASON = "no simulated user configured"
 ENDED_EARLY_REASON = "ended before the first turn"
 
@@ -246,6 +247,13 @@ class SimulatedUserDriver:
         every = [*context, *(text for pair in clean for text in pair)]
         return any(splits(texts) for texts in (every, [*context, *agents], users))
 
+    def _too_long(self, clean: Transcript) -> bool:
+        settings = self._session.exp.simulated_user
+        if settings is None:
+            return False
+        texts = [self._sim.goal, self._sim.persona, *(text for pair in clean for text in pair)]
+        return sum(len(text) for text in texts) > settings.max_input_chars
+
     def _request(self, clean: Transcript) -> LlmRequest | None:
         for _ in range(_ATTEMPTS):
             built = simulator_request(self._sim, clean, nonce=self._session.nonce())
@@ -261,8 +269,8 @@ class SimulatedUserDriver:
 
         Returns:
             A ``SimulatorTurn``, or the fixed reason why the simulator could not answer; in
-            that case no call was made when the reason is a missing port, a delimiter
-            collision or a sensitive value split across turns.
+            that case no call was made when the reason is a missing port, a transcript above
+            ``max_input_chars``, a delimiter collision or a sensitive value split across turns.
         """
         port = self._session.simulator
         if port is None:
@@ -270,6 +278,8 @@ class SimulatedUserDriver:
         clean = self._redacted(transcript)
         if self._split(clean):
             return SPLIT_REASON
+        if self._too_long(clean):
+            return TOO_LONG_REASON
         built = self._request(clean)
         if built is None:
             return COLLISION_REASON

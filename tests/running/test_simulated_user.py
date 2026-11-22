@@ -44,9 +44,10 @@ def counter_nonce():
 def build(security=None, db_url=None, forbidden=(), **settings):
     trials = settings.pop("trials", 1)
     max_turns = settings.pop("max_turns", 5)
-    builder = (
-        ExperimentBuilder().trials(trials).simulated_user(max_calls=settings.pop("max_calls", 10))
-    )
+    limits = {"max_calls": settings.pop("max_calls", 10)}
+    if "max_input_chars" in settings:
+        limits["max_input_chars"] = settings.pop("max_input_chars")
+    builder = ExperimentBuilder().trials(trials).simulated_user(**limits)
     settings.setdefault("each_turn", [{"contains": "."}])
     case = {"simulated": simulated(max_turns=max_turns, **settings)}
     if db_url:
@@ -156,16 +157,21 @@ def failing_user(row):
 def test_broken_simulator_is_not_evaluable_and_never_calls_the_judge(
     row, fake_agent, sqlite_db, sql_database
 ):
-    extra = {k: row[k] for k in ("persona", "opening") if k in row}
+    extra = {k: row[k] for k in ("persona", "opening", "max_input_chars") if k in row}
+    if "persona_pad" in row:
+        extra["persona"] = "p" * row["persona_pad"]
     security = {"canaries": [{"value": CANARY, "label": "tenant-b"}]}
     exp = build(
         max_calls=row.get("max_calls", 10), db_url=sqlite_db.url, security=security, **extra
     )
     judge = FakeLlm().judges("pass")
     nonce = (lambda: "a" * 32) if row.get("fixed_nonce") else None
-    agent = fake_agent.answers(row.get("agent", "ok."))
-    run = play(exp, agent, failing_user(row), judge, db=sql_database, nonce=nonce)
+    agent = fake_agent.answers(row.get("agent", "ok.") + "x" * row.get("agent_pad", 0))
+    user = failing_user(row)
+    run = play(exp, agent, user, judge, db=sql_database, nonce=nonce)
     [trial] = run.trials
+    if "simulator_calls" in row:
+        assert len(user.requests) == row["simulator_calls"]
     assert trial.simulator_error == row["reason"]
     assert (trial.stop_reason, trial.outcome) == ("simulator_error", "not_evaluable")
     assert len(trial.turns) == row.get("turns", 1)

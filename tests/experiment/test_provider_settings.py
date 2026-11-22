@@ -99,7 +99,13 @@ def test_judge_config_input_cap():
             JudgeConfig.model_validate(anthropic(max_input_chars=bad))
 
 
-def test_simulated_user_has_no_input_cap():
-    with pytest.raises(ValidationError, match="max_input_chars"):
-        SimulatedUserConfig.model_validate(anthropic(max_input_chars=5000))
+def test_simulated_user_config_input_cap_matches_the_judge():
+    assert SimulatedUserConfig.model_validate(anthropic()).max_input_chars == 32_000
+    for ok in (1_000, 200_000):
+        assert (
+            SimulatedUserConfig.model_validate(anthropic(max_input_chars=ok)).max_input_chars == ok
+        )
+    for bad in (0, 999, 200_001):
+        with pytest.raises(ValidationError, match="max_input_chars"):
+            SimulatedUserConfig.model_validate(anthropic(max_input_chars=bad))
     assert SimulatedUserConfig.model_validate(ollama()).provider == "ollama"

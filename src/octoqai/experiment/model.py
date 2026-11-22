@@ -545,7 +545,9 @@ class JudgeConfig(ProviderSettings):
 
 
 class SimulatedUserConfig(ProviderSettings):
-    """The model that plays the user."""
+    """The model that plays the user, with the largest transcript it may read."""
+
+    max_input_chars: int = Field(default=32_000, ge=1_000, le=200_000)
 
 
 class Canary(_Model):

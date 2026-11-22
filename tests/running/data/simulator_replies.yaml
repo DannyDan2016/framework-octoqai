@@ -50,3 +50,16 @@
   agent: "0042 listo."
   reply: {kind: text, value: '{"message": "x", "done": false}'}
   reason: sensitive data split across turns
+- id: transcript-grows-past-the-input-cap
+  max_input_chars: 1000
+  agent_pad: 1200
+  reply: {kind: text, value: '{"message": "x", "done": false}'}
+  reason: transcript too long
+  simulator_calls: 1
+- id: persona-alone-past-the-input-cap
+  max_input_chars: 1000
+  persona_pad: 1200
+  turns: 0
+  reply: {kind: text, value: '{"message": "x", "done": false}'}
+  reason: transcript too long
+  simulator_calls: 0
