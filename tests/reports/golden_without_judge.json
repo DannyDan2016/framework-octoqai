@@ -1,0 +1,223 @@
+{
+  "schema_version": "1",
+  "tool": {
+    "name": "octoqai",
+    "version": "0.0.1"
+  },
+  "experiment": {
+    "name": "demo",
+    "trials": 2,
+    "thresholds": {
+      "pass_rate": 0.5
+    },
+    "variants": [
+      {
+        "name": "base",
+        "baseline": false,
+        "params": {}
+      }
+    ]
+  },
+  "environment": null,
+  "database": false,
+  "hooks": [],
+  "tags": [],
+  "started_at": null,
+  "finished_at": null,
+  "verdict": {
+    "status": "insufficient",
+    "recommended": "base",
+    "reasons": [
+      "base: interval [0.34, 1.00] contains threshold 0.50: more cases or trials are needed"
+    ]
+  },
+  "variants": [
+    {
+      "name": "base",
+      "baseline": true,
+      "n_cases": 2,
+      "n_evaluable": 4,
+      "n_not_evaluable": 0,
+      "pass_rate": 1.0,
+      "ci95": [
+        0.34237195288961925,
+        1.0
+      ],
+      "pass_at_k": 1.0,
+      "pass_hat_k": 1.0,
+      "hard_violations": 0,
+      "mean_tokens": null,
+      "mean_latency_ms": null,
+      "mean_ttft_ms": null,
+      "leaks": 0,
+      "forbidden_crud": 0,
+      "status": "insufficient",
+      "reasons": [
+        "interval [0.34, 1.00] contains threshold 0.50: more cases or trials are needed"
+      ]
+    }
+  ],
+  "comparisons": [],
+  "trials": [
+    {
+      "variant": "base",
+      "case_id": "c1",
+      "trial": 0,
+      "outcome": "pass",
+      "hard_violation": false,
+      "tokens": null,
+      "latency_ms": null,
+      "leaks": 0,
+      "ttft_ms": null,
+      "forbidden_crud": 0,
+      "setup_error": null,
+      "simulator_error": null,
+      "stop_reason": null,
+      "hooks": [],
+      "db_checks": [],
+      "turns": [
+        {
+          "user": "Hola",
+          "answer": "ñ ok",
+          "tool_calls": null,
+          "tokens": null,
+          "latency_ms": null,
+          "ttft_ms": null,
+          "fragments": 0,
+          "retries": [],
+          "error": null,
+          "checks": [
+            {
+              "kind": "contains",
+              "passed": true,
+              "hard": false,
+              "detail": "pattern found",
+              "agent_error": false
+            }
+          ],
+          "leaks": []
+        }
+      ]
+    },
+    {
+      "variant": "base",
+      "case_id": "c1",
+      "trial": 1,
+      "outcome": "pass",
+      "hard_violation": false,
+      "tokens": null,
+      "latency_ms": null,
+      "leaks": 0,
+      "ttft_ms": null,
+      "forbidden_crud": 0,
+      "setup_error": null,
+      "simulator_error": null,
+      "stop_reason": null,
+      "hooks": [],
+      "db_checks": [],
+      "turns": [
+        {
+          "user": "Hola",
+          "answer": "ñ ok",
+          "tool_calls": null,
+          "tokens": null,
+          "latency_ms": null,
+          "ttft_ms": null,
+          "fragments": 0,
+          "retries": [],
+          "error": null,
+          "checks": [
+            {
+              "kind": "contains",
+              "passed": true,
+              "hard": false,
+              "detail": "pattern found",
+              "agent_error": false
+            }
+          ],
+          "leaks": []
+        }
+      ]
+    },
+    {
+      "variant": "base",
+      "case_id": "c2",
+      "trial": 0,
+      "outcome": "pass",
+      "hard_violation": false,
+      "tokens": null,
+      "latency_ms": null,
+      "leaks": 0,
+      "ttft_ms": null,
+      "forbidden_crud": 0,
+      "setup_error": null,
+      "simulator_error": null,
+      "stop_reason": null,
+      "hooks": [],
+      "db_checks": [],
+      "turns": [
+        {
+          "user": "Adiós",
+          "answer": "ñ ok",
+          "tool_calls": null,
+          "tokens": null,
+          "latency_ms": null,
+          "ttft_ms": null,
+          "fragments": 0,
+          "retries": [],
+          "error": null,
+          "checks": [
+            {
+              "kind": "contains",
+              "passed": true,
+              "hard": false,
+              "detail": "pattern found",
+              "agent_error": false
+            }
+          ],
+          "leaks": []
+        }
+      ]
+    },
+    {
+      "variant": "base",
+      "case_id": "c2",
+      "trial": 1,
+      "outcome": "pass",
+      "hard_violation": false,
+      "tokens": null,
+      "latency_ms": null,
+      "leaks": 0,
+      "ttft_ms": null,
+      "forbidden_crud": 0,
+      "setup_error": null,
+      "simulator_error": null,
+      "stop_reason": null,
+      "hooks": [],
+      "db_checks": [],
+      "turns": [
+        {
+          "user": "Adiós",
+          "answer": "ñ ok",
+          "tool_calls": null,
+          "tokens": null,
+          "latency_ms": null,
+          "ttft_ms": null,
+          "fragments": 0,
+          "retries": [],
+          "error": null,
+          "checks": [
+            {
+              "kind": "contains",
+              "passed": true,
+              "hard": false,
+              "detail": "pattern found",
+              "agent_error": false
+            }
+          ],
+          "leaks": []
+        }
+      ]
+    }
+  ]
+}

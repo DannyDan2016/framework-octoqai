@@ -1,7 +1,7 @@
 import pytest
 
 from octoqai.agents import AgentReply
-from octoqai.expectations import CheckResult
+from octoqai.expectations import CheckResult, JudgeResult
 from octoqai.experiment import Experiment
 from octoqai.running import RunResult, TrialResult, TurnResult
 from octoqai.security import Leak
@@ -216,3 +216,81 @@ def test_a_candidate_where_no_trial_ran_is_named_in_the_reasons(skipped):
 def test_a_candidate_that_ran_is_not_reported_as_unrun():
     run = make_run({"base": all_pass(30, 5), "cand": all_pass(30, 5)}, baseline="base")
     assert not any("no trial ran" in reason for reason in decide(run).reasons)
+
+
+def _judge(passed, *, hard=False, agent_error=False):
+    return JudgeResult(
+        "judge", passed, hard, "", agent_error=agent_error, check_id="j", verdict="x"
+    )
+
+
+def _with_judge(run, index, *results, as_case_level=False):
+    trial = run.trials[index]
+    if as_case_level:
+        trial.judge_checks.extend(results)
+    else:
+        trial.turns[0].checks.extend(results)
+    return trial
+
+
+def _judged_plan(verdict_for, n_cases=30, k=5, **kwargs):
+    run = make_run({"base": all_pass(n_cases, k)}, **kwargs)
+    for index in range(len(run.trials)):
+        _with_judge(run, index, verdict_for(index))
+    return run
+
+
+def test_judge_counters_default_to_zero_without_a_judge():
+    summary = decide(make_run({"base": all_pass(30, 5)})).variants[0]
+    assert (summary.judge_not_evaluable, summary.simulator_errors) == (0, 0)
+
+
+def test_unsure_judge_everywhere_is_insufficient_with_its_own_reason():
+    run = _judged_plan(lambda _: _judge(None), n_cases=2, k=5)
+    verdict = decide(run)
+    summary = verdict.variants[0]
+    assert verdict.status == "insufficient" and EXIT_CODES[verdict.status] == 2
+    assert summary.judge_not_evaluable == 10
+    assert "10 judge verdict(s) could not be obtained" in summary.reasons
+    assert "10 trial(s) could not be evaluated" in summary.reasons
+
+
+def test_judge_counter_counts_turn_and_case_level_but_not_agent_errors():
+    run = make_run({"base": all_pass(30, 5)})
+    _with_judge(run, 0, _judge(None), _judge(None, agent_error=True))
+    _with_judge(run, 1, _judge(None), as_case_level=True)
+    _with_judge(run, 2, _judge(True), _judge(False))
+    assert decide(run).variants[0].judge_not_evaluable == 2
+
+
+def test_simulator_errors_are_counted_per_trial():
+    run = make_run({"base": all_pass(30, 5)})
+    run.trials[0].simulator_error = "refused"
+    run.trials[3].simulator_error = "timeout"
+    assert decide(run).variants[0].simulator_errors == 2
+
+
+@pytest.mark.security
+def test_hard_judge_fail_is_no_go_under_the_hard_gate_reason():
+    run = make_run({"base": all_pass(30, 5)})
+    _with_judge(run, 0, _judge(False, hard=True))
+    verdict = decide(run)
+    assert verdict.status == "no-go"
+    assert verdict.variants[0].reasons == ["1 hard gate violation(s)"]
+
+
+def test_judge_does_not_change_statistics_when_outcomes_are_equal():
+    plain = decide(make_run({"base": rate(30, 5, 0.9), "cand": all_pass(30, 5)}, baseline="base"))
+    judged_run = make_run({"base": rate(30, 5, 0.9), "cand": all_pass(30, 5)}, baseline="base")
+    for index, trial in enumerate(judged_run.trials):
+        _with_judge(judged_run, index, _judge(trial.outcome == "pass"))
+    judged = decide(judged_run)
+    assert judged.status == plain.status and judged.recommended == plain.recommended
+    assert judged.comparisons == plain.comparisons
+    for a, b in zip(judged.variants, plain.variants, strict=True):
+        assert (a.ci95, a.pass_rate, a.pass_at_k, a.pass_hat_k) == (
+            b.ci95,
+            b.pass_rate,
+            b.pass_at_k,
+            b.pass_hat_k,
+        )

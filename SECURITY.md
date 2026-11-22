@@ -44,6 +44,8 @@ variable) or in hooks, and are never written to reports.
   are not). Redaction can
   over-mask: a referenced value such as `pass` also erases that word from the rubric and the
   replies the judge reads, so keep short common words out of `${VAR}` values.
+- **Judge rationales** reach the report after redaction and truncation to 1,000 characters, but a
+  rationale can repeat agent data the redactor does not recognise.
 - **Simulated user requests** carry the goal, the persona, the simulated messages (the opening
   included) and the agent replies, every text redacted like the judge inputs: canaries, secrets,
   personal data and `${VAR}` values (for example one that reaches a goal through
