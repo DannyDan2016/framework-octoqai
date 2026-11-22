@@ -329,6 +329,13 @@ class JudgeCheck(_Model):
     reference: str | None = None
     hard: StrictBool = False
 
+    @field_validator("id")
+    @classmethod
+    def _id_named(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("id must not be empty")
+        return value
+
     @field_validator("rubric")
     @classmethod
     def _rubric_written(cls, value: str) -> str:

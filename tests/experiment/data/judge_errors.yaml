@@ -71,6 +71,12 @@
     cases: [{id: c1, turns: [{user: Hola, judge: [{id: j, rubric: ""}]}]}]
   fragments: [rubric must not be empty]
 
+- id: blank-judge-check-id
+  overrides:
+    judge: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, turns: [{user: Hola, judge: [{id: "  ", rubric: ok}]}]}]
+  fragments: [id must not be empty]
+
 - id: empty-goal
   overrides:
     simulated_user: {provider: ollama, model: m, max_calls: 3}
