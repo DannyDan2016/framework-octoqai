@@ -87,7 +87,7 @@ def test_usage_lines_report_calls_against_the_cap(judged, run_cli, fake_agent):
     )
     assert "judge calls: 2/5" in result.out
     assert "judge tokens: in=14 out=6" in result.out
-    assert "simulated_user" not in result.out
+    assert "simulated" not in result.out
 
 
 def test_judge_is_closed_after_the_run(judged, run_cli, fake_agent):
@@ -182,7 +182,7 @@ def test_simulator_worst_case_over_the_cap_exits_3(simulated_case, run_cli, fake
     )
     assert_exit(result.code, 3)
     assert (
-        "Config error: worst case needs 2 simulated_user call(s) "
+        "Config error: worst case needs 2 simulated user call(s) "
         "but simulated_user.max_calls is 1" in result.err
     )
     assert fake_agent.requests == [] and user.requests == []
@@ -284,7 +284,7 @@ def test_unreachable_simulator_exits_3(simulated_case, run_cli, fake_agent):
     )
     assert_exit(result.code, 3)
     assert f"Error: simulated user unreachable in every call ({PROVIDER_ERROR})." in result.err
-    assert "simulated_user calls: 1/5" in result.out
+    assert "simulated user calls: 1/5" in result.out
     assert result.report()["verdict"]["status"] == "insufficient"
     assert "agent unreachable" not in result.err
 
@@ -330,3 +330,51 @@ def test_judge_key_from_env_is_never_printed_or_reported(
     )
     assert_exit(result.code, 3)
     assert_not_in_outputs(secret, result.out, result.err, result.report_text())
+
+
+def test_worst_case_line_is_printed_per_role_before_any_agent_request(
+    simulated_case, run_cli, fake_agent
+):
+    user = ScriptedUser().says("a", "b")
+    result = run_cli(
+        "run",
+        simulated_case(simulator_calls=4, judge_calls=6, max_turns=2),
+        agent=fake_agent.answers("Hola."),
+        judge=FakeLlm().judges("pass"),
+        simulator=user,
+    )
+    assert "judge worst case: 0 call(s) of max_calls 6, up to 0 output tokens" in result.out
+    assert (
+        "simulated user worst case: 2 call(s) of max_calls 4, up to 8192 output tokens"
+        in result.out
+    )
+    assert result.out.index("worst case") < result.out.index("calls:")
+
+
+def test_worst_case_line_is_printed_before_the_ports_and_the_agent_are_built(
+    judged, tmp_path, fake_agent, capsys
+):
+    printed_when_built = []
+
+    def factory(role, settings):
+        printed_when_built.append(capsys.readouterr().out)
+        return FakeLlm().judges("pass")
+
+    main(
+        cli_args(judged(max_calls=9, trials=2), tmp_path),
+        transport=fake_agent.answers("Hola.").transport(),
+        adapter_kwargs=fake_agent.adapter_kwargs(),
+        llm_factory=factory,
+    )
+    assert printed_when_built == [
+        "judge worst case: 2 call(s) of max_calls 9, up to 8192 output tokens\n"
+    ]
+    assert len(fake_agent.requests) == 2
+
+
+def test_no_worst_case_line_without_judge_or_simulated_user(
+    experiment, tmp_path, run_cli, fake_agent
+):
+    experiment.case("c1", turn("Hola", {"contains": "Hola"}))
+    result = run_cli("run", str(experiment.write(tmp_path)), agent=fake_agent.answers("Hola"))
+    assert "worst case" not in result.out

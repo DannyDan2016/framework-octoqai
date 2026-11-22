@@ -79,7 +79,7 @@ def test_example_runs_end_to_end_against_the_real_toy_agent(judge_example, run_c
     result = run_cli("run", judge_example(), judge=judge, simulator=user)
     assert_exit(result.code, 2)
     assert "judge calls: 6/6" in result.out
-    assert "simulated_user calls: 18/18" in result.out
+    assert "simulated user calls: 18/18" in result.out
     report = result.report()
     assert report["verdict"]["status"] == "insufficient"
     simulated_trials = [t for t in report["trials"] if t["case_id"] == "contable-con-prisa"]

@@ -113,10 +113,11 @@ def _unreachable_messages(run: RunResult) -> list[str]:
 def _print_llm_usage(run: RunResult, exp: Experiment) -> None:
     limits = _role_settings(exp)
     for role, stats in run.llm.items():
-        print(f"{role} calls: {stats.calls}/{limits[role].max_calls}")
+        label = ROLE_NAMES[role]
+        print(f"{label} calls: {stats.calls}/{limits[role].max_calls}")
         tokens_in = "unknown" if stats.input_tokens is None else stats.input_tokens
         tokens_out = "unknown" if stats.output_tokens is None else stats.output_tokens
-        print(f"{role} tokens: in={tokens_in} out={tokens_out}")
+        print(f"{label} tokens: in={tokens_in} out={tokens_out}")
 
 
 def _role_settings(exp: Experiment) -> dict[LlmRole, ProviderSettings]:
@@ -132,9 +133,19 @@ def _check_cap(exp: Experiment) -> None:
     for role, needed in worst_case_calls(exp).items():
         if needed > limits[role].max_calls:
             raise ConfigError(
-                f"worst case needs {needed} {role} call(s) "
+                f"worst case needs {needed} {ROLE_NAMES[role]} call(s) "
                 f"but {role}.max_calls is {limits[role].max_calls}"
             )
+
+
+def _print_worst_case(exp: Experiment) -> None:
+    limits = _role_settings(exp)
+    for role, needed in worst_case_calls(exp).items():
+        settings = limits[role]
+        print(
+            f"{ROLE_NAMES[role]} worst case: {needed} call(s) of max_calls "
+            f"{settings.max_calls}, up to {needed * settings.max_tokens} output tokens"
+        )
 
 
 def _warn_failed_cleanup(run: RunResult, redactor: Redactor) -> bool:
@@ -198,6 +209,7 @@ def _execute(args: argparse.Namespace, exp: Experiment, redactor: Redactor, seam
     if args.tags:
         exp = exp.select(args.tags)
     _check_cap(exp)
+    _print_worst_case(exp)
     out: Path = args.out
     run = _open_and_run(exp, seams)
     cleanup_failed = _warn_failed_cleanup(run, redactor)
