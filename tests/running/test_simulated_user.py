@@ -1,8 +1,10 @@
 import itertools
+import json
+from urllib.parse import quote_plus
 
 import pytest
 
-from octoqai.experiment import Experiment, SimulatedUser
+from octoqai.experiment import Experiment, SimulatedUser, load_experiment
 from octoqai.providers.budget import BUDGET_EXHAUSTED
 from octoqai.providers.port import LlmReply, LlmUsage
 from octoqai.running import run_experiment
@@ -17,7 +19,13 @@ from octoqai.running.simulated_user import (
 )
 from octoqai.verdict import decide
 from support import samples
-from support.builders import ExperimentBuilder, judge_check, simulated
+from support.builders import (
+    ExperimentBuilder,
+    judge_check,
+    simulated,
+    write_data_set,
+    write_env_file,
+)
 from support.paths import cases
 from support.providers import FakeLlm, ScriptedUser
 
@@ -323,3 +331,57 @@ def test_a_broken_simulator_is_not_reported_as_an_unreachable_agent(fake_agent):
 
     run = play(build(), fake_agent, FakeLlm().refuses())
     assert not _never_ran(run)
+
+
+ENV_VALUE = samples.ANTHROPIC_KEY_NO_PREFIX
+
+
+@pytest.mark.security
+def test_data_secret_in_goal_persona_and_opening_never_reaches_the_simulator(
+    experiment, tmp_path, fake_agent
+):
+    write_env_file(tmp_path, ".env", SECRET=ENV_VALUE)
+    write_data_set(tmp_path, "qa", {"v": "${SECRET}"})
+    experiment.environments("qa").simulated_user().trials(1)
+    experiment.case(
+        "c1",
+        simulated=simulated(
+            goal="Never say {{ data.v }}",
+            persona="Eres el titular de {{ data.v }}",
+            opening="Hola {{ data.v }}",
+            each_turn=[{"contains": "."}],
+        ),
+    )
+    exp = load_experiment(experiment.write(tmp_path), env="qa", process_env={})
+    user = ScriptedUser().says("segundo", done_after=1)
+    play(exp, fake_agent.answers("ok."), user)
+    [request] = user.requests[:1]
+    text = request.system + request.messages[0].content
+    for form in (ENV_VALUE, json.dumps(ENV_VALUE), quote_plus(ENV_VALUE)):
+        assert form not in text
+    assert "Never say [redacted]" in request.system and "titular de [redacted]" in request.system
+    assert "Hola [redacted]" in request.messages[0].content
+    assert sent(fake_agent)[0] == f"Hola {ENV_VALUE}"
+
+
+@pytest.mark.security
+def test_simulated_messages_are_redacted_in_the_transcript(fake_agent):
+    exp = build(security={"canaries": [{"value": CANARY, "label": "tenant-b"}]})
+    user = ScriptedUser().says(f"mi codigo es {CANARY}", "otra", done_after=2)
+    play(exp, fake_agent.answers("ok."), user)
+    second = user.requests[1].messages[0].content
+    assert CANARY not in second and "[canary:tenant-b]" in second
+
+
+@pytest.mark.security
+def test_secret_split_between_persona_and_an_agent_reply_is_never_sent(fake_agent):
+    exp = build(
+        persona="codigo TEN-B-",
+        opening="Hola",
+        security={"canaries": [{"value": CANARY, "label": "tenant-b"}]},
+    )
+    user = ScriptedUser().says("a", "b")
+    [trial] = play(exp, fake_agent.answers("0042 listo."), user).trials
+    assert user.requests == []
+    assert trial.simulator_error == "sensitive data split across turns"
+    assert trial.outcome == "not_evaluable"

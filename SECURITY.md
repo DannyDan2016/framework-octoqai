@@ -44,14 +44,17 @@ variable) or in hooks, and are never written to reports.
   are not). Redaction can
   over-mask: a referenced value such as `pass` also erases that word from the rubric and the
   replies the judge reads, so keep short common words out of `${VAR}` values.
-- **Simulated user requests** carry the goal and persona, written by the QA, and the redacted
-  agent replies inside a nonce-delimited data block; the model is told never to follow orders
-  found in them. Goal, persona and `opening` are sent as written, not redacted: keep secrets
-  out of them. A canary placed in the persona or opening is a value the user said, so the leak
-  scan does not count the agent repeating it. If a sensitive value is split across turns, the
-  simulator is not called and the trial is not evaluable (`simulator_error`); a leak or forbidden
-  change seen before that still counts. Sampling is not deterministic, so a paired A/B
-  comparison is noisier with a simulated user: use more trials.
+- **Simulated user requests** carry the goal, the persona, the simulated messages (the opening
+  included) and the agent replies, every text redacted like the judge inputs: canaries, secrets,
+  personal data and `${VAR}` values (for example one that reaches a goal through
+  `{{ data.* }}`) become placeholders, and a referenced value can over-mask words, as in rubrics.
+  The agent replies sit inside a nonce-delimited data block and the model is told never to follow
+  orders found in them. The agent still receives the simulated messages as written, and the leak
+  scan does not count the agent repeating a value the simulated user said. If a sensitive value is
+  split across the goal, the persona or the turns, the simulator is not called and the trial is
+  not evaluable (`simulator_error`); a leak or forbidden change seen before that still counts.
+  Sampling is not deterministic, so a paired A/B comparison is noisier with a simulated user:
+  use more trials.
 - **Ollama has no authentication.** By default `base_url` must be loopback (`127.0.0.1`,
   `localhost` or `[::1]`). With `allow_remote: true` the prompts, which can contain agent replies
   and test data, travel to that server unauthenticated and, over `http`, unencrypted: use it

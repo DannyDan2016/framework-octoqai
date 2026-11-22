@@ -214,7 +214,7 @@ def parse_simulator_reply(reply: LlmReply) -> SimulatorTurn | str:
 
 
 class SimulatedUserDriver:
-    """Asks the simulator for each message of one trial; the agent's words arrive redacted."""
+    """Asks the simulator for each message of one trial; every text it sends is redacted first."""
 
     def __init__(self, session: _Session, sim: SimulatedUser) -> None:
         """Start a driver for one trial.
@@ -224,19 +224,25 @@ class SimulatedUserDriver:
             sim: The simulated user of the case.
         """
         self._session = session
-        self._sim = sim
+        redact = session.redactor.redact
+        self._sim = sim.model_copy(
+            update={"goal": redact(sim.goal), "persona": redact(sim.persona)}
+        )
         self._clean: list[tuple[str, str]] = []
 
     def _redacted(self, transcript: Transcript) -> list[tuple[str, str]]:
         redact = self._session.redactor.redact
         for said, answer in transcript[len(self._clean) :]:
-            self._clean.append((said, redact(answer)))
+            self._clean.append((redact(said), redact(answer)))
         return self._clean[: len(transcript)]
 
     def _split(self, clean: Transcript) -> bool:
         splits = self._session.redactor.splits_across
-        every = [text for pair in clean for text in pair]
-        return any(splits(texts) for texts in (every, [a for _, a in clean], [s for s, _ in clean]))
+        context = [self._sim.goal, self._sim.persona]
+        users = [user for user, _ in clean]
+        agents = [agent for _, agent in clean]
+        every = [*context, *(text for pair in clean for text in pair)]
+        return any(splits(texts) for texts in (every, [*context, *agents], users))
 
     def _request(self, clean: Transcript) -> LlmRequest | None:
         for _ in range(_ATTEMPTS):
