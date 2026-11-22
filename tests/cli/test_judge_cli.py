@@ -1,11 +1,15 @@
 import pytest
 
 from octoqai.cli import main
+from octoqai.cli.main import _unreachable_messages
 from octoqai.errors import ConfigError
+from octoqai.experiment import Experiment
+from octoqai.providers.budget import BUDGET_EXHAUSTED, LlmStats
+from octoqai.running import RunResult
 from support import samples
 from support.agents import FakeSseAgent
 from support.assertions import assert_exit, assert_not_in_outputs
-from support.builders import judge_check, simulated, turn, write_env_file
+from support.builders import ExperimentBuilder, judge_check, simulated, turn, write_env_file
 from support.hooks import FakeCommands
 from support.providers import DEFAULT_MODEL, FakeLlm, ScriptedUser
 
@@ -39,6 +43,15 @@ def simulated_case(experiment, tmp_path):
     return _write
 
 
+def run_with_stats(stats):
+    exp = Experiment.model_validate(ExperimentBuilder().build())
+    return RunResult(exp, [], "t0", "t1", llm={"judge": stats})
+
+
+def stats(calls, errors):
+    return LlmStats(calls, errors, None, None, {})
+
+
 def always(verdict, times=30):
     judge = FakeLlm()
     for _ in range(times):
@@ -48,6 +61,14 @@ def always(verdict, times=30):
 
 def cli_args(path, tmp_path):
     return ["run", path, "--out", str(tmp_path / "o")]
+
+
+def test_budget_exhaustion_is_excluded_when_deciding_unreachable():
+    mixed = run_with_stats(stats(1, {PROVIDER_ERROR: 1, BUDGET_EXHAUSTED: 1}))
+    assert _unreachable_messages(mixed) == [
+        f"Error: judge unreachable in every call ({PROVIDER_ERROR})."
+    ]
+    assert _unreachable_messages(run_with_stats(stats(0, {BUDGET_EXHAUSTED: 1}))) == []
 
 
 @pytest.mark.smoke
@@ -98,6 +119,7 @@ def test_partial_provider_errors_are_not_unreachable(judged, run_cli, fake_agent
         "run", judged(max_calls=2, trials=2), agent=fake_agent.answers("Hola."), judge=judge
     )
     assert "unreachable" not in result.err
+    assert_exit(result.code, 2)
 
 
 def test_budget_exhaustion_alone_is_not_unreachable(experiment, tmp_path, run_cli, fake_agent):
@@ -173,8 +195,11 @@ def test_cap_is_computed_after_the_tags_filter(experiment, tmp_path, run_cli, fa
     path = str(experiment.write(tmp_path))
     agent = fake_agent.answers("Hola.")
     selected = run_cli("run", path, "--tags", "smoke", agent=agent, judge=FakeLlm().judges("pass"))
-    assert selected.code != 3
-    assert_exit(run_cli("run", path, agent=agent, judge=FakeLlm()).code, 3)
+    assert_exit(selected.code, 2)
+    assert "worst case" not in selected.err
+    everything = run_cli("run", path, agent=agent, judge=FakeLlm())
+    assert_exit(everything.code, 3)
+    assert "worst case needs 2 judge call(s) but judge.max_calls is 1" in everything.err
 
 
 @pytest.mark.usefixtures("python_on_path")
@@ -191,6 +216,7 @@ def test_failing_cap_runs_no_before_run_hook(experiment, tmp_path, run_cli, fake
         judge=FakeLlm(),
     )
     assert_exit(result.code, 3)
+    assert "worst case needs 2 judge call(s) but judge.max_calls is 1" in result.err
     assert commands.calls == []
 
 

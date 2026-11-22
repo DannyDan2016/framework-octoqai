@@ -18,6 +18,7 @@ import pytest
 
 from octoqai.cli import main
 from octoqai.db import SqlDatabase
+from octoqai.errors import ConfigError
 from octoqai.experiment import ProviderSettings
 from octoqai.hooks import HookKwargs
 from octoqai.providers.port import LlmPort, LlmRole
@@ -107,10 +108,13 @@ def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., 
     ) -> CliRun:
         argv = list(args)
         fakes: dict[LlmRole, FakeLlm | None] = {"judge": judge, "simulated_user": simulator}
+        unfaked: list[LlmRole] = []
 
         def factory(role: LlmRole, settings: ProviderSettings) -> LlmPort:
             fake = fakes[role]
-            assert fake is not None, f"the experiment configures {role} but run_cli got no fake"
+            if fake is None:
+                unfaked.append(role)
+                raise ConfigError(f"run_cli got no fake for {role}")
             return fake
 
         hook_kwargs = HookKwargs()
@@ -130,6 +134,7 @@ def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., 
             llm_factory=factory,
         )
         captured = capsys.readouterr()
+        assert not unfaked, f"the experiment configures {unfaked} but run_cli got no fake"
         return CliRun(code, captured.out, captured.err, out_dir)
 
     return _run
