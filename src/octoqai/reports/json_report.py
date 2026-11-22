@@ -8,11 +8,16 @@ from pathlib import Path
 from typing import Any
 
 from octoqai import __version__
+from octoqai.expectations import JUDGE_PROMPT_VERSION, CheckResult, JudgeResult, judge_prompt_sha256
+from octoqai.experiment import ProviderSettings
+from octoqai.providers.budget import LlmStats
 from octoqai.running import RunResult, TrialResult, TurnResult
+from octoqai.running.simulated_user import SIMULATOR_PROMPT_VERSION, simulator_prompt_sha256
 from octoqai.security import Redactor
 from octoqai.verdict import Verdict
 
 SCHEMA_VERSION = "1"
+CLOSED_VERDICTS = frozenset({"pass", "fail", "unsure"})
 
 
 def _turn(turn: TurnResult) -> dict[str, Any]:
@@ -45,10 +50,37 @@ def _trial(trial: TrialResult) -> dict[str, Any]:
         "ttft_ms": trial.ttft_ms,
         "forbidden_crud": trial.forbidden_count,
         "setup_error": trial.setup_error,
+        "simulator_error": trial.simulator_error,
+        "stop_reason": trial.stop_reason,
         "hooks": [asdict(hook) for hook in trial.hooks],
         "db_checks": [asdict(check) for check in trial.db_checks],
+        "judge_checks": [asdict(check) for check in trial.judge_checks],
         "turns": [_turn(turn) for turn in trial.turns],
     }
+
+
+def _llm_block(
+    settings: ProviderSettings | None, stats: LlmStats | None, version: str, sha256: str
+) -> dict[str, Any] | None:
+    if settings is None:
+        return None
+    block: dict[str, Any] = {
+        "provider": settings.provider,
+        "model": settings.model,
+        "served_models": dict(stats.served_models) if stats else {},
+        "prompt_version": version,
+        "prompt_sha256": sha256,
+        "effort": settings.effort,
+        "max_tokens": settings.max_tokens,
+        "max_calls": settings.max_calls,
+        "calls": stats.calls if stats else 0,
+        "errors_by_class": dict(stats.errors_by_class) if stats else {},
+        "input_tokens": stats.input_tokens if stats else None,
+        "output_tokens": stats.output_tokens if stats else None,
+    }
+    if settings.provider == "ollama" and settings.base_url is not None:
+        block["base_url"] = settings.base_url
+    return block
 
 
 def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
@@ -90,6 +122,15 @@ def build_report(run: RunResult, verdict: Verdict) -> dict[str, Any]:
         },
         "variants": [asdict(summary) for summary in verdict.variants],
         "comparisons": [asdict(comparison) for comparison in verdict.comparisons],
+        "judge": _llm_block(
+            exp.judge, run.llm.get("judge"), JUDGE_PROMPT_VERSION, judge_prompt_sha256()
+        ),
+        "simulated_user": _llm_block(
+            exp.simulated_user,
+            run.llm.get("simulated_user"),
+            SIMULATOR_PROMPT_VERSION,
+            simulator_prompt_sha256(),
+        ),
         "trials": [_trial(trial) for trial in run.trials],
     }
     redactor = Redactor.for_report(exp.security, exp.redacted_values)
@@ -104,6 +145,16 @@ def _restore_closed_values(report: dict[str, Any], run: RunResult, verdict: Verd
         entry["status"] = summary.status
     for entry, trial in zip(report["trials"], run.trials, strict=True):
         entry["outcome"] = trial.outcome
+        entry["stop_reason"] = trial.stop_reason
+        for turn_entry, turn in zip(entry["turns"], trial.turns, strict=True):
+            _restore_verdicts(turn_entry["checks"], turn.checks)
+        _restore_verdicts(entry["judge_checks"], trial.judge_checks)
+
+
+def _restore_verdicts(entries: list[dict[str, Any]], checks: list[CheckResult]) -> None:
+    for entry, check in zip(entries, checks, strict=True):
+        if isinstance(check, JudgeResult) and check.verdict in CLOSED_VERDICTS:
+            entry["verdict"] = check.verdict
 
 
 def write_json(run: RunResult, verdict: Verdict, path: Path) -> None:

@@ -20,12 +20,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+anthropic = ["anthropic>=2.10,<3"]
 dev = [
+    "anthropic>=2.10,<3",
     "pytest>=9.2,<10",
     "ruff>=0.17.3,<0.18",
     "mypy>=2.4,<3",
     "types-PyYAML>=6.0,<7",
     "import-linter>=2.15,<3",
+    "grimp>=3.17,<3.18",
 ]
 
 [project.scripts]
@@ -67,6 +70,7 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "PLR2004"]
+"src/octoqai/running/runner.py" = ["PLR0913"]
 
 [tool.mypy]
 strict = true
@@ -86,14 +90,14 @@ layers = [
     "octoqai.verdict",
     "octoqai.running",
     "octoqai.expectations | octoqai.security",
-    "octoqai.agents | octoqai.hooks",
+    "octoqai.agents | octoqai.hooks | octoqai.providers",
     "octoqai.db",
     "octoqai.stats | octoqai.experiment",
     "octoqai.errors",
 ]
 
 [[tool.importlinter.contracts]]
-name = "httpx only inside agents, hooks and cli"
+name = "httpx only inside agents, hooks, providers and cli"
 type = "forbidden"
 source_modules = [
     "octoqai.errors",
@@ -107,6 +111,26 @@ source_modules = [
     "octoqai.reports",
 ]
 forbidden_modules = ["httpx"]
+
+[[tool.importlinter.contracts]]
+name = "anthropic and httpx2 only inside providers"
+type = "forbidden"
+source_modules = [
+    "octoqai.errors",
+    "octoqai.experiment",
+    "octoqai.stats",
+    "octoqai.db",
+    "octoqai.agents",
+    "octoqai.hooks",
+    "octoqai.expectations",
+    "octoqai.security",
+    "octoqai.running",
+    "octoqai.verdict",
+    "octoqai.reports",
+    "octoqai.cli",
+]
+forbidden_modules = ["anthropic", "httpx2"]
+ignore_imports = ["octoqai.cli.main -> octoqai.providers.factory"]
 
 [[tool.importlinter.contracts]]
 name = "The core only knows ports"
@@ -124,6 +148,9 @@ forbidden_modules = [
     "octoqai.agents.factory",
     "octoqai.db.sql",
     "octoqai.hooks.executor",
+    "octoqai.providers.anthropic_api",
+    "octoqai.providers.ollama_api",
+    "octoqai.providers.factory",
 ]
 
 [[tool.importlinter.contracts]]
@@ -134,6 +161,7 @@ forbidden_modules = [
     "octoqai.experiment",
     "octoqai.agents",
     "octoqai.hooks",
+    "octoqai.providers",
     "octoqai.db",
     "octoqai.expectations",
     "octoqai.security",
@@ -152,6 +180,7 @@ source_modules = [
     "octoqai.stats",
     "octoqai.agents",
     "octoqai.hooks",
+    "octoqai.providers",
     "octoqai.expectations",
     "octoqai.security",
     "octoqai.running",

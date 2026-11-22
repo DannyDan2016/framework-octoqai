@@ -2,7 +2,7 @@
 
 Every dependency is pinned below its next major version. Before raising a ceiling, check the impact column and run the full suite.
 
-Last review: 2026-11-04.
+Last review: 2026-11-18.
 
 | Dependency | Range | Latest stable | Next major known | Impact on Octoqai | Action |
 |---|---|---|---|---|---|
@@ -12,11 +12,16 @@ Last review: 2026-11-04.
 | jsonpath-ng | `>=1.15,<2` | 1.15.0 (2026-10-29) | none announced | `octoqai/agents/http_json.py` (response mapping) | None |
 | python-dotenv | `>=1.2,<2` | 1.2.4 | none announced | `octoqai/experiment/envfiles.py` (`dotenv_values` only, without interpolation) | None |
 | SQLAlchemy | `>=2.1.8,<2.2` | 2.1.8 (2026-11-04) | 2.2 not announced; each minor series has its own migration guide | `octoqai/db/sql.py` only (`create_engine`, `event`, `make_url`, `pool`, `text`, `exc`); pulls only `typing-extensions`. `postgresql://` defaults to psycopg 3 since 2.1, and users install their own driver | When a new series is stable: read its "What's New", run the suite, then raise the ceiling |
+| anthropic (extra `anthropic`, also in dev) | `>=2.10,<3` | 2.10.0 (the only version verified; Apache-2.0) | none announced | `octoqai/providers/anthropic_api.py` only (installed with `pip install 'octoqai[anthropic]'`, which `examples/judge/` needs; its e2e test uses fakes and no key), imported lazily so the core works without the extra; the factory reports a missing install as a `ConfigError`. Uses `Authorization: Bearer`, `output_config` for effort and JSON schema, and rejects `temperature`, `top_p` and `top_k` | Read the changelog before raising the ceiling; rerun the MockTransport test in `tests/providers/test_anthropic_api.py` |
+| httpx2 (via anthropic) | `>=2.0,<3` (set by anthropic) | 2.16.2 (BSD-3-Clause) | none announced | Transport of the SDK, a different package from `httpx`: an `httpx` client is rejected with `TypeError`. Only `tests/providers/` imports it, for `MockTransport` and fake responses; the import-linter contract keeps it inside `octoqai/providers` | Follow the anthropic range; never mix it with `httpx` clients |
+| httpcore2 (via httpx2) | `==2.16.2` (pinned by httpx2) | 2.16.2 (BSD-3-Clause) | none announced | Indirect only | None |
+| jiter, docstring-parser, opentelemetry-api, sniffio, truststore (via anthropic and httpx2) | set by anthropic and httpx2 | 0.19.0 (MIT), 0.18.0 (MIT), 1.45.2 (Apache-2.0), 1.3.1 (MIT OR Apache-2.0), 0.10.5 (MIT) | none announced | Indirect only, installed only with the `anthropic` extra | None |
 | hatchling (build) | `>=1.33,<2` | 1.33.0 (2026-10-28) | none announced | Packaging only | None |
 | pytest (dev) | `>=9.2,<10` | 9.2.0 (2026-10-27) | none announced | Test suite | None |
 | ruff (dev) | `>=0.17.3,<0.18` | 0.17.3 | still 0.x: any minor may change rules | Lint and format | Raise the minor deliberately and fix new findings |
 | mypy (dev) | `>=2.4,<3` | 2.4.1 | unknown | Strict type checking only; no runtime impact | Read the release notes and fix new findings before raising the ceiling |
 | types-PyYAML (dev) | `>=6.0,<7` | 6.0.12.20261030 | follows PyYAML | Type stubs for `yaml`; no runtime impact | Raise together with PyYAML |
 | import-linter (dev) | `>=2.15,<3` | 2.15 | none announced | Enforces package layers in `pyproject.toml`; no runtime impact | None |
+| grimp (dev, via import-linter) | `>=3.17,<3.18` | 3.18 | none announced | Import graph engine of import-linter. Held below 3.18 because Windows Smart App Control blocks the 3.18 Windows binary; 3.17 loads | Lift the ceiling once a newer build loads on Windows |
 
 Rejected: `typer` (still 0.x, minor releases may break the CLI). The CLI uses the standard library `argparse`.

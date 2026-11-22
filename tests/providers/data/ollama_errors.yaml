@@ -1,0 +1,306 @@
+- id: connect-error
+  kind: raises
+  exception: httpx.ConnectError
+  expected: ConnectError
+
+- id: connect-timeout
+  kind: raises
+  exception: httpx.ConnectTimeout
+  expected: ConnectTimeout
+
+- id: read-timeout
+  kind: raises
+  exception: httpx.ReadTimeout
+  expected: ReadTimeout
+
+- id: write-timeout
+  kind: raises
+  exception: httpx.WriteTimeout
+  expected: WriteTimeout
+
+- id: pool-timeout
+  kind: raises
+  exception: httpx.PoolTimeout
+  expected: PoolTimeout
+
+- id: read-error
+  kind: raises
+  exception: httpx.ReadError
+  expected: ReadError
+
+- id: remote-protocol-error
+  kind: raises
+  exception: httpx.RemoteProtocolError
+  expected: RemoteProtocolError
+
+- id: too-many-redirects
+  kind: raises
+  exception: httpx.TooManyRedirects
+  expected: TooManyRedirects
+
+- id: generic-runtime-error
+  kind: raises
+  exception: RuntimeError
+  expected: provider failure
+
+- id: generic-value-error
+  kind: raises
+  exception: ValueError
+  expected: provider failure
+
+- id: generic-type-error
+  kind: raises
+  exception: TypeError
+  expected: provider failure
+
+- id: invalid-url-error
+  kind: raises
+  exception: httpx.InvalidURL
+  expected: provider failure
+
+- id: status-301
+  kind: status
+  status: 301
+  payload: '{"error": "{canary}"}'
+  expected: HTTP 301
+
+- id: status-302-with-location
+  kind: status
+  status: 302
+  headers: {location: "http://redirect.example/{canary}"}
+  payload: ""
+  expected: HTTP 302
+
+- id: status-307
+  kind: status
+  status: 307
+  payload: '{"error": "{canary}"}'
+  expected: HTTP 307
+
+- id: status-400
+  kind: status
+  status: 400
+  payload: '{"error": "{canary}"}'
+  expected: HTTP 400
+
+- id: status-404
+  kind: status
+  status: 404
+  payload: '{"error": "model {canary} not found"}'
+  expected: HTTP 404
+
+- id: status-404-empty-body
+  kind: status
+  status: 404
+  payload: ""
+  expected: HTTP 404
+
+- id: status-429
+  kind: status
+  status: 429
+  payload: '{"error": "{canary}"}'
+  expected: HTTP 429
+
+- id: status-500
+  kind: status
+  status: 500
+  payload: "{canary}"
+  expected: HTTP 500
+
+- id: status-503
+  kind: status
+  status: 503
+  payload: '{"error": "{canary}"}'
+  expected: HTTP 503
+
+- id: status-500-gzip-header
+  kind: status
+  status: 500
+  headers: {content-encoding: gzip}
+  payload: "{canary}"
+  expected: HTTP 500
+
+- id: body-not-json
+  kind: body
+  payload: "<html>{canary}</html>"
+  expected: invalid response
+
+- id: body-empty
+  kind: body
+  payload: ""
+  expected: invalid response
+
+- id: body-truncated-json
+  kind: body
+  payload: '{"message": {"content": "{canary}'
+  expected: invalid response
+
+- id: body-json-array
+  kind: body
+  payload: '["{canary}"]'
+  expected: invalid response
+
+- id: body-json-null
+  kind: body
+  payload: "null"
+  expected: invalid response
+
+- id: body-json-number
+  kind: body
+  payload: "5"
+  expected: invalid response
+
+- id: body-json-string
+  kind: body
+  payload: '"{canary}"'
+  expected: invalid response
+
+- id: body-json-true
+  kind: body
+  payload: "true"
+  expected: invalid response
+
+- id: body-ollama-error-object
+  kind: body
+  payload: '{"error": "{canary}"}'
+  expected: invalid response
+
+- id: body-without-message
+  kind: body
+  payload: '{"model": "fake-local-1", "note": "{canary}"}'
+  expected: invalid response
+
+- id: body-message-null
+  kind: body
+  payload: '{"message": null, "note": "{canary}"}'
+  expected: invalid response
+
+- id: body-message-number
+  kind: body
+  payload: '{"message": 5, "note": "{canary}"}'
+  expected: invalid response
+
+- id: body-message-string
+  kind: body
+  payload: '{"message": "{canary}"}'
+  expected: invalid response
+
+- id: body-message-list
+  kind: body
+  payload: '{"message": ["{canary}"]}'
+  expected: invalid response
+
+- id: body-message-without-content
+  kind: body
+  payload: '{"message": {"role": "assistant", "note": "{canary}"}}'
+  expected: invalid response
+
+- id: body-content-null
+  kind: body
+  payload: '{"message": {"content": null, "note": "{canary}"}}'
+  expected: invalid response
+
+- id: body-content-int
+  kind: body
+  payload: '{"message": {"content": 5, "note": "{canary}"}}'
+  expected: invalid response
+
+- id: body-content-true
+  kind: body
+  payload: '{"message": {"content": true, "note": "{canary}"}}'
+  expected: invalid response
+
+- id: body-content-list
+  kind: body
+  payload: '{"message": {"content": ["{canary}"]}}'
+  expected: invalid response
+
+- id: body-content-object
+  kind: body
+  payload: '{"message": {"content": {"text": "{canary}"}}}'
+  expected: invalid response
+
+- id: body-huge-integer
+  kind: body
+  payload: "special:huge-integer"
+  expected: invalid response
+
+- id: body-too-deep
+  kind: body
+  payload: "special:too-deep"
+  expected: invalid response
+
+- id: body-invalid-utf8
+  kind: body
+  payload: "special:invalid-utf8"
+  expected: invalid response
+
+- id: encoding-gzip
+  kind: body
+  headers: {content-encoding: gzip}
+  payload: '{"message": {"content": "{canary}"}}'
+  expected: unsupported content-encoding
+
+- id: encoding-gzip-uppercase
+  kind: body
+  headers: {content-encoding: GZIP}
+  payload: '{"message": {"content": "{canary}"}}'
+  expected: unsupported content-encoding
+
+- id: encoding-deflate
+  kind: body
+  headers: {content-encoding: deflate}
+  payload: '{"message": {"content": "{canary}"}}'
+  expected: unsupported content-encoding
+
+- id: encoding-brotli
+  kind: body
+  headers: {content-encoding: br}
+  payload: '{"message": {"content": "{canary}"}}'
+  expected: unsupported content-encoding
+
+- id: encoding-stacked
+  kind: body
+  headers: {content-encoding: "identity, gzip"}
+  payload: '{"message": {"content": "{canary}"}}'
+  expected: unsupported content-encoding
+
+- id: encoding-unknown
+  kind: body
+  headers: {content-encoding: x-made-up}
+  payload: '{"message": {"content": "{canary}"}}'
+  expected: unsupported content-encoding
+
+- id: encoding-gzip-bomb
+  kind: body
+  headers: {content-encoding: gzip}
+  payload: "special:gzip-bomb"
+  expected: unsupported content-encoding
+
+- id: oversize-one-chunk
+  kind: oversize
+  parts: 1
+  expected: response too large
+
+- id: oversize-many-chunks
+  kind: oversize
+  parts: 7
+  expected: response too large
+
+- id: oversize-many-small-chunks
+  kind: oversize
+  parts: 1024
+  expected: response too large
+
+- id: deadline-between-chunks
+  kind: slow
+  parts: 3
+  seconds_per_chunk: 6
+  expected: deadline exceeded
+
+- id: deadline-before-first-chunk
+  kind: slow
+  parts: 1
+  seconds_per_chunk: 0
+  seconds_per_request: 11
+  expected: deadline exceeded

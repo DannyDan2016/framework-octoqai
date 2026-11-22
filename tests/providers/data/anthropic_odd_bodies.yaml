@@ -1,0 +1,49 @@
+- id: content-int
+  body: {content: 5}
+  error: provider failure
+  text: null
+
+- id: content-bool
+  body: {content: true}
+  error: provider failure
+  text: null
+
+- id: content-string
+  body: {content: "abc"}
+  error: null
+  text: null
+
+- id: content-null
+  body: {content: null}
+  error: null
+  text: null
+
+- id: content-list-of-non-objects
+  body: {content: [1, "a", null, [2]]}
+  error: null
+  text: null
+
+- id: content-list-with-bad-text-block
+  body: {content: [{type: text, text: 5}, {type: text, text: "ok"}]}
+  error: null
+  text: ok
+
+- id: top-level-list
+  body: [1, 2]
+  error: null
+  text: null
+
+- id: top-level-null
+  body: null
+  error: null
+  text: null
+
+- id: top-level-number
+  body: 7
+  error: null
+  text: null
+
+- id: html-page
+  raw: "<html><body>maintenance</body></html>"
+  error: null
+  text: null

@@ -24,6 +24,8 @@ from octoqai.experiment.model import (
     Expectation,
     Experiment,
     ForbiddenChange,
+    JudgeCheck,
+    SimulatedUser,
     Turn,
 )
 from octoqai.experiment.sourcefloat import load_source_yaml
@@ -71,6 +73,8 @@ def load_experiment(
     _expand_security(data, variables)
     _expand_database(data, variables)
     _expand_hooks(data, variables)
+    _expand_llm(data, variables)
+    _reject_llm_text_variables(data)
     exp = _validate(data)
     values: dict[str, Any] = {}
     if exp.data is not None:
@@ -115,13 +119,21 @@ def _render_case(case: Case, context: dict[str, Any], variables: _Variables) -> 
             turns.append(_render_turn(turn, context, variables))
         except ConfigError as exc:
             raise ConfigError(f"cases[{case.id}].turns[{index}]: {exc}") from None
-    return case.model_copy(
-        update={
-            "turns": turns,
-            "db": _render_params(case.db, context, variables),
-            "forbidden": _render_params(case.forbidden, context, variables),
-        }
-    )
+    update: dict[str, Any] = {
+        "turns": turns,
+        "db": _render_params(case.db, context, variables),
+        "forbidden": _render_params(case.forbidden, context, variables),
+    }
+    try:
+        update["judge"] = _render_judge(case.judge, context)
+    except ConfigError as exc:
+        raise ConfigError(f"cases[{case.id}].judge: {exc}") from None
+    if case.simulated is not None:
+        try:
+            update["simulated"] = _render_simulated(case.simulated, context)
+        except ConfigError as exc:
+            raise ConfigError(f"cases[{case.id}].simulated: {exc}") from None
+    return case.model_copy(update=update)
 
 
 def _render_params[C: (DbCheck, ForbiddenChange)](
@@ -145,6 +157,7 @@ def _render_turn(turn: Turn, context: dict[str, Any], variables: _Variables) -> 
         update={
             "user": render_text(turn.user, context),
             "expect": expect,
+            "judge": _render_judge(turn.judge, context),
             "db": _render_params(turn.db, context, variables),
         }
     )
@@ -154,6 +167,36 @@ def _render_expectation(item: Expectation, context: dict[str, Any]) -> Expectati
     if item.kind not in _PATTERN_KINDS:
         return item
     return item.model_copy(update={"value": render_text(item.value, context, escape=re.escape)})
+
+
+def _render_judge(checks: list[JudgeCheck], context: dict[str, Any]) -> list[JudgeCheck]:
+    return [
+        check.model_copy(
+            update={
+                "rubric": render_text(check.rubric, context),
+                "reference": _render_optional(check.reference, context),
+            }
+        )
+        for check in checks
+    ]
+
+
+def _render_optional(text: str | None, context: dict[str, Any]) -> str | None:
+    return None if text is None else render_text(text, context)
+
+
+def _render_simulated(user: SimulatedUser, context: dict[str, Any]) -> SimulatedUser:
+    stop_when = None if user.stop_when is None else render_text(user.stop_when, context, re.escape)
+    return user.model_copy(
+        update={
+            "goal": render_text(user.goal, context),
+            "persona": render_text(user.persona, context),
+            "opening": _render_optional(user.opening, context),
+            "stop_when": stop_when,
+            "each_turn": [_render_expectation(item, context) for item in user.each_turn],
+            "each_turn_judge": _render_judge(user.each_turn_judge, context),
+        }
+    )
 
 
 def _read_experiment(path: Path) -> dict[str, Any]:
@@ -188,20 +231,20 @@ class _Variables:
         self._values = values
         self.used: list[str] = []
 
-    def expand(self, text: str) -> str:
-        return _ENV_PATTERN.sub(self._replace, text)
+    def expand(self, text: str, *, remember: bool = True) -> str:
+        return _ENV_PATTERN.sub(lambda match: self._replace(match, remember), text)
 
     def remember(self, values: Iterable[str]) -> None:
         for value in values:
             if value and value not in self.used:
                 self.used.append(value)
 
-    def _replace(self, match: re.Match[str]) -> str:
+    def _replace(self, match: re.Match[str], remember: bool) -> str:
         name = match.group(1)
         if name not in self._values:
             raise ConfigError(f"environment variable {name} is not set")
         value = self._values[name]
-        if value not in self.used:
+        if remember and value not in self.used:
             self.used.append(value)
         return value
 
@@ -240,6 +283,70 @@ def _expand_database(data: dict[str, Any], variables: _Variables) -> None:
         )
     database["url"] = variables.expand(url)
     variables.remember(_url_secrets(database["url"]))
+
+
+def _expand_llm(data: dict[str, Any], variables: _Variables) -> None:
+    for section in ("judge", "simulated_user"):
+        config = data.get(section)
+        if config is not None and not isinstance(config, dict):
+            raise _api_key_error(section)
+        if config is None:
+            continue
+        if isinstance(config.get("model"), str):
+            config["model"] = variables.expand(config["model"], remember=False).strip()
+        key = config.get("api_key")
+        if key is None:
+            if config.get("provider") == "anthropic":
+                raise _api_key_error(section)
+            continue
+        if not isinstance(key, str) or not _ENV_PATTERN.fullmatch(key):
+            raise _api_key_error(section)
+        config["api_key"] = variables.expand(key)
+
+
+def _api_key_error(section: str) -> ConfigError:
+    return ConfigError(
+        f"{section}.api_key must come from an environment variable, e.g. ${{ANTHROPIC_API_KEY}}: "
+        "never write credentials in the experiment"
+    )
+
+
+def _reject_llm_text_variables(data: dict[str, Any]) -> None:
+    cases = data.get("cases")
+    if not isinstance(cases, list):
+        return
+    for index, case in enumerate(cases):
+        if isinstance(case, dict):
+            _reject_case_text_variables(f"cases[{case.get('id', index)}]", case)
+
+
+def _reject_case_text_variables(location: str, case: dict[str, Any]) -> None:
+    turns = case.get("turns")
+    for position, turn in enumerate(turns if isinstance(turns, list) else []):
+        if isinstance(turn, dict):
+            _reject_judge_variables(f"{location}.turns[{position}].judge", turn.get("judge"))
+    _reject_judge_variables(f"{location}.judge", case.get("judge"))
+    simulated = case.get("simulated")
+    if isinstance(simulated, dict):
+        where = f"{location}.simulated"
+        for field in ("goal", "persona", "opening"):
+            _reject_text_variable(where, field, simulated.get(field))
+        _reject_judge_variables(f"{where}.each_turn_judge", simulated.get("each_turn_judge"))
+
+
+def _reject_judge_variables(location: str, checks: Any) -> None:
+    for position, check in enumerate(checks if isinstance(checks, list) else []):
+        if isinstance(check, dict):
+            for field in ("rubric", "reference"):
+                _reject_text_variable(f"{location}[{position}]", field, check.get(field))
+
+
+def _reject_text_variable(location: str, field: str, text: Any) -> None:
+    if isinstance(text, str) and _ENV_PATTERN.search(text):
+        raise ConfigError(
+            f"{location}: ${{VAR}} is not allowed in {field}: the text is sent to the LLM "
+            "provider; use {{ data.* }} instead"
+        )
 
 
 def _forms(value: str) -> list[str]:

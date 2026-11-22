@@ -1,0 +1,124 @@
+- id: default-loopback
+  base_url: http://127.0.0.1:11434
+  allow_remote: false
+  accepted: true
+
+- id: loopback-without-port
+  base_url: http://127.0.0.1
+  allow_remote: false
+  accepted: true
+
+- id: loopback-trailing-slash
+  base_url: http://127.0.0.1:11434/
+  allow_remote: false
+  accepted: true
+
+- id: localhost
+  base_url: http://localhost:11434
+  allow_remote: false
+  accepted: true
+
+- id: localhost-uppercase
+  base_url: http://LOCALHOST:11434
+  allow_remote: false
+  accepted: true
+
+- id: https-loopback
+  base_url: https://127.0.0.1:11434
+  allow_remote: false
+  accepted: true
+
+- id: remote-host
+  base_url: http://ollama.example:11434
+  allow_remote: false
+  accepted: false
+
+- id: remote-host-allowed
+  base_url: http://ollama.example:11434
+  allow_remote: true
+  accepted: true
+
+- id: remote-https-allowed
+  base_url: https://ollama.example
+  allow_remote: true
+  accepted: true
+
+- id: base-path
+  base_url: http://127.0.0.1:11434/ollama/
+  allow_remote: false
+  accepted: false
+
+- id: base-path-remote
+  base_url: http://ollama.example/ollama
+  allow_remote: true
+  accepted: false
+
+- id: query
+  base_url: http://127.0.0.1:11434/?debug=1
+  allow_remote: false
+  accepted: false
+
+- id: query-without-path
+  base_url: http://127.0.0.1:11434?debug=1
+  allow_remote: false
+  accepted: false
+
+- id: fragment
+  base_url: http://127.0.0.1:11434/#section
+  allow_remote: false
+  accepted: false
+
+- id: scheme-ftp
+  base_url: ftp://127.0.0.1:11434
+  allow_remote: false
+  accepted: false
+
+- id: scheme-file
+  base_url: file:///tmp/ollama
+  allow_remote: false
+  accepted: false
+
+- id: scheme-less
+  base_url: 127.0.0.1:11434
+  allow_remote: false
+  accepted: false
+
+- id: scheme-less-host
+  base_url: ollama.example
+  allow_remote: true
+  accepted: false
+
+- id: empty
+  base_url: ""
+  allow_remote: false
+  accepted: false
+
+- id: whitespace
+  base_url: "   "
+  allow_remote: false
+  accepted: false
+
+- id: scheme-only
+  base_url: http://
+  allow_remote: true
+  accepted: false
+
+- id: port-out-of-range
+  base_url: http://127.0.0.1:99999
+  allow_remote: false
+  accepted: false
+
+- id: port-not-a-number
+  base_url: http://127.0.0.1:abc
+  allow_remote: false
+  accepted: false
+
+- id: malformed-idna-remote-allowed
+  base_url: http://xn--ab-secret.example
+  allow_remote: true
+  accepted: false
+
+- id: malformed-idna-under-invalid-tld
+  base_url: http://xn--localhost-.invalid
+  allow_remote: true
+  accepted: false

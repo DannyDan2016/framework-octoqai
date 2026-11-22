@@ -321,22 +321,90 @@ class HooksConfig(_Model):
         return hooks
 
 
+class JudgeCheck(_Model):
+    """A rubric that the judge model applies to a reply or to a whole conversation."""
+
+    id: str
+    rubric: str
+    reference: str | None = None
+    hard: StrictBool = False
+
+    @field_validator("id")
+    @classmethod
+    def _id_named(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("id must not be empty")
+        return value
+
+    @field_validator("rubric")
+    @classmethod
+    def _rubric_written(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("rubric must not be empty")
+        return value
+
+
+class SimulatedUser(_Model):
+    """A model that plays the user towards a goal instead of a fixed script."""
+
+    goal: str
+    persona: str = ""
+    max_turns: int = Field(ge=1, le=20)
+    opening: str | None = None
+    stop_when: str | None = None
+    each_turn: list[Expectation] = Field(default_factory=list)
+    each_turn_judge: list[JudgeCheck] = Field(default_factory=list)
+
+    @field_validator("goal")
+    @classmethod
+    def _goal_written(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("goal must not be empty")
+        return value
+
+    @field_validator("opening")
+    @classmethod
+    def _opening_written(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("opening must not be empty")
+        return value
+
+    @field_validator("stop_when")
+    @classmethod
+    def _stop_when_is_regex(cls, value: str | None) -> str | None:
+        if value is not None:
+            _regex("stop_when", value)
+        return value
+
+
 class Turn(_Model):
     """One user message and the expectations on the agent reply."""
 
     user: str
     expect: list[Expectation] = Field(default_factory=list)
     db: list[DbCheck] = Field(default_factory=list)
+    judge: list[JudgeCheck] = Field(default_factory=list)
 
 
 class Case(_Model):
-    """A business scenario played as a multi-turn conversation."""
+    """A business scenario played as a scripted or simulated conversation."""
 
     id: str
-    turns: list[Turn] = Field(min_length=1)
+    turns: list[Turn] = Field(default_factory=list)
+    simulated: SimulatedUser | None = None
     tags: list[str] = Field(default_factory=list)
     db: list[DbCheck] = Field(default_factory=list)
     forbidden: list[ForbiddenChange] = Field(default_factory=list)
+    judge: list[JudgeCheck] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _scripted_or_simulated(self) -> Case:
+        if bool(self.turns) == (self.simulated is not None):
+            raise ValueError(
+                f"case {self.id!r}: exactly one of turns or simulated is required "
+                f"(turns must not be empty)"
+            )
+        return self
 
     @field_validator("tags")
     @classmethod
@@ -435,6 +503,60 @@ class AgentConfig(_Model):
         return self
 
 
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+ProviderName = Literal["anthropic", "ollama"]
+
+
+class ProviderSettings(_Model):
+    """How to reach a language model; the key is never shown in a repr or an error."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: ProviderName
+    model: str
+    api_key: str | None = Field(default=None, repr=False)
+    base_url: str | None = None
+    allow_remote: StrictBool = False
+    effort: Effort = "low"
+    max_tokens: int = Field(default=4096, ge=256, le=32000)
+    timeout_s: float = Field(default=60, gt=0, le=600)
+    max_retries: int = Field(default=2, ge=0, le=5)
+    max_calls: int = Field(ge=1)
+
+    @field_validator("model")
+    @classmethod
+    def _model_named(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("model must not be empty")
+        return value
+
+    @model_validator(mode="after")
+    def _fit_provider(self) -> ProviderSettings:
+        if self.provider == "anthropic":
+            if self.api_key is None or not self.api_key.strip():
+                raise ValueError("api_key is required for provider anthropic")
+            if self.base_url is not None:
+                raise ValueError("base_url is only accepted for provider ollama")
+        else:
+            if self.api_key is not None:
+                raise ValueError("api_key is not accepted for provider ollama: it has no auth")
+            if self.base_url is not None and not self.base_url.strip():
+                raise ValueError("base_url cannot be empty")
+        return self
+
+
+class JudgeConfig(ProviderSettings):
+    """The model that judges replies, with the largest transcript it may read."""
+
+    max_input_chars: int = Field(default=32_000, ge=1_000, le=200_000)
+
+
+class SimulatedUserConfig(ProviderSettings):
+    """The model that plays the user, with the largest transcript it may read."""
+
+    max_input_chars: int = Field(default=32_000, ge=1_000, le=200_000)
+
+
 class Canary(_Model):
     """A marker value that must never appear in an agent reply."""
 
@@ -505,6 +627,8 @@ class Experiment(_Model):
     selected_tags: list[str] = Field(default_factory=list)
     redacted_values: list[str] = Field(default_factory=list, repr=False)
     database: DatabaseConfig | None = None
+    judge: JudgeConfig | None = None
+    simulated_user: SimulatedUserConfig | None = None
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     base_dir: Path | None = Field(default=None, repr=False)
     hook_env: dict[str, str] = Field(default_factory=dict, repr=False)
@@ -556,10 +680,24 @@ def _one_baseline(exp: Experiment) -> None:
         raise ValueError("experiments with several variants need exactly one baseline")
 
 
+def _judge_checks(case: Case) -> list[JudgeCheck]:
+    checks = [check for turn in case.turns for check in turn.judge] + case.judge
+    if case.simulated is not None:
+        checks += case.simulated.each_turn_judge
+    return checks
+
+
+def _asserts_something(case: Case) -> bool:
+    own = any(turn.expect or turn.db or turn.judge for turn in case.turns)
+    simulated = case.simulated is not None and bool(
+        case.simulated.each_turn or case.simulated.each_turn_judge
+    )
+    return own or simulated or bool(case.db or case.forbidden or case.judge)
+
+
 def _cases_have_expectations(exp: Experiment) -> None:
     for case in exp.cases:
-        asserted = any(turn.expect or turn.db for turn in case.turns)
-        if asserted or case.db or case.forbidden:
+        if _asserts_something(case):
             continue
         if exp.database is not None and exp.database.forbidden:
             raise ValueError(
@@ -589,12 +727,26 @@ def _database_declared(exp: Experiment) -> None:
         raise ValueError("sql hooks need a database section")
 
 
-def _unique_db_ids(exp: Experiment) -> None:
+def _unique_check_ids(exp: Experiment) -> None:
     for case in exp.cases:
-        ids = _case_db_ids(exp, case)
-        for db_id in ids:
-            if ids.count(db_id) > 1:
+        db_ids = _case_db_ids(exp, case)
+        for db_id in db_ids:
+            if db_ids.count(db_id) > 1:
                 raise ValueError(f"duplicate database check id {db_id!r} in case {case.id!r}")
+        ids = db_ids + [check.id for check in _judge_checks(case)]
+        for check_id in ids:
+            if ids.count(check_id) > 1:
+                raise ValueError(f"duplicate check id {check_id!r} in case {case.id!r}")
+
+
+def _llm_declared(exp: Experiment) -> None:
+    for case in exp.cases:
+        if exp.judge is None and _judge_checks(case):
+            raise ValueError(f"case {case.id!r} uses judge checks but no judge is configured")
+        if exp.simulated_user is None and case.simulated is not None:
+            raise ValueError(
+                f"case {case.id!r} uses a simulated user but no simulated_user is configured"
+            )
 
 
 def _json_serializable(exp: Experiment) -> None:
@@ -631,9 +783,10 @@ _EXPERIMENT_CHECKS: tuple[Callable[[Experiment], None], ...] = (
     _unique_names,
     _valid_environments,
     _one_baseline,
+    _llm_declared,
     _cases_have_expectations,
     _database_declared,
-    _unique_db_ids,
+    _unique_check_ids,
     _json_serializable,
     _variants_cover_template,
 )

@@ -1,0 +1,58 @@
+- id: no-llm-sections
+  cases:
+    - {id: a, turns: [0]}
+  expect: {}
+- id: judge-configured-without-judged-cases
+  judge: true
+  cases:
+    - {id: a, turns: [0, 0]}
+  expect: {judge: 0}
+- id: scripted-turn-and-case-checks
+  judge: true
+  trials: 2
+  cases:
+    - {id: a, turns: [2, 1], case_judge: 1}
+  expect: {judge: 8}
+- id: variants-multiply
+  judge: true
+  variants: 3
+  trials: 2
+  cases:
+    - {id: a, turns: [1]}
+    - {id: b, turns: [0, 1], case_judge: 1}
+  expect: {judge: 18}
+- id: simulated-without-each-turn-judge
+  simulated_user: true
+  trials: 3
+  cases:
+    - {id: a, simulated: {max_turns: 4}}
+  expect: {simulated_user: 12}
+- id: simulated-with-each-turn-judge-and-case-judge
+  judge: true
+  simulated_user: true
+  trials: 2
+  cases:
+    - {id: a, simulated: {max_turns: 3, each_turn_judge: 2}, case_judge: 1}
+  expect: {judge: 14, simulated_user: 6}
+- id: mixed-scripted-and-simulated
+  judge: true
+  simulated_user: true
+  variants: 2
+  trials: 1
+  cases:
+    - {id: a, turns: [1, 1]}
+    - {id: b, simulated: {max_turns: 2, each_turn_judge: 1}}
+  expect: {judge: 8, simulated_user: 4}
+- id: tags-filter-before-counting
+  judge: true
+  trials: 1
+  tags: [smoke]
+  cases:
+    - {id: a, turns: [1], tags: [smoke]}
+    - {id: b, turns: [5], tags: [slow]}
+  expect: {judge: 1}
+- id: simulated-role-configured-without-simulated-cases
+  simulated_user: true
+  cases:
+    - {id: a, turns: [0]}
+  expect: {simulated_user: 0}

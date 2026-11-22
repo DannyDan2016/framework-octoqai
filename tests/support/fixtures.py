@@ -18,13 +18,17 @@ import pytest
 
 from octoqai.cli import main
 from octoqai.db import SqlDatabase
+from octoqai.errors import ConfigError
+from octoqai.experiment import ProviderSettings
 from octoqai.hooks import HookKwargs
-from support import samples
+from octoqai.providers.port import LlmPort, LlmRole
+from support import netguard, samples
 from support.agents import FakeAgent, FakeClock, FakeJsonAgent
 from support.builders import ExperimentBuilder, turn
 from support.databases import BANK_SCHEMA, SqliteFile
 from support.hooks import FakeCommands, fake_program
 from support.paths import TOY_SSE_AGENT
+from support.providers import FakeLlm
 
 
 @dataclass
@@ -46,6 +50,12 @@ class CliRun:
     def report_text(self) -> str:
         """Return the raw JSON report."""
         return (self.out_dir / "report.json").read_text(encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Allow loopback connections only and hide the provider credentials of the environment."""
+    netguard.install(monkeypatch)
 
 
 @pytest.fixture
@@ -93,8 +103,20 @@ def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., 
         agent: FakeAgent | None = None,
         commands: FakeCommands | None = None,
         hook_agent: FakeJsonAgent | None = None,
+        judge: FakeLlm | None = None,
+        simulator: FakeLlm | None = None,
     ) -> CliRun:
         argv = list(args)
+        fakes: dict[LlmRole, FakeLlm | None] = {"judge": judge, "simulated_user": simulator}
+        unfaked: list[LlmRole] = []
+
+        def factory(role: LlmRole, settings: ProviderSettings) -> LlmPort:
+            fake = fakes[role]
+            if fake is None:
+                unfaked.append(role)
+                raise ConfigError(f"run_cli got no fake for {role}")
+            return fake
+
         hook_kwargs = HookKwargs()
         if commands is not None:
             hook_kwargs["run_command"] = commands
@@ -109,8 +131,10 @@ def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., 
             transport=agent.transport() if agent else None,
             adapter_kwargs=agent.adapter_kwargs() if agent else None,
             hook_kwargs=hook_kwargs,
+            llm_factory=factory,
         )
         captured = capsys.readouterr()
+        assert not unfaked, f"the experiment configures {unfaked} but run_cli got no fake"
         return CliRun(code, captured.out, captured.err, out_dir)
 
     return _run

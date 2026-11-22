@@ -1,0 +1,141 @@
+- id: judge-missing-model
+  overrides: {judge: {provider: ollama, max_calls: 3}}
+  fragments: [judge.model]
+
+- id: judge-empty-model
+  overrides: {judge: {provider: ollama, model: "  ", max_calls: 3}}
+  fragments: [model must not be empty]
+
+- id: judge-missing-max-calls
+  overrides: {judge: {provider: ollama, model: m}}
+  fragments: [judge.max_calls]
+
+- id: judge-zero-max-calls
+  overrides: {judge: {provider: ollama, model: m, max_calls: 0}}
+  fragments: [judge.max_calls]
+
+- id: judge-unknown-provider
+  overrides: {judge: {provider: openai, model: m, max_calls: 3}}
+  fragments: [judge.provider, anthropic, ollama]
+
+- id: judge-provider-typo
+  overrides: {judge: {provider: ollamma, model: m, max_calls: 3}}
+  fragments: [judge.provider, "did you mean 'ollama'"]
+
+- id: judge-unknown-effort
+  overrides: {judge: {provider: ollama, model: m, max_calls: 3, effort: extreme}}
+  fragments: [judge.effort]
+
+- id: simulated-user-max-turns-zero
+  overrides:
+    simulated_user: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, simulated: {goal: g, max_turns: 0, each_turn: [{contains: "."}]}}]
+  fragments: [max_turns]
+
+- id: simulated-user-max-turns-over-limit
+  overrides:
+    simulated_user: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, simulated: {goal: g, max_turns: 21, each_turn: [{contains: "."}]}}]
+  fragments: [max_turns]
+
+- id: turns-and-simulated-together
+  overrides:
+    simulated_user: {provider: ollama, model: m, max_calls: 3}
+    cases:
+      - id: c1
+        turns: [{user: Hola, expect: [{contains: "."}]}]
+        simulated: {goal: g, max_turns: 3, each_turn: [{contains: "."}]}
+  fragments: ["case 'c1'", "exactly one of turns or simulated"]
+
+- id: neither-turns-nor-simulated
+  overrides: {cases: [{id: c1}]}
+  fragments: ["case 'c1'", "exactly one of turns or simulated"]
+
+- id: turns-key-missing-with-other-keys
+  overrides: {cases: [{id: c1, tags: [smoke]}]}
+  fragments: ["exactly one of turns or simulated"]
+
+- id: turns-empty-list
+  overrides: {cases: [{id: c1, turns: []}]}
+  fragments: ["exactly one of turns or simulated"]
+
+- id: stop-when-invalid-regex
+  overrides:
+    simulated_user: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, simulated: {goal: g, max_turns: 3, stop_when: "(unclosed", each_turn: [{contains: "."}]}}]
+  fragments: [stop_when, regex]
+
+- id: empty-rubric
+  overrides:
+    judge: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, turns: [{user: Hola, judge: [{id: j, rubric: ""}]}]}]
+  fragments: [rubric must not be empty]
+
+- id: blank-judge-check-id
+  overrides:
+    judge: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, turns: [{user: Hola, judge: [{id: "  ", rubric: ok}]}]}]
+  fragments: [id must not be empty]
+
+- id: empty-goal
+  overrides:
+    simulated_user: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, simulated: {goal: "", max_turns: 3, each_turn: [{contains: "."}]}}]
+  fragments: [goal must not be empty]
+
+- id: duplicate-id-between-db-and-judge
+  overrides:
+    database: {url: "${DB_URL}"}
+    judge: {provider: ollama, model: m, max_calls: 3}
+    cases:
+      - id: c1
+        turns:
+          - user: Hola
+            db: [{id: x, query: SELECT 1, expect: {value: 1}}]
+            judge: [{id: x, rubric: ok}]
+  fragments: ["duplicate check id 'x' in case 'c1'"]
+
+- id: duplicate-id-between-judge-checks
+  overrides:
+    judge: {provider: ollama, model: m, max_calls: 3}
+    cases:
+      - id: c1
+        turns: [{user: Hola, expect: [{contains: "."}], judge: [{id: x, rubric: ok}]}]
+        judge: [{id: x, rubric: ok}]
+  fragments: ["duplicate check id 'x' in case 'c1'"]
+
+- id: judge-checks-without-judge-section
+  overrides:
+    cases: [{id: c1, turns: [{user: Hola, expect: [{contains: "."}], judge: [{id: j, rubric: ok}]}]}]
+  fragments: ["case 'c1' uses judge checks but no judge is configured"]
+
+- id: simulated-without-simulated-user-section
+  overrides:
+    cases: [{id: c1, simulated: {goal: g, max_turns: 3, each_turn: [{contains: "."}]}}]
+  fragments: ["case 'c1' uses a simulated user but no simulated_user is configured"]
+
+- id: judge-key-typo
+  overrides:
+    judge: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, turns: [{user: Hola, judge: [{id: j, rubrik: ok}]}]}]
+  fragments: [rubrik, "did you mean 'rubric'"]
+
+- id: simulated-opening-blank
+  overrides:
+    simulated_user: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, simulated: {goal: g, max_turns: 3, opening: "  ", each_turn: [{contains: "."}]}}]
+  fragments: ["opening must not be empty"]
+
+- id: simulated-without-any-check
+  overrides:
+    simulated_user: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, simulated: {goal: g, max_turns: 3}}]
+  fragments: ["case 'c1' has no expectation"]
+
+- id: anthropic-judge-without-api-key
+  overrides: {judge: {provider: anthropic, model: m, max_calls: 3}}
+  fragments: ["judge.api_key must come from an environment variable", "ANTHROPIC_API_KEY"]
+
+- id: anthropic-simulated-user-without-api-key
+  overrides: {simulated_user: {provider: anthropic, model: m, max_calls: 3}}
+  fragments: ["simulated_user.api_key must come from an environment variable"]

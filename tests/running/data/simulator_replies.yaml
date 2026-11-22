@@ -1,0 +1,65 @@
+- id: provider-error
+  reply: {kind: fails, value: APITimeoutError}
+  reason: "provider error: APITimeoutError"
+- id: refused
+  reply: {kind: refuses}
+  reason: refused
+- id: truncated
+  reply: {kind: truncates}
+  reason: truncated
+- id: not-json
+  reply: {kind: text, value: "claro, voy"}
+  reason: unreadable reply
+- id: empty-text
+  reply: {kind: text, value: ""}
+  reason: unreadable reply
+- id: missing-done
+  reply: {kind: text, value: '{"message": "x"}'}
+  reason: unreadable reply
+- id: extra-key
+  reply: {kind: text, value: '{"message": "x", "done": false, "mood": "angry"}'}
+  reason: unreadable reply
+- id: duplicate-key
+  reply: {kind: text, value: '{"message": "x", "done": false, "done": true}'}
+  reason: unreadable reply
+- id: done-as-string
+  reply: {kind: text, value: '{"message": "x", "done": "false"}'}
+  reason: unreadable reply
+- id: json-array
+  reply: {kind: text, value: '[1]'}
+  reason: unreadable reply
+- id: blank-message
+  reply: {kind: text, value: '{"message": "   ", "done": false}'}
+  reason: empty message
+- id: budget-exhausted
+  max_calls: 1
+  reply: {kind: text, value: '{"message": "x", "done": false}'}
+  reason: call budget exhausted
+- id: ended-before-the-first-turn
+  turns: 0
+  reply: {kind: done}
+  reason: ended before the first turn
+- id: delimiter-collision
+  fixed_nonce: true
+  agent: "x aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa."
+  reply: {kind: text, value: '{"message": "x", "done": false}'}
+  reason: delimiter collision
+- id: split-secret
+  persona: "codigo TEN-B-"
+  opening: Hola
+  agent: "0042 listo."
+  reply: {kind: text, value: '{"message": "x", "done": false}'}
+  reason: sensitive data split across turns
+- id: transcript-grows-past-the-input-cap
+  max_input_chars: 1000
+  agent_pad: 1200
+  reply: {kind: text, value: '{"message": "x", "done": false}'}
+  reason: transcript too long
+  simulator_calls: 1
+- id: persona-alone-past-the-input-cap
+  max_input_chars: 1000
+  persona_pad: 1200
+  turns: 0
+  reply: {kind: text, value: '{"message": "x", "done": false}'}
+  reason: transcript too long
+  simulator_calls: 0

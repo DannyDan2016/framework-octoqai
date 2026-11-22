@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import sys
+from collections.abc import Callable
 from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,14 +16,24 @@ from octoqai import __version__
 from octoqai.agents import AdapterKwargs, adapter_for
 from octoqai.db import SqlDatabase, connection_secrets
 from octoqai.errors import ConfigError
-from octoqai.experiment import Experiment, load_experiment
+from octoqai.experiment import Experiment, ProviderSettings, load_experiment
 from octoqai.hooks import HookEnvironment, HookExecutor, HookKwargs
+from octoqai.providers.budget import BUDGET_EXHAUSTED
+from octoqai.providers.factory import provider_for
+from octoqai.providers.port import LlmPort, LlmRole
 from octoqai.reports import write_json
-from octoqai.running import RunResult, hook_error, run_experiment
+from octoqai.running import RunResult, hook_error, run_experiment, worst_case_calls
 from octoqai.security import Redactor
 from octoqai.verdict import EXIT_CODES, Verdict, decide
 
 EXIT_ERROR = 3
+ROLE_NAMES: dict[LlmRole, str] = {"judge": "judge", "simulated_user": "simulated user"}
+
+LlmFactory = Callable[[LlmRole, ProviderSettings], LlmPort]
+
+
+def _default_factory(role: LlmRole, settings: ProviderSettings) -> LlmPort:
+    return provider_for(settings)
 
 
 @dataclass(frozen=True)
@@ -30,6 +41,7 @@ class _Seams:
     transport: httpx.BaseTransport | None
     adapter: AdapterKwargs
     hooks: HookKwargs
+    llm_factory: LlmFactory
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -88,6 +100,54 @@ def _never_ran_message(run: RunResult) -> str:
     return f"Error: agent unreachable in every trial ({first})."
 
 
+def _unreachable_messages(run: RunResult) -> list[str]:
+    messages = []
+    for role, stats in run.llm.items():
+        errors = {k: v for k, v in stats.errors_by_class.items() if k != BUDGET_EXHAUSTED}
+        if stats.calls >= 1 and sum(errors.values()) == stats.calls:
+            top = min(errors, key=lambda name: (-errors[name], name))
+            messages.append(f"Error: {ROLE_NAMES[role]} unreachable in every call ({top}).")
+    return messages
+
+
+def _print_llm_usage(run: RunResult, exp: Experiment) -> None:
+    limits = _role_settings(exp)
+    for role, stats in run.llm.items():
+        label = ROLE_NAMES[role]
+        print(f"{label} calls: {stats.calls}/{limits[role].max_calls}")
+        tokens_in = "unknown" if stats.input_tokens is None else stats.input_tokens
+        tokens_out = "unknown" if stats.output_tokens is None else stats.output_tokens
+        print(f"{label} tokens: in={tokens_in} out={tokens_out}")
+
+
+def _role_settings(exp: Experiment) -> dict[LlmRole, ProviderSettings]:
+    roles: dict[LlmRole, ProviderSettings | None] = {
+        "judge": exp.judge,
+        "simulated_user": exp.simulated_user,
+    }
+    return {role: settings for role, settings in roles.items() if settings is not None}
+
+
+def _check_cap(exp: Experiment) -> None:
+    limits = _role_settings(exp)
+    for role, needed in worst_case_calls(exp).items():
+        if needed > limits[role].max_calls:
+            raise ConfigError(
+                f"worst case needs {needed} {ROLE_NAMES[role]} call(s) "
+                f"but {role}.max_calls is {limits[role].max_calls}"
+            )
+
+
+def _print_worst_case(exp: Experiment) -> None:
+    limits = _role_settings(exp)
+    for role, needed in worst_case_calls(exp).items():
+        settings = limits[role]
+        print(
+            f"{ROLE_NAMES[role]} worst case: {needed} call(s) of max_calls "
+            f"{settings.max_calls}, up to {needed * settings.max_tokens} output tokens"
+        )
+
+
 def _warn_failed_cleanup(run: RunResult, redactor: Redactor) -> bool:
     failed = [r for r in run.hooks if r.stage == "after_run" and not r.ok]
     for result in failed:
@@ -126,17 +186,30 @@ def _open_and_run(exp: Experiment, seams: _Seams) -> RunResult:
         db = None
         if exp.database is not None:
             db = stack.enter_context(closing(SqlDatabase(exp.database.url)))
+        ports = {
+            role: stack.enter_context(closing(seams.llm_factory(role, settings)))
+            for role, settings in _role_settings(exp).items()
+        }
         environment = HookEnvironment(db, exp.base_dir, exp.hook_env)
         hooks = stack.enter_context(closing(HookExecutor(exp.hooks, environment, **seams.hooks)))
         adapter = stack.enter_context(
             closing(adapter_for(exp.agent, seams.transport, **seams.adapter))
         )
-        return run_experiment(exp, adapter, db=db, hooks=hooks)
+        return run_experiment(
+            exp,
+            adapter,
+            db=db,
+            hooks=hooks,
+            judge=ports.get("judge"),
+            simulator=ports.get("simulated_user"),
+        )
 
 
 def _execute(args: argparse.Namespace, exp: Experiment, redactor: Redactor, seams: _Seams) -> int:
     if args.tags:
         exp = exp.select(args.tags)
+    _check_cap(exp)
+    _print_worst_case(exp)
     out: Path = args.out
     run = _open_and_run(exp, seams)
     cleanup_failed = _warn_failed_cleanup(run, redactor)
@@ -151,8 +224,12 @@ def _execute(args: argparse.Namespace, exp: Experiment, redactor: Redactor, seam
         print(f"{message} Report: {report}", file=sys.stderr)
         return EXIT_ERROR
     _print_summary(verdict)
+    _print_llm_usage(run, exp)
     print(f"Report: {report}")
-    return _exit_code(verdict, cleanup_failed)
+    unreachable = _unreachable_messages(run)
+    for message in unreachable:
+        print(redactor.redact(message), file=sys.stderr)
+    return _exit_code(verdict, cleanup_failed or bool(unreachable))
 
 
 def main(
@@ -161,6 +238,7 @@ def main(
     *,
     adapter_kwargs: AdapterKwargs | None = None,
     hook_kwargs: HookKwargs | None = None,
+    llm_factory: LlmFactory | None = None,
 ) -> int:
     """Run the CLI and return the process exit code.
 
@@ -171,9 +249,12 @@ def main(
             adapter, used to test without real waiting.
         hook_kwargs: Optional ``transport``, ``run_command`` and ``clock`` for the hook
             executor, used to test without a network or real processes.
+        llm_factory: Optional builder of the judge and simulated user ports from their role
+            and settings; defaults to the real providers and is replaced by fakes in tests.
 
     Returns:
-        0 for go, 1 for no-go, 2 for insufficient evidence and 3 for errors.
+        0 for go, 1 for no-go, 2 for insufficient evidence and 3 for errors, including a
+        worst case above ``max_calls`` and a judge or simulated user that never answered.
     """
     parser = _parser()
     try:
@@ -184,9 +265,13 @@ def main(
         parser.print_usage(sys.stderr)
         return EXIT_ERROR
     try:
-        return _run(
-            args, _Seams(transport, adapter_kwargs or AdapterKwargs(), hook_kwargs or HookKwargs())
+        seams = _Seams(
+            transport,
+            adapter_kwargs or AdapterKwargs(),
+            hook_kwargs or HookKwargs(),
+            llm_factory or _default_factory,
         )
+        return _run(args, seams)
     except ConfigError as exc:
         print(f"Config error: {exc}", file=sys.stderr)
     except Exception as exc:

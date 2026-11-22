@@ -18,6 +18,8 @@ SECRET_SAMPLES: dict[str, str] = {
     "credential assignment": "password" + "=hunter22",
 }
 SPLIT_SECRET = ("sk-ant-", "x" * 30)
+ANTHROPIC_KEY = "".join(SPLIT_SECRET)
+ANTHROPIC_KEY_NO_PREFIX = "".join(("k9", "Zq" * 12, "7w"))
 EMAIL = "ana" + "@" + "tenant-b.example"
 SUPPORT_EMAIL = "soporte" + "@" + "banco.example"
 CARD = "4111 1111 " + "1111 1111"
@@ -75,6 +77,7 @@ DB_PASSWORD = "s3cr3t-" + "pw-77"
 DB_URL_WITH_PASSWORD = "nodialect" + "://qa:" + DB_PASSWORD + "@db.example/app"
 DB_URL_PARTIAL_VARIABLE = "postgresql" + "://qa:" + DB_PASSWORD + "@db.example/${DB_NAME}"
 DB_URL_BAD_PORT = "postgresql" + "://qa:p@x:" + DB_PASSWORD + "@db.example:5432/app"
+LOOPBACK_URL_WITH_USERINFO = "http" + "://qa:" + DB_PASSWORD + "@127.0.0.1:11434"
 PG_URL_WITH_PASSWORD = "postgresql" + "://qa:" + DB_PASSWORD + "@db.example/app"
 DB_SECRET_PASSWORD = "Sup3r-" + "s3cret!"
 DB_SECRET_PASSWORD_ENCODED = "Sup3r%2D" + "s3cret%21"
@@ -226,3 +229,129 @@ HOOK_SQL = {
     "hook-unquoted": "DELETE FROM ajustes WHERE cuenta = ${HARD_SECRET}",
     "hook-identifier": 'DELETE FROM "${HARD_SECRET}"',
 }
+
+
+OLLAMA_CANARY = "ollama-" + "canary-" + "5521"
+UNSPECIFIED_HOST = "0.0" + ".0.0"
+BUILT_URL_ROWS = [
+    {
+        "id": "loopback-other-address",
+        "base_url": "http://" + "127.0.0.2:11434",
+        "allow_remote": False,
+        "accepted": True,
+    },
+    {
+        "id": "ipv6-loopback",
+        "base_url": "http://" + "[::1]:11434",
+        "allow_remote": False,
+        "accepted": True,
+    },
+    {
+        "id": "ipv6-loopback-long-form",
+        "base_url": "http://" + "[0:0:0:0:0:0:0:1]:11434",
+        "allow_remote": False,
+        "accepted": True,
+    },
+    {
+        "id": "ipv4-mapped-loopback",
+        "base_url": "http://" + "[::ffff:127.0.0.1]:11434",
+        "allow_remote": False,
+        "accepted": True,
+    },
+    {
+        "id": "short-ipv4",
+        "base_url": "http://" + "127.1:11434",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "decimal-ipv4",
+        "base_url": "http://" + "2130706433:11434",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "hexadecimal-ipv4",
+        "base_url": "http://" + "0x7f000001:11434",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "localhost-trailing-dot",
+        "base_url": "http://" + "localhost.:11434",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "localhost-localdomain",
+        "base_url": "http://" + "localhost.localdomain:11434",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "remote-ipv6-allowed",
+        "base_url": "http://" + "[2001:db8::1]:11434",
+        "allow_remote": True,
+        "accepted": True,
+    },
+    {
+        "id": "remote-ipv6",
+        "base_url": "http://" + "[2001:db8::1]:11434",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "user-and-password",
+        "base_url": "http://" + "user:pw@127.0.0.1:11434",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "user-and-password-remote",
+        "base_url": "http://" + "user:pw@127.0.0.1:11434",
+        "allow_remote": True,
+        "accepted": False,
+    },
+    {
+        "id": "user-only",
+        "base_url": "http://" + "user@127.0.0.1:11434",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "loopback-lookalike-userinfo",
+        "base_url": "http://127.0.0.1" + "@evil.example",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "loopback-lookalike-userinfo-remote",
+        "base_url": "http://127.0.0.1" + "@evil.example",
+        "allow_remote": True,
+        "accepted": False,
+    },
+    {
+        "id": "unspecified-address",
+        "base_url": "http://" + UNSPECIFIED_HOST + ":11434",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "unspecified-address-remote",
+        "base_url": "http://" + UNSPECIFIED_HOST + ":11434",
+        "allow_remote": True,
+        "accepted": True,
+    },
+    {
+        "id": "private-address",
+        "base_url": "http://" + IPV4 + ":11434",
+        "allow_remote": False,
+        "accepted": False,
+    },
+    {
+        "id": "private-address-remote",
+        "base_url": "http://" + IPV4 + ":11434",
+        "allow_remote": True,
+        "accepted": True,
+    },
+]

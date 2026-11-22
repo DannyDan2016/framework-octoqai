@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
+from octoqai.expectations import JUDGE_KIND
 from octoqai.running import RunResult, TrialResult
 from octoqai.stats import paired_bootstrap_diff, pass_at_k, pass_hat_k, wilson_interval
 
@@ -38,6 +39,8 @@ class VariantSummary:
     forbidden_crud: int
     status: Status
     reasons: list[str] = field(default_factory=list)
+    judge_not_evaluable: int = 0
+    simulator_errors: int = 0
 
 
 @dataclass
@@ -81,7 +84,7 @@ def _gate_reasons(leaks: int, forbidden: int, other_hard: int) -> list[str]:
 
 
 def _rate_status(
-    lo: float, hi: float, threshold: float, n_not_evaluable: int
+    lo: float, hi: float, threshold: float, n_not_evaluable: int, judge_not_evaluable: int = 0
 ) -> tuple[Status, list[str]]:
     if hi < threshold:
         return "no-go", [f"pass rate upper bound {hi:.2f} is below threshold {threshold:.2f}"]
@@ -90,6 +93,8 @@ def _rate_status(
     reasons: list[str] = []
     if n_not_evaluable:
         reasons.append(f"{n_not_evaluable} trial(s) could not be evaluated")
+    if judge_not_evaluable:
+        reasons.append(f"{judge_not_evaluable} judge verdict(s) could not be obtained")
     if lo < threshold:
         reasons.append(
             f"interval [{lo:.2f}, {hi:.2f}] contains threshold {threshold:.2f}: "
@@ -101,6 +106,14 @@ def _rate_status(
 def _mean(values: Iterable[float]) -> float:
     items = list(values)
     return sum(items) / len(items) if items else 0.0
+
+
+def _judge_not_evaluable(trials: list[TrialResult]) -> int:
+    return sum(
+        check.kind == JUDGE_KIND and check.passed is None and not check.agent_error
+        for trial in trials
+        for check in [*(c for turn in trial.turns for c in turn.checks), *trial.judge_checks]
+    )
 
 
 def _summarize(
@@ -119,12 +132,13 @@ def _summarize(
     tokens = [t.tokens for t in ran if t.tokens is not None]
     leaks = sum(t.leak_count for t in trials)
     forbidden = sum(t.forbidden_count for t in trials)
+    judge_unknown = _judge_not_evaluable(trials)
     gate_reasons = _gate_reasons(leaks, forbidden, sum(t.other_hard_violation for t in trials))
     if gate_reasons:
         status: Status = "no-go"
         reasons = gate_reasons
     else:
-        status, reasons = _rate_status(lo, hi, threshold, n_not_evaluable)
+        status, reasons = _rate_status(lo, hi, threshold, n_not_evaluable, judge_unknown)
     ttfts = [t.ttft_ms for t in ran if t.ttft_ms is not None]
     return VariantSummary(
         name=name,
@@ -144,6 +158,8 @@ def _summarize(
         forbidden_crud=forbidden,
         status=status,
         reasons=reasons,
+        judge_not_evaluable=judge_unknown,
+        simulator_errors=sum(t.simulator_error is not None for t in trials),
     )
 
 

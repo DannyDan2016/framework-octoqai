@@ -1,11 +1,28 @@
+import re
+
 import pytest
 
 from octoqai.agents import AgentReply
+from octoqai.errors import ConfigError
 from octoqai.expectations import evaluate
-from octoqai.experiment import load_experiment
+from octoqai.experiment import (
+    Case,
+    Expectation,
+    JudgeCheck,
+    SimulatedUser,
+    Turn,
+    load_experiment,
+)
+from octoqai.experiment.loader import _reject_llm_text_variables, _render_case, _Variables
 from support import samples
 from support.assertions import assert_config_error
-from support.builders import turn, write_data_set, write_env_file
+from support.builders import (
+    judge_check,
+    simulated,
+    turn,
+    write_data_set,
+    write_env_file,
+)
 from support.paths import cases
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression]
@@ -228,6 +245,89 @@ def test_invalid_database_or_hooks_is_config_error(row, experiment, tmp_path):
     assert_config_error(
         lambda: load_experiment(path, process_env={"DB_URL": "sqlite:///x.db"}),
         *row["fragments"],
+    )
+
+
+@pytest.mark.parametrize("row", cases(__file__, "judge_errors"))
+def test_invalid_judge_or_simulated_user_is_config_error(row, experiment, tmp_path):
+    path = experiment.merge(row["overrides"]).write(tmp_path)
+    assert_config_error(
+        lambda: load_experiment(path, process_env={"DB_URL": "sqlite:///x.db"}),
+        *row["fragments"],
+        absent=row.get("absent", ()),
+    )
+
+
+def test_judge_and_simulated_sections_load_in_short_form(experiment, tmp_path):
+    exp = load_experiment(experiment.judge().simulated_user().write(tmp_path))
+    assert (exp.judge.provider, exp.judge.max_calls, exp.judge.max_input_chars) == (
+        "ollama",
+        3,
+        32_000,
+    )
+    assert exp.simulated_user.model == "m"
+
+
+@pytest.mark.security
+def test_llm_api_keys_come_from_the_environment_and_are_redacted(experiment, tmp_path):
+    judge_key, user_key = samples.ANTHROPIC_KEY, samples.ANTHROPIC_KEY_NO_PREFIX
+    experiment.judge(provider="anthropic", api_key="${JUDGE_KEY}").simulated_user(
+        provider="anthropic", api_key="${USER_KEY}"
+    )
+    exp = load_experiment(
+        experiment.write(tmp_path), process_env={"JUDGE_KEY": judge_key, "USER_KEY": user_key}
+    )
+    assert exp.judge.api_key == judge_key
+    assert exp.simulated_user.api_key == user_key
+    assert {judge_key, user_key} <= set(exp.redacted_values)
+    shown = repr(exp) + repr(exp.judge) + repr(exp.simulated_user)
+    assert judge_key not in shown and user_key not in shown
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("section", ["judge", "simulated_user"])
+def test_literal_llm_api_key_is_rejected_without_echo(section, experiment, tmp_path):
+    key = samples.ANTHROPIC_KEY
+    getattr(experiment, section)(provider="anthropic", api_key=key)
+    message = assert_config_error(
+        lambda: load_experiment(experiment.write(tmp_path), process_env={}),
+        rf"{section}\.api_key must come from an environment variable",
+        r"\$\{ANTHROPIC_API_KEY\}",
+    )
+    assert key not in message
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("value", ["sk-ant-${X}", "${X}-tail", "${X}${X}", 7])
+def test_partial_llm_api_key_is_rejected_without_echo(value, experiment, tmp_path):
+    experiment.judge(provider="anthropic", api_key=value)
+    message = assert_config_error(
+        lambda: load_experiment(experiment.write(tmp_path), process_env={"X": "secret-value-x"}),
+        r"judge\.api_key must come from an environment variable",
+    )
+    assert "secret-value-x" not in message
+
+
+def test_missing_llm_api_key_variable_names_it(experiment, tmp_path):
+    experiment.simulated_user(provider="anthropic", api_key="${USER_KEY}")
+    assert_config_error(
+        lambda: load_experiment(experiment.write(tmp_path), process_env={}),
+        "environment variable USER_KEY is not set",
+    )
+
+
+def test_llm_model_can_come_from_the_environment(experiment, tmp_path):
+    experiment.judge(model="${JUDGE_MODEL}")
+    exp = load_experiment(experiment.write(tmp_path), process_env={"JUDGE_MODEL": "llama3"})
+    assert exp.judge.model == "llama3"
+
+
+def test_ollama_with_an_api_key_is_still_rejected_by_the_model(experiment, tmp_path):
+    experiment.judge(provider="ollama", api_key="${JUDGE_KEY}")
+    assert_config_error(
+        lambda: load_experiment(experiment.write(tmp_path), process_env={"JUDGE_KEY": "k"}),
+        r"judge",
+        "api_key",
     )
 
 
@@ -544,3 +644,162 @@ def test_param_mixing_literal_variable_and_data_gets_both(experiment, tmp_path):
     process_env = {"DB_URL": "sqlite:///x.db", "TENANT": "tenant-b-77"}
     exp = load_experiment(path, env="qa", process_env=process_env)
     assert exp.cases[0].turns[0].db[0].params == {"c": "tenant-b-77-001"}
+
+
+LLM_TEXT_LOCATIONS = [
+    (
+        {"turns": [turn("Hola", judge=[judge_check("j", "Cobra ${TENANT}")])]},
+        r"cases\[c1\]\.turns\[0\]\.judge\[0\]",
+        "rubric",
+    ),
+    (
+        {"turns": [turn("Hola", judge=[judge_check("j", reference="Cobra ${TENANT}")])]},
+        r"cases\[c1\]\.turns\[0\]\.judge\[0\]",
+        "reference",
+    ),
+    ({"judge": [judge_check("j", "Es de ${TENANT}")]}, r"cases\[c1\]\.judge\[0\]", "rubric"),
+    (
+        {"simulated": simulated(goal="Entrar en ${TENANT}")},
+        r"cases\[c1\]\.simulated",
+        "goal",
+    ),
+    (
+        {"simulated": simulated(persona="Cliente de ${TENANT}")},
+        r"cases\[c1\]\.simulated",
+        "persona",
+    ),
+    (
+        {"simulated": simulated(opening="Hola ${TENANT}")},
+        r"cases\[c1\]\.simulated",
+        "opening",
+    ),
+    (
+        {"simulated": simulated(each_turn_judge=[judge_check("j", "Es ${TENANT}")])},
+        r"cases\[c1\]\.simulated\.each_turn_judge\[0\]",
+        "rubric",
+    ),
+]
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(("case", "location", "field"), LLM_TEXT_LOCATIONS)
+def test_env_variable_in_llm_text_is_rejected(case, location, field, experiment, tmp_path):
+    experiment.judge().simulated_user().merge({"cases": [{"id": "c1", **case}]})
+    message = assert_config_error(
+        lambda: load_experiment(experiment.write(tmp_path), process_env={"TENANT": "tenant-b-77"}),
+        location,
+        rf"\$\{{VAR\}} is not allowed in {field}: the text is sent to the LLM provider",
+        r"use \{\{ data\.\* \}\} instead",
+    )
+    assert "tenant-b-77" not in message
+
+
+def test_simulated_case_renders_data_placeholders_end_to_end(experiment, tmp_path):
+    write_data_set(tmp_path, "qa", {"cuenta": "ES-0002", "cliente": "Ana"})
+    experiment.environments("qa").simulated_user().case(
+        "c1",
+        simulated=simulated(
+            goal="Reclama el cargo de la cuenta {{ data.cuenta }}",
+            persona="Eres {{ data.cliente }}",
+            opening="Hola, soy {{ data.cliente }}",
+            stop_when="cuenta {{ data.cuenta }}",
+            each_turn=[{"not_contains": "{{ data.cuenta }}9"}],
+        ),
+    )
+    exp = load_experiment(experiment.write(tmp_path), env="qa", process_env={})
+    user = exp.cases[0].simulated
+    assert user.goal == "Reclama el cargo de la cuenta ES-0002"
+    assert (user.persona, user.opening) == ("Eres Ana", "Hola, soy Ana")
+    assert user.stop_when == r"cuenta ES\-0002"
+    assert user.each_turn[0].value == r"ES\-00029"
+
+
+def test_llm_text_check_leaves_data_placeholders_alone():
+    data = {"cases": [{"id": "c1", "judge": [judge_check("j", "Cuenta {{ data.cuenta }}")]}]}
+    _reject_llm_text_variables(data)
+
+
+CONTEXT = {"data": {"cuenta": "ES-0002", "raw": "${X}{{ data.nope }}"}, "env": "qa"}
+
+
+def _bare_case(**fields):
+    base = {"id": "c1", "turns": [], "judge": [], "db": [], "forbidden": [], "simulated": None}
+    return Case.model_construct(**{**base, **fields})
+
+
+def _render(case):
+    return _render_case(case, CONTEXT, _Variables({"X": "leaked"}))
+
+
+def test_rubric_and_goal_render_data_and_env():
+    user = SimulatedUser(
+        goal="Concilia {{ data.cuenta }}",
+        persona="Usuario de {{ env }}",
+        opening="Hola {{ data.cuenta }}",
+        max_turns=2,
+        stop_when="fin {{ data.cuenta }}.",
+        each_turn=[Expectation.model_validate({"contains": "{{ data.cuenta }}"})],
+        each_turn_judge=[JudgeCheck(id="k", rubric="{{ data.cuenta }}")],
+    )
+    check = JudgeCheck(
+        id="j", rubric="Cuenta {{ data.cuenta }} en {{ env }}", reference="{{ data.cuenta }}!"
+    )
+    rendered = _render(_bare_case(judge=[check], simulated=user))
+    assert rendered.judge[0].rubric == "Cuenta ES-0002 en qa"
+    assert rendered.judge[0].reference == "ES-0002!"
+    assert (rendered.simulated.goal, rendered.simulated.persona, rendered.simulated.opening) == (
+        "Concilia ES-0002",
+        "Usuario de qa",
+        "Hola ES-0002",
+    )
+    assert rendered.simulated.stop_when == "fin ES\\-0002."
+    assert rendered.simulated.each_turn[0].value == "ES\\-0002"
+    assert rendered.simulated.each_turn_judge[0].rubric == "ES-0002"
+
+
+def test_turn_judge_rubric_renders_and_names_its_location():
+    good = Turn(user="x", judge=[JudgeCheck(id="j", rubric="{{ data.cuenta }}")])
+    bad = Turn(user="x", judge=[JudgeCheck(id="j", rubric="{{ data.nope }}")])
+    assert _render(_bare_case(turns=[good])).turns[0].judge[0].rubric == "ES-0002"
+    with pytest.raises(ConfigError, match=r"cases\[c1\]\.turns\[1\].*data\.nope"):
+        _render(_bare_case(turns=[good, bad]))
+
+
+def test_undefined_variable_in_goal_names_its_location():
+    user = SimulatedUser(goal="{{ data.nope }}", max_turns=2)
+    with pytest.raises(ConfigError, match=r"cases\[c1\]\.simulated.*data\.nope"):
+        _render(_bare_case(simulated=user))
+
+
+@pytest.mark.security
+def test_data_value_with_placeholder_text_is_neither_expanded_nor_rendered_again():
+    check = JudgeCheck(id="j", rubric="Valor {{ data.raw }}")
+    rendered = _render(_bare_case(judge=[check]))
+    assert rendered.judge[0].rubric == "Valor ${X}{{ data.nope }}"
+
+
+@pytest.mark.security
+def test_data_value_with_placeholders_reaches_the_judge_rubric_literally(experiment, tmp_path):
+    write_data_set(tmp_path, "qa", {"v": "Valor ${X} y {{ nope }}"})
+    experiment.environments("qa").judge().merge(
+        {"cases": [{"id": "c1", "turns": [turn("Hola", judge=[judge_check("j", "{{ data.v }}")])]}]}
+    )
+    exp = load_experiment(
+        experiment.write(tmp_path), env="qa", process_env={"X": "${Y} {{ data.v }}", "Y": "boom"}
+    )
+    assert exp.cases[0].turns[0].judge[0].rubric == "Valor ${Y} {{ data.v }} y {{ nope }}"
+    assert "boom" not in repr(exp.cases)
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("section", ["judge", "simulated_user"])
+@pytest.mark.parametrize("scalar", ["plain-scalar-key-9", 12345, True, ["list-scalar-9"]])
+def test_non_mapping_llm_section_never_carries_the_scalar(section, scalar, experiment, tmp_path):
+    experiment.merge({section: scalar})
+    with pytest.raises(ConfigError) as info:
+        load_experiment(experiment.write(tmp_path), process_env={})
+    assert re.search(rf"{section}\.api_key must come from an environment variable", str(info.value))
+    chain = [info.value.__cause__, info.value.__context__]
+    for text in [str(info.value), *(repr(link) for link in chain)]:
+        assert "plain-scalar-key-9" not in text and "list-scalar-9" not in text
+    assert chain == [None, None]

@@ -13,6 +13,7 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `experiment/` | Pydantic model, YAML loader, `${VAR}` expansion from `.env` files (`envfiles.py`), per-environment data sets (`datasets.py`), `{{ }}` templates, `SourceFloat` (`sourcefloat.py`, a YAML float that keeps the text it was written with) and `is_sensitive_key` (`urlkeys.py`, which connection-string keys hold a secret) | `errors` |
 | `stats/` | Pure estimators: Wilson interval, paired bootstrap, pass@k | `errors` |
 | `agents/` | `port.py` (`AgentPort`, `AgentReply`), `sse_events.py` (SSE parser), adapters such as `http_json.py` and `sse.py`, and `factory.py` (`adapter_for` picks the adapter from the config) | `experiment`, `errors` |
+| `providers/` | Language model port (`port.py`: `LlmPort`, `LlmRequest`, `LlmReply`), the call cap `BudgetedLlm` (`budget.py`), the factory `provider_for` (`factory.py`) and the adapters `AnthropicProvider` (`anthropic_api.py`) and `OllamaProvider` (`ollama_api.py`, over `httpx`, local and free). The provider settings (`ProviderSettings`, `JudgeConfig`, `SimulatedUserConfig`) live in `experiment/` | `experiment`, `errors` |
 | `db/` | Database port (`DatabasePort`, `QueryResult`) and the SQLAlchemy adapter `SqlDatabase`, with `connection_secrets` to list the connection values the report must mask | `experiment`, `errors` |
 | `hooks/` | Lifecycle hooks: `LifecyclePort`, `HookExecutor` for http, sql and command (argv list, never a shell) | `db.port`, `experiment`, `errors` |
 | `expectations/` | Registry of deterministic checks applied to an agent reply, plus the evaluation of database checks and forbidden changes | `agents.port`, `db.port`, `experiment` |
@@ -21,9 +22,6 @@ below are enforced by `lint-imports` and the test layout by `tests/quality/test_
 | `verdict/` | Go/no-go decision, hard gates and A/B recommendation | `running`, `stats` |
 | `reports/` | Report writers (JSON today) | `verdict`, `running` |
 | `cli/` | `argparse` entry point; wires concrete adapters | everything |
-
-Planned package: `providers/` (LLM provider port and adapters). It gets a row here, an import
-contract and a mirror test folder when it is created.
 
 ## Layers
 
@@ -34,18 +32,19 @@ From top to bottom; a package may import only from packages below it:
 3. `octoqai.verdict`
 4. `octoqai.running`
 5. `octoqai.expectations` and `octoqai.security` (independent of each other)
-6. `octoqai.agents` and `octoqai.hooks` (independent of each other)
+6. `octoqai.agents`, `octoqai.hooks` and `octoqai.providers` (independent of each other)
 7. `octoqai.db`
 8. `octoqai.stats` and `octoqai.experiment` (independent of each other)
 9. `octoqai.errors`
 
 Additional contracts in `[tool.importlinter]`:
 
-- `httpx` is imported only inside `octoqai.agents`, `octoqai.hooks` and `octoqai.cli`.
-- `sqlalchemy` is imported only inside `octoqai.db`.
+- `httpx` is imported only inside `octoqai.agents`, `octoqai.hooks`, `octoqai.providers` and `octoqai.cli`.
+- `anthropic` and `httpx2` are imported only inside `octoqai.providers`. The Anthropic SDK is built on `httpx2`, a separate package from `httpx`, so the `httpx` rules and contract do not cover it (an `httpx` client is even rejected by the SDK); the "anthropic and httpx2 only inside providers" contract guards it, and `octoqai.cli` only calls `provider_for`.
+- `sqlalchemy` is imported only inside `octoqai.db`; `octoqai.providers` is in its list of forbidden importers.
 - Only `octoqai.hooks` starts processes (`tests/quality/test_architecture.py`), always with an argument list and never a shell.
-- The core (`running`, `security`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse`, `octoqai.agents.factory`, `octoqai.db.sql` or `octoqai.hooks.executor`; it imports the ports (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`).
-- `octoqai.stats` is pure: it imports nothing from Octoqai except `errors`, and never imports `octoqai.db` or `octoqai.hooks`.
+- The core (`running`, `security`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse`, `octoqai.agents.factory`, `octoqai.db.sql`, `octoqai.hooks.executor`, `octoqai.providers.anthropic_api`, `octoqai.providers.ollama_api` or `octoqai.providers.factory` (the `octoqai.providers` package re-exports only the port and the budget); it imports the ports (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`).
+- `octoqai.stats` is pure: it imports nothing from Octoqai except `errors`, and never imports `octoqai.db`, `octoqai.hooks` or `octoqai.providers`.
 
 ## Ports and adapters
 
@@ -81,7 +80,7 @@ Both adapters share these rules (`agents/_delivery.py`):
 Every package exports its public names in `__init__.py` and lists them in `__all__`. Other packages
 and tests import from the package (`from octoqai.experiment import load_experiment`), not from its
 modules. A module that is not public starts with `_`. The only exceptions are the ports imported
-directly (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`) to keep the core away from concrete adapters.
+directly (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`, `octoqai.providers.port`, `octoqai.providers.budget`) to keep the core away from concrete adapters.
 
 ## Tests
 
@@ -90,7 +89,7 @@ directly (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`) to kee
 ```
 tests/
   conftest.py        only: pytest_plugins = ["support.fixtures"]
-  support/           test kit: builders.py, agents.py, databases.py, hooks.py, assertions.py, paths.py, samples.py, fixtures.py
+  support/           test kit: builders.py, agents.py, databases.py, hooks.py, providers.py, netguard.py, assertions.py, paths.py, samples.py, fixtures.py
   <package>/         test_<topic>.py and data/<name>.yaml with the tabular cases of that package
   quality/           style, hygiene, architecture and layout checks
   e2e/               real agent process on 127.0.0.1
@@ -127,6 +126,8 @@ tests/
   root: `python tests/e2e/toy_sse_agent.py --port 8000 --db examples/database/conciliaciones.db`;
   in another terminal, inside `examples/database`: `copy .env.example .env`, then
   `octoqai run experiment.yaml`.
+- **Language models:** `FakeLlm` is an `LlmPort` that answers from a queue (`judges`, `returns_text`, `script`, `fails`, `times_out`, `refuses`, `truncates`, `serves_model`, `uses`) and records `requests`; an exhausted script gives the fixed error `fake script exhausted`, never a text that could read as a pass. `ScriptedUser` adds `says(*messages, done_after=None)`. No test makes a real call.
+- **Hermetic network:** an autouse fixture (`support/netguard.py`) lets a test connect only to loopback (`127.0.0.1`, `::1`, `localhost`) and fails it with a clear message otherwise; it covers `socket.connect`, `connect_ex`, `getaddrinfo` and the asyncio loops, and it clears the `ANTHROPIC_*` variables from the environment. Subprocesses such as the toy agent are not affected.
 - **Hooks and databases:** `FakeCommands` stands in for the process runner (`exits`, `times_out`, `missing`) and never starts a process; `RecordingHooks` is a `LifecyclePort` that records stages and fails the ones it is told to; `FakeDatabase` is a `DatabasePort` that records the statements and queries; `sqlite_db` and `sql_database` give a real SQLite file in `tmp_path`. Http hooks are tested against `FakeJsonAgent` as the endpoint.
 - **Experiments:** build them with `ExperimentBuilder` and `turn(...)`, or the `experiment` fixture.
 - **CLI:** use the `run_cli` fixture; it returns the exit code, captured output and report.
@@ -197,6 +198,34 @@ pytest -m security -q         secrets, hygiene and headers
    only in `tests/hooks/test_commands.py`, for what a fake cannot show (process trees, path
    resolution), and wait with `support.hooks.wait_until`, never with a sleep.
 
+### Add an LLM provider
+
+1. Add the name to `ProviderName` in `experiment/model.py` and its credential rules to
+   `ProviderSettings._fit_provider` (a key only through a whole `${VAR}`, a `base_url` only where
+   the provider has one). `experiment/loader.py::_expand_llm` hardwires `anthropic` as the
+   provider that requires an `api_key`: touch it if the new provider needs one too.
+2. Create `providers/<name>_api.py` with a class that satisfies `LlmPort`. `complete` never
+   raises: a failure comes back as an `LlmReply` whose `error` is a class name or a fixed message,
+   never an exception text, and the reply reports the model that served it.
+3. Register it in `_BUILDERS` in `providers/factory.py`. Import an optional SDK lazily and report
+   a missing install as a `ConfigError`; add the extra to `pyproject.toml` and a row to
+   `DEPENDENCIES.md`.
+4. Add `tests/providers/test_<name>_api.py` with a fake transport. No test makes a real call.
+
+### Add a judge check
+
+1. In an experiment, add a `judge` list to a turn (that reply), to a case (the whole
+   conversation) or `each_turn_judge` to a simulated case. One rubric states one criterion;
+   `hard: true` only for a criterion a wrong `pass` of which you could not live with, because a
+   `fail` then vetoes the verdict.
+2. Raise `max_calls` to the new worst case (`worst_case_calls`); the run refuses to start
+   otherwise.
+3. To change what the judge sees or how it answers, edit `expectations/judge.py` and bump
+   `JUDGE_PROMPT_VERSION`: reports record it next to `rubric_sha256`, so two reports are only
+   comparable when both match.
+4. Test it with `FakeLlm.judges(...)` in `tests/expectations/`; add the case to
+   `examples/judge/experiment.yaml` only if the example needs it.
+
 ### Add a CLI option
 
 1. Add the argument in `cli/main.py`.
@@ -259,6 +288,37 @@ pytest -m security -q         secrets, hygiene and headers
   value; only when a database value is a float is an absolute difference of `1e-9` accepted.
 - `delta` over `FLOAT` or `REAL` columns allows an absolute tolerance of `1e-9`, so a 32-bit float
   can fail; cast to `NUMERIC` or `ROUND` in the query.
+
+## Judges and simulated users in practice
+
+`examples/judge/` is a worked experiment; `tests/e2e/test_judge_agent.py` runs it against the toy
+agent with fake models. The rules behind it:
+
+- What is sent. A judge request carries the redacted transcript, the rubric and the reference; a
+  simulated user request carries the redacted goal, persona and conversation. Texts are redacted
+  (canaries, secrets, personal data, `${VAR}` values) before they leave, and a sensitive value
+  split across two texts is not sent. See `SECURITY.md` for what the redactor cannot know.
+- The cap is checked before anything runs. `worst_case_calls` multiplies variants, trials and the
+  judge checks or simulated turns of the selected cases (after `--tags`); above `max_calls` the run
+  exits `3` before the agent, a hook or a provider is reached, and the worst case in calls and output tokens is printed per role. `max_tokens`, `effort`, `max_calls` and `max_input_chars` are the cost guards; the simulated user also stops with `transcript too long`, without a call, when goal, persona and transcript exceed its `max_input_chars`. A cap is also enforced during the
+  run (`BudgetedLlm`): a call over it is not made and counts as not evaluable.
+- Unsure is not a pass. `unsure`, a refusal, a truncated or unparsable answer, a different served
+  model or a provider error make the check not evaluable, never a pass or a fail. If every call of
+  a role failed at the provider, the CLI ends with exit `3` (a leak or forbidden change still
+  gives `1`).
+- Use the exact model id. A judge reply is accepted when the served model equals the configured one or the configured one plus `:latest`; any other served id (an alias, a dated suffix) makes the check not evaluable as `model changed`.
+- No fallbacks. A failed call is retried against the same model up to `max_retries` (Ollama does not retry); Octoqai never
+  switches model, provider or endpoint, and never answers a failed call by itself.
+- Sampling is not deterministic with Anthropic: the API rejects `temperature`, `top_p` and
+  `top_k`, so the same rubric can give different verdicts. Use `trials` of 3 or more, and read
+  `judge calls` and the token lines as the cost of the run.
+- A simulated user adds a second source of variation: each trial plays a different conversation,
+  so a paired A/B comparison is noisier. Use more trials and check `stop_reason` in the report.
+- The rubric is versioned. Each verdict records `rubric_sha256` and `prompt_version`; change
+  neither silently between the runs you compare.
+- Cost. Every judge check is one call per trial and every simulated turn one more, and a simulated
+  case with `each_turn_judge` multiplies them by `max_turns`. Keep `trials`, cases and `max_calls`
+  low until the experiment is stable; Ollama on loopback costs nothing.
 
 ## Conventions
 
