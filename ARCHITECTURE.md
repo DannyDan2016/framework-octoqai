@@ -43,7 +43,7 @@ Additional contracts in `[tool.importlinter]`:
 - `anthropic` and `httpx2` are imported only inside `octoqai.providers`. The Anthropic SDK is built on `httpx2`, a separate package from `httpx`, so the `httpx` rules and contract do not cover it (an `httpx` client is even rejected by the SDK); the "anthropic and httpx2 only inside providers" contract guards it, and `octoqai.cli` only calls `provider_for`.
 - `sqlalchemy` is imported only inside `octoqai.db`; `octoqai.providers` is in its list of forbidden importers.
 - Only `octoqai.hooks` starts processes (`tests/quality/test_architecture.py`), always with an argument list and never a shell.
-- The core (`running`, `security`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse`, `octoqai.agents.factory`, `octoqai.db.sql` or `octoqai.hooks.executor`; it imports the ports (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`).
+- The core (`running`, `security`, `expectations`, `verdict`, `reports`) never imports `octoqai.agents.http_json`, `octoqai.agents.sse`, `octoqai.agents.factory`, `octoqai.db.sql`, `octoqai.hooks.executor`, `octoqai.providers.anthropic_api`, `octoqai.providers.ollama_api` or `octoqai.providers.factory` (the `octoqai.providers` package re-exports only the port and the budget); it imports the ports (`octoqai.agents.port`, `octoqai.db.port`, `octoqai.hooks.port`).
 - `octoqai.stats` is pure: it imports nothing from Octoqai except `errors`, and never imports `octoqai.db`, `octoqai.hooks` or `octoqai.providers`.
 
 ## Ports and adapters
@@ -202,7 +202,8 @@ pytest -m security -q         secrets, hygiene and headers
 
 1. Add the name to `ProviderName` in `experiment/model.py` and its credential rules to
    `ProviderSettings._fit_provider` (a key only through a whole `${VAR}`, a `base_url` only where
-   the provider has one).
+   the provider has one). `experiment/loader.py::_expand_llm` hardwires `anthropic` as the
+   provider that requires an `api_key`: touch it if the new provider needs one too.
 2. Create `providers/<name>_api.py` with a class that satisfies `LlmPort`. `complete` never
    raises: a failure comes back as an `LlmReply` whose `error` is a class name or a fixed message,
    never an exception text, and the reply reports the model that served it.
@@ -299,13 +300,14 @@ agent with fake models. The rules behind it:
   split across two texts is not sent. See `SECURITY.md` for what the redactor cannot know.
 - The cap is checked before anything runs. `worst_case_calls` multiplies variants, trials and the
   judge checks or simulated turns of the selected cases (after `--tags`); above `max_calls` the run
-  exits `3` before the agent, a hook or a provider is reached. A cap is also enforced during the
+  exits `3` before the agent, a hook or a provider is reached, and the worst case in calls and output tokens is printed per role. `max_tokens`, `effort`, `max_calls` and `max_input_chars` are the cost guards; the simulated user also stops with `transcript too long`, without a call, when goal, persona and transcript exceed its `max_input_chars`. A cap is also enforced during the
   run (`BudgetedLlm`): a call over it is not made and counts as not evaluable.
 - Unsure is not a pass. `unsure`, a refusal, a truncated or unparsable answer, a different served
   model or a provider error make the check not evaluable, never a pass or a fail. If every call of
   a role failed at the provider, the CLI ends with exit `3` (a leak or forbidden change still
   gives `1`).
-- No fallbacks. A failed call is retried against the same model up to `max_retries`; Octoqai never
+- Use the exact model id. A judge reply is accepted when the served model equals the configured one or the configured one plus `:latest`; any other served id (an alias, a dated suffix) makes the check not evaluable as `model changed`.
+- No fallbacks. A failed call is retried against the same model up to `max_retries` (Ollama does not retry); Octoqai never
   switches model, provider or endpoint, and never answers a failed call by itself.
 - Sampling is not deterministic with Anthropic: the API rejects `temperature`, `top_p` and
   `top_k`, so the same rubric can give different verdicts. Use `trials` of 3 or more, and read

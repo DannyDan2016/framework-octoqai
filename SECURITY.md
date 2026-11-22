@@ -50,6 +50,7 @@ variable) or in hooks, and are never written to reports.
   but what the agent says is the agent's data: the data policy with the provider (retention,
   training, region) is yours to check before you point a real experiment at it. Use `ollama` on
   loopback to keep everything on the machine.
+- **Cost guards.** `max_tokens`, `effort`, `max_calls` and `max_input_chars` bound what one run can spend; the worst case is printed before the run and no call is made to count tokens.
 - **The key** reaches the provider only through a whole `${VAR}` in `api_key` (never a literal,
   never in a rubric, goal or persona, which reject `${VAR}`). It is not shown in reprs, errors,
   reports or output. Keep the `.env` file out of git: `examples/judge/.env.example` holds names
