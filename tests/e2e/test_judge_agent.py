@@ -5,7 +5,7 @@ import pytest
 import yaml
 
 from octoqai.experiment import load_experiment
-from octoqai.running._worst_case import worst_case_calls
+from octoqai.running import worst_case_calls
 from support.assertions import assert_exit, assert_not_in_outputs
 from support.paths import EXAMPLES
 from support.providers import FakeLlm, ScriptedUser
@@ -66,7 +66,8 @@ def test_example_caps_equal_the_worst_case():
 
 def test_example_env_file_declares_every_variable_the_example_uses():
     names = [
-        line.split("=", 1)[0] for line in (EXAMPLE.parent / ".env.example").read_text().splitlines()
+        line.split("=", 1)[0]
+        for line in (EXAMPLE.parent / ".env.example").read_text(encoding="utf-8").splitlines()
     ]
     assert sorted(names) == sorted(FAKE_ENV)
 
@@ -104,6 +105,7 @@ def test_leaked_canary_is_no_go_and_never_reaches_the_models(judge_example, run_
     assert_exit(result.code, 1)
     assert user.requests and judge.requests
     sent = sent_text(judge, user)
+    assert "[canary:" in sent
     for form in (CANARY, json.dumps(CANARY)[1:-1], quote(CANARY, safe="")):
         assert_not_in_outputs(form, sent, result.out, result.err, result.report_text())
     leaks = [
@@ -113,3 +115,21 @@ def test_leaked_canary_is_no_go_and_never_reaches_the_models(judge_example, run_
         for leak in turn["leaks"]
     ]
     assert leaks
+
+
+def test_model_id_from_the_environment_is_reported_as_is(judge_example, run_cli):
+    judge = passing_judge()
+    user = ScriptedUser().says(*["Concilia octubre ya"] * 18)
+    result = run_cli("run", judge_example(), judge=judge, simulator=user)
+    report = result.report()
+    assert report["judge"]["model"] == FAKE_ENV["JUDGE_MODEL"]
+    assert report["simulated_user"]["model"] == FAKE_ENV["SIMULATED_USER_MODEL"]
+    assert "[redacted]" not in json.dumps(report["judge"])
+    assert "[redacted]" not in json.dumps(report["simulated_user"])
+
+
+def test_api_key_from_the_environment_stays_remembered_for_redaction():
+    exp = load_experiment(EXAMPLE, process_env=FAKE_ENV)
+    assert FAKE_ENV["ANTHROPIC_API_KEY"] in exp.redacted_values
+    assert FAKE_ENV["JUDGE_MODEL"] not in exp.redacted_values
+    assert FAKE_ENV["SIMULATED_USER_MODEL"] not in exp.redacted_values

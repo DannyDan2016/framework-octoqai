@@ -231,20 +231,20 @@ class _Variables:
         self._values = values
         self.used: list[str] = []
 
-    def expand(self, text: str) -> str:
-        return _ENV_PATTERN.sub(self._replace, text)
+    def expand(self, text: str, *, remember: bool = True) -> str:
+        return _ENV_PATTERN.sub(lambda match: self._replace(match, remember), text)
 
     def remember(self, values: Iterable[str]) -> None:
         for value in values:
             if value and value not in self.used:
                 self.used.append(value)
 
-    def _replace(self, match: re.Match[str]) -> str:
+    def _replace(self, match: re.Match[str], remember: bool) -> str:
         name = match.group(1)
         if name not in self._values:
             raise ConfigError(f"environment variable {name} is not set")
         value = self._values[name]
-        if value not in self.used:
+        if remember and value not in self.used:
             self.used.append(value)
         return value
 
@@ -293,7 +293,7 @@ def _expand_llm(data: dict[str, Any], variables: _Variables) -> None:
         if config is None:
             continue
         if isinstance(config.get("model"), str):
-            config["model"] = variables.expand(config["model"])
+            config["model"] = variables.expand(config["model"], remember=False).strip()
         key = config.get("api_key")
         if key is None:
             if config.get("provider") == "anthropic":

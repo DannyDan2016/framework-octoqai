@@ -407,7 +407,9 @@ def test_base_url_is_validated_when_the_provider_is_built(row):
     message = str(caught.value)
     assert message in URL_MESSAGES
     assert row["base_url"].strip() == "" or row["base_url"] not in message
-    assert caught.value.__suppress_context__ or caught.value.__cause__ is None
+    assert caught.value.__cause__ is None and (
+        caught.value.__context__ is None or caught.value.__suppress_context__
+    )
 
 
 @pytest.mark.security
