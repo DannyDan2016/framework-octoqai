@@ -185,7 +185,10 @@ ADDITIVE_VARIANT = {"judge_not_evaluable", "simulator_errors"}
 
 def _normalize(node):
     if isinstance(node, dict):
-        return {k: (None if k in VOLATILE else _normalize(v)) for k, v in node.items()}
+        normalized = {k: (None if k in VOLATILE else _normalize(v)) for k, v in node.items()}
+        if isinstance(node.get("tool"), dict):
+            normalized["tool"] = {**node["tool"], "version": None}
+        return normalized
     if isinstance(node, list):
         return [_normalize(v) for v in node]
     return node
@@ -223,7 +226,7 @@ def test_report_without_judge_matches_golden_except_additive_keys():
     stripped["variants"] = [
         {k: v for k, v in e.items() if k not in ADDITIVE_VARIANT} for e in report["variants"]
     ]
-    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    golden = _normalize(json.loads(GOLDEN.read_text(encoding="utf-8")))
     assert stripped == golden
 
 
@@ -328,6 +331,44 @@ def test_report_keeps_only_closed_values_for_verdict_and_stop_reason():
     assert report["trials"][0]["stop_reason"] == "done"
 
 
-def test_report_includes_ollama_base_url_redacted():
+def test_report_includes_ollama_base_url():
     run, verdict = _judged_run(FakeLlm().judges("pass"), {"base_url": "http://127.0.0.1:11434"})
     assert build_report(run, verdict)["judge"]["base_url"] == "http://127.0.0.1:11434"
+
+
+@pytest.mark.security
+def test_report_redacts_a_secret_in_the_ollama_base_url_userinfo():
+    run, verdict = _judged_run(
+        FakeLlm().judges("pass"), {"base_url": samples.LOOPBACK_URL_WITH_USERINFO}
+    )
+    report = build_report(run, verdict)
+    assert samples.DB_PASSWORD not in json.dumps(report)
+    assert "base_url" in report["judge"]
+
+
+def _redacting_pass(case_judge):
+    builder = ExperimentBuilder().variant("base").trials(1)
+    builder.judge(model=DEFAULT_MODEL)
+    if case_judge:
+        builder.case("c1", turn("Hola", {"contains": "pass"}), judge=[judge_check("polite")])
+    else:
+        builder.case("c1", turn("Hola", judge=[judge_check("polite")]))
+    exp = Experiment.model_validate(builder.build())
+    exp = exp.model_copy(update={"redacted_values": ["pass"]})
+    agent = FakeJsonAgent().answers("pass").adapter(exp.agent)
+    run = run_experiment(exp, agent, judge=FakeLlm().judges("pass"))
+    return build_report(run, decide(run))
+
+
+@pytest.mark.security
+def test_case_level_judge_verdict_is_restored_but_the_agent_answer_stays_redacted():
+    trial = _redacting_pass(case_judge=True)["trials"][0]
+    assert [check["verdict"] for check in trial["judge_checks"]] == ["pass"]
+    assert trial["turns"][0]["answer"] != "pass"
+
+
+@pytest.mark.security
+def test_turn_judge_verdict_is_restored_but_the_agent_answer_stays_redacted():
+    trial = _redacting_pass(case_judge=False)["trials"][0]
+    assert [check["verdict"] for check in trial["turns"][0]["checks"]] == ["pass"]
+    assert trial["turns"][0]["answer"] != "pass"

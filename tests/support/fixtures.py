@@ -18,13 +18,16 @@ import pytest
 
 from octoqai.cli import main
 from octoqai.db import SqlDatabase
+from octoqai.experiment import ProviderSettings
 from octoqai.hooks import HookKwargs
+from octoqai.providers.port import LlmPort, LlmRole
 from support import netguard, samples
 from support.agents import FakeAgent, FakeClock, FakeJsonAgent
 from support.builders import ExperimentBuilder, turn
 from support.databases import BANK_SCHEMA, SqliteFile
 from support.hooks import FakeCommands, fake_program
 from support.paths import TOY_SSE_AGENT
+from support.providers import FakeLlm
 
 
 @dataclass
@@ -99,8 +102,17 @@ def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., 
         agent: FakeAgent | None = None,
         commands: FakeCommands | None = None,
         hook_agent: FakeJsonAgent | None = None,
+        judge: FakeLlm | None = None,
+        simulator: FakeLlm | None = None,
     ) -> CliRun:
         argv = list(args)
+        fakes: dict[LlmRole, FakeLlm | None] = {"judge": judge, "simulated_user": simulator}
+
+        def factory(role: LlmRole, settings: ProviderSettings) -> LlmPort:
+            fake = fakes[role]
+            assert fake is not None, f"the experiment configures {role} but run_cli got no fake"
+            return fake
+
         hook_kwargs = HookKwargs()
         if commands is not None:
             hook_kwargs["run_command"] = commands
@@ -115,6 +127,7 @@ def run_cli(out_dir: Path, capsys: pytest.CaptureFixture[str]) -> Callable[..., 
             transport=agent.transport() if agent else None,
             adapter_kwargs=agent.adapter_kwargs() if agent else None,
             hook_kwargs=hook_kwargs,
+            llm_factory=factory,
         )
         captured = capsys.readouterr()
         return CliRun(code, captured.out, captured.err, out_dir)

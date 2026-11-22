@@ -1,5 +1,6 @@
 """Serial runner that plays every case against an agent port."""
 
+from octoqai.running._worst_case import worst_case_calls
 from octoqai.running.runner import (
     Outcome,
     RunResult,
@@ -18,4 +19,5 @@ __all__ = [
     "TurnResult",
     "hook_error",
     "run_experiment",
+    "worst_case_calls",
 ]

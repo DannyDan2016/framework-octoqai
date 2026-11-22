@@ -130,6 +130,7 @@ source_modules = [
     "octoqai.cli",
 ]
 forbidden_modules = ["anthropic", "httpx2"]
+ignore_imports = ["octoqai.cli.main -> octoqai.providers.factory"]
 
 [[tool.importlinter.contracts]]
 name = "The core only knows ports"
