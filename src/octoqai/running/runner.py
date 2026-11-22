@@ -27,6 +27,7 @@ from octoqai.providers.port import LlmPort, LlmRole
 from octoqai.running._database import DbProbe
 from octoqai.running._judge import JudgeProbe
 from octoqai.running.simulated_user import (
+    ENDED_EARLY_REASON,
     INCOMPLETE_DETAIL,
     SimulatedUserDriver,
     SimulatorTurn,
@@ -282,6 +283,8 @@ def _play_simulated(
         if isinstance(step, str):
             return _Played(turns, "simulator_error", step)
         if step.done:
+            if not turns:
+                return _Played(turns, "simulator_error", ENDED_EARLY_REASON)
             return _Played(turns, "done")
         turn = Turn(user=step.message, expect=sim.each_turn, judge=sim.each_turn_judge)
         request = _request(session, variant, turn.user, conversation_id, history)

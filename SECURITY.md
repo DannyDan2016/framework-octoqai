@@ -53,6 +53,8 @@ variable) or in hooks, and are never written to reports.
   scan does not count the agent repeating a value the simulated user said. If a sensitive value is
   split across the goal, the persona or the turns, the simulator is not called and the trial is
   not evaluable (`simulator_error`); a leak or forbidden change seen before that still counts.
+  An agent reply can talk the simulator into ending early (`stop_reason` `done`), which
+  shrinks coverage: check `stop_reason` in the report.
   Sampling is not deterministic, so a paired A/B comparison is noisier with a simulated user:
   use more trials.
 - **Ollama has no authentication.** By default `base_url` must be loopback (`127.0.0.1`,

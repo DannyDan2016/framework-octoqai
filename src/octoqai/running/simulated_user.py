@@ -23,6 +23,7 @@ INCOMPLETE_DETAIL = "conversation incomplete: simulated user failed"
 SPLIT_REASON = "sensitive data split across turns"
 COLLISION_REASON = "delimiter collision"
 NOT_CONFIGURED_REASON = "no simulated user configured"
+ENDED_EARLY_REASON = "ended before the first turn"
 
 SIMULATOR_SCHEMA: Mapping[str, Any] = {
     "type": "object",
@@ -150,7 +151,8 @@ def simulator_request(
     """
     if _NONCE_SHAPE.fullmatch(nonce) is None:
         raise ValueError("nonce must be lowercase hex of at least 16 characters")
-    if any(nonce in text for pair in transcript for text in pair):
+    texts = [sim.goal, sim.persona, *(text for pair in transcript for text in pair)]
+    if any(nonce in text for text in texts):
         return None
     persona = _PERSONA_LINE.format(persona=sim.persona) if sim.persona.strip() else ""
     system = _SYSTEM_TEMPLATE.format(goal=sim.goal, persona=persona, nonce=nonce)

@@ -35,3 +35,18 @@
   max_calls: 1
   reply: {kind: text, value: '{"message": "x", "done": false}'}
   reason: call budget exhausted
+- id: ended-before-the-first-turn
+  turns: 0
+  reply: {kind: done}
+  reason: ended before the first turn
+- id: delimiter-collision
+  fixed_nonce: true
+  agent: "x aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa."
+  reply: {kind: text, value: '{"message": "x", "done": false}'}
+  reason: delimiter collision
+- id: split-secret
+  persona: "codigo TEN-B-"
+  opening: Hola
+  agent: "0042 listo."
+  reply: {kind: text, value: '{"message": "x", "done": false}'}
+  reason: sensitive data split across turns

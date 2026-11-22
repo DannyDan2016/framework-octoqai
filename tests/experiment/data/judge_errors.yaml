@@ -114,6 +114,12 @@
     cases: [{id: c1, turns: [{user: Hola, judge: [{id: j, rubrik: ok}]}]}]
   fragments: [rubrik, "did you mean 'rubric'"]
 
+- id: simulated-opening-blank
+  overrides:
+    simulated_user: {provider: ollama, model: m, max_calls: 3}
+    cases: [{id: c1, simulated: {goal: g, max_turns: 3, opening: "  ", each_turn: [{contains: "."}]}}]
+  fragments: ["opening must not be empty"]
+
 - id: simulated-without-any-check
   overrides:
     simulated_user: {provider: ollama, model: m, max_calls: 3}

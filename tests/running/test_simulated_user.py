@@ -41,8 +41,12 @@ def counter_nonce():
     return lambda: f"{next(count):032x}"
 
 
-def build(max_turns=5, max_calls=10, security=None, db_url=None, forbidden=(), **settings):
-    builder = ExperimentBuilder().trials(1).simulated_user(max_calls=max_calls)
+def build(security=None, db_url=None, forbidden=(), **settings):
+    trials = settings.pop("trials", 1)
+    max_turns = settings.pop("max_turns", 5)
+    builder = (
+        ExperimentBuilder().trials(trials).simulated_user(max_calls=settings.pop("max_calls", 10))
+    )
     settings.setdefault("each_turn", [{"contains": "."}])
     case = {"simulated": simulated(max_turns=max_turns, **settings)}
     if db_url:
@@ -56,7 +60,7 @@ def build(max_turns=5, max_calls=10, security=None, db_url=None, forbidden=(), *
 
 
 def play(exp, agent, user, judge=None, **options):
-    options.setdefault("nonce", counter_nonce())
+    options["nonce"] = options.get("nonce") or counter_nonce()
     return run_experiment(exp, agent.adapter(exp.agent), judge=judge, simulator=user, **options)
 
 
@@ -135,8 +139,10 @@ def test_scripted_cases_have_no_stop_reason(fake_agent):
 
 
 def failing_user(row):
-    user = ScriptedUser().says("Hola.")
     reply = row["reply"]
+    if reply["kind"] == "done":
+        return ScriptedUser().says(done_after=0)
+    user = ScriptedUser().says("Hola.")
     if reply["kind"] == "fails":
         return user.fails(reply["value"])
     if reply["kind"] == "refuses":
@@ -150,17 +156,35 @@ def failing_user(row):
 def test_broken_simulator_is_not_evaluable_and_never_calls_the_judge(
     row, fake_agent, sqlite_db, sql_database
 ):
-    exp = build(max_calls=row.get("max_calls", 10), db_url=sqlite_db.url)
+    extra = {k: row[k] for k in ("persona", "opening") if k in row}
+    security = {"canaries": [{"value": CANARY, "label": "tenant-b"}]}
+    exp = build(
+        max_calls=row.get("max_calls", 10), db_url=sqlite_db.url, security=security, **extra
+    )
     judge = FakeLlm().judges("pass")
-    [trial] = play(exp, fake_agent.answers("ok."), failing_user(row), judge, db=sql_database).trials
+    nonce = (lambda: "a" * 32) if row.get("fixed_nonce") else None
+    agent = fake_agent.answers(row.get("agent", "ok."))
+    run = play(exp, agent, failing_user(row), judge, db=sql_database, nonce=nonce)
+    [trial] = run.trials
     assert trial.simulator_error == row["reason"]
     assert (trial.stop_reason, trial.outcome) == ("simulator_error", "not_evaluable")
-    assert len(trial.turns) == 1
+    assert len(trial.turns) == row.get("turns", 1)
     assert [c.passed for c in trial.db_checks] == [None]
     assert INCOMPLETE_DETAIL in trial.db_checks[0].detail
     assert [c.passed for c in trial.judge_checks] == [None]
     assert INCOMPLETE_DETAIL in trial.judge_checks[0].detail
     assert judge.requests == []
+
+
+def test_done_on_the_first_call_never_reaches_the_agent_and_is_not_a_pass(fake_agent):
+    exp = build(trials=3, each_turn=[{"contains": "nunca"}])
+    user = ScriptedUser().says(done_after=0)
+    run = play(exp, fake_agent.answers("ok."), user)
+    assert [(t.outcome, len(t.turns), t.stop_reason) for t in run.trials] == [
+        ("not_evaluable", 0, "simulator_error")
+    ] * 3
+    assert fake_agent.requests == []
+    assert decide(run).status != "go"
 
 
 def test_failure_on_the_first_call_plays_no_turn(fake_agent):
@@ -333,7 +357,7 @@ def test_a_broken_simulator_is_not_reported_as_an_unreachable_agent(fake_agent):
     assert not _never_ran(run)
 
 
-ENV_VALUE = samples.ANTHROPIC_KEY_NO_PREFIX
+ENV_VALUE = samples.ANTHROPIC_KEY_NO_PREFIX + '/q+z"'
 
 
 @pytest.mark.security
@@ -357,7 +381,7 @@ def test_data_secret_in_goal_persona_and_opening_never_reaches_the_simulator(
     play(exp, fake_agent.answers("ok."), user)
     [request] = user.requests[:1]
     text = request.system + request.messages[0].content
-    for form in (ENV_VALUE, json.dumps(ENV_VALUE), quote_plus(ENV_VALUE)):
+    for form in (ENV_VALUE, json.dumps(ENV_VALUE)[1:-1], quote_plus(ENV_VALUE)):
         assert form not in text
     assert "Never say [redacted]" in request.system and "titular de [redacted]" in request.system
     assert "Hola [redacted]" in request.messages[0].content
@@ -385,3 +409,9 @@ def test_secret_split_between_persona_and_an_agent_reply_is_never_sent(fake_agen
     assert user.requests == []
     assert trial.simulator_error == "sensitive data split across turns"
     assert trial.outcome == "not_evaluable"
+
+
+@pytest.mark.parametrize("field", ["goal", "persona"])
+def test_request_is_none_when_the_nonce_is_in_the_goal_or_persona(field):
+    user = user_case(persona="p").model_copy(update={field: f"x{NONCE}"})
+    assert simulator_request(user, [], nonce=NONCE) is None

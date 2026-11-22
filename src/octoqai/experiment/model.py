@@ -355,6 +355,13 @@ class SimulatedUser(_Model):
             raise ValueError("goal must not be empty")
         return value
 
+    @field_validator("opening")
+    @classmethod
+    def _opening_written(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("opening must not be empty")
+        return value
+
     @field_validator("stop_when")
     @classmethod
     def _stop_when_is_regex(cls, value: str | None) -> str | None:
