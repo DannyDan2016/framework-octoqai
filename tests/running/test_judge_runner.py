@@ -394,6 +394,7 @@ PREFIX, REST = samples.SPLIT_SECRET
 SPLITS = {
     "key": (f"clave {PREFIX}{REST[:5]}", f"{REST[5:]} fin"),
     "canary": ("codigo TEN-B-", "0042 listo"),
+    "canary-after-newline": ("codigo TEN-B-" + chr(10), "0042 listo"),
     "env-value": (f"valor {ENV_VALUE[:10]}", ENV_VALUE[10:]),
 }
 

@@ -226,3 +226,39 @@ def test_a_second_escape_level_never_leaves_a_copy_that_two_unescapes_reveal():
     cleaned = password_redactor(password).redact(text)
     assert cleaned == "[redacted]"
     assert_value_hidden(password, cleaned, UNESCAPE(cleaned), UNESCAPE(UNESCAPE(cleaned)))
+
+
+SPLIT_CANARY = ("codigo TEN-B-", "0042 listo")
+
+
+@pytest.mark.parametrize(
+    "texts",
+    [
+        SPLIT_CANARY,
+        ("codigo TEN-B- ", "0042 listo"),
+        ("codigo TEN-B-\n", "0042 listo"),
+        ("codigo TEN-B-\n\n", "\n0042 listo"),
+        ("uno", *SPLIT_CANARY),
+    ],
+)
+def test_splits_across_catches_a_canary_cut_at_a_text_boundary(texts):
+    assert redactor().splits_across(texts)
+
+
+@pytest.mark.parametrize(
+    "texts",
+    [
+        ["codigo TEN-B-0042 listo", "otro"],
+        ["codigo TEN-B", "listo 0042"],
+        ["", "codigo", ""],
+        [],
+    ],
+)
+def test_splits_across_ignores_whole_values_and_harmless_boundaries(texts):
+    assert not redactor().splits_across(texts)
+
+
+def test_splits_across_scales_with_findings_not_with_texts_times_findings():
+    texts = [f"parte {i} TEN-B-0042 fin" for i in range(2000)]
+    assert not redactor().splits_across(texts)
+    assert redactor().splits_across([*texts, "codigo TEN-B-", "0042"])

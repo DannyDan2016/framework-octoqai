@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from bisect import bisect_right
 from collections import Counter
 from collections.abc import Iterator, Sequence
 from typing import Any
@@ -123,9 +124,11 @@ class Redactor:
     def splits_across(self, texts: Sequence[str]) -> bool:
         """Tell whether a sensitive value spans the boundary between two texts.
 
-        The non-empty texts are joined with no separator, a space and a newline, because a
-        reader can put adjacent texts together in any of those ways; each join is scanned with
-        the same detectors that ``redact`` uses.
+        The non-empty texts are joined with no separator, a space and a newline, and also with
+        no separator after stripping the whitespace around each text, because a reader can put
+        adjacent texts together in any of those ways; each join is scanned with the same
+        detectors that ``redact`` uses. Only contiguous splits are detected: halves with other
+        text between them, or halves that are URL-encoded, are not.
 
         Args:
             texts: Texts already redacted one by one, in the order a reader sees them.
@@ -134,17 +137,23 @@ class Redactor:
             Whether any finding overlaps two different texts.
         """
         parts = [text for text in texts if text]
-        return any(self._crosses(parts, separator) for separator in _JOINERS)
+        stripped = [text for text in (part.strip() for part in parts) if text]
+        joins = [(parts, separator) for separator in _JOINERS] + [(stripped, "")]
+        return any(self._crosses(group, separator) for group, separator in joins)
 
     def _crosses(self, parts: list[str], separator: str) -> bool:
-        spans: list[tuple[int, int]] = []
+        starts: list[int] = []
+        ends: list[int] = []
         position = 0
         for part in parts:
-            spans.append((position, position + len(part)))
+            starts.append(position)
+            ends.append(position + len(part))
             position += len(part) + len(separator)
         for finding in self._detector.candidates(separator.join(parts)):
-            touched = sum(1 for start, end in spans if finding.start < end and finding.end > start)
-            if touched > 1:
+            first = bisect_right(starts, finding.start) - 1
+            if ends[first] <= finding.start:
+                first += 1
+            if first + 1 < len(starts) and starts[first + 1] < finding.end:
                 return True
         return False
 
