@@ -8,15 +8,9 @@ import pytest
 
 from octoqai.errors import ConfigError
 from octoqai.experiment import ProviderSettings
-from octoqai.providers import (
-    LlmMessage,
-    LlmReply,
-    LlmRequest,
-    LlmUsage,
-    OllamaProvider,
-    provider_for,
-)
-from octoqai.providers.ollama_api import DEFAULT_BASE_URL, MAX_RESPONSE_BYTES
+from octoqai.providers import LlmMessage, LlmReply, LlmRequest, LlmUsage
+from octoqai.providers.factory import provider_for
+from octoqai.providers.ollama_api import DEFAULT_BASE_URL, MAX_RESPONSE_BYTES, OllamaProvider
 from support import samples
 from support.paths import cases
 from support.providers import FakeOllama

@@ -1,4 +1,6 @@
+import importlib
 import json
+import sys
 
 import pytest
 
@@ -184,3 +186,17 @@ def test_stats_of_an_unused_budget_are_empty():
     stats = BudgetedLlm(FakeLlm(), max_calls=1).stats()
     assert (stats.calls, stats.errors_by_class, stats.served_models) == (0, {}, {})
     assert (stats.input_tokens, stats.output_tokens) == (None, None)
+
+
+def test_importing_the_port_and_the_core_loads_no_adapter(monkeypatch):
+    adapters = (
+        "octoqai.providers.ollama_api",
+        "octoqai.providers.anthropic_api",
+        "octoqai.providers.factory",
+    )
+    for name in [n for n in sys.modules if n == "octoqai" or n.startswith("octoqai.")]:
+        monkeypatch.delitem(sys.modules, name)
+    importlib.import_module("octoqai.providers")
+    importlib.import_module("octoqai.expectations")
+    importlib.import_module("octoqai.running")
+    assert [name for name in adapters if name in sys.modules] == []

@@ -9,7 +9,9 @@ import pytest
 
 from octoqai.errors import ConfigError
 from octoqai.experiment import ProviderSettings
-from octoqai.providers import AnthropicProvider, LlmMessage, LlmReply, LlmRequest, provider_for
+from octoqai.providers import LlmMessage, LlmReply, LlmRequest
+from octoqai.providers.anthropic_api import AnthropicProvider
+from octoqai.providers.factory import provider_for
 from support import samples
 from support.paths import cases
 
@@ -280,10 +282,9 @@ def test_port_and_budget_import_without_the_sdk(monkeypatch):
     for name in [n for n in sys.modules if n.split(".")[0] in ("anthropic", "octoqai")]:
         monkeypatch.delitem(sys.modules, name)
     monkeypatch.setattr(builtins, "__import__", refuse_sdk)
-    import octoqai.providers
-    from octoqai.providers import budget, port
+    from octoqai.providers import budget, factory, port
 
-    assert budget.BudgetedLlm and port.LlmReply and octoqai.providers.provider_for
+    assert budget.BudgetedLlm and port.LlmReply and factory.provider_for
     assert "anthropic" not in sys.modules
 
 
