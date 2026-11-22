@@ -198,6 +198,33 @@ pytest -m security -q         secrets, hygiene and headers
    only in `tests/hooks/test_commands.py`, for what a fake cannot show (process trees, path
    resolution), and wait with `support.hooks.wait_until`, never with a sleep.
 
+### Add an LLM provider
+
+1. Add the name to `ProviderName` in `experiment/model.py` and its credential rules to
+   `ProviderSettings._fit_provider` (a key only through a whole `${VAR}`, a `base_url` only where
+   the provider has one).
+2. Create `providers/<name>_api.py` with a class that satisfies `LlmPort`. `complete` never
+   raises: a failure comes back as an `LlmReply` whose `error` is a class name or a fixed message,
+   never an exception text, and the reply reports the model that served it.
+3. Register it in `_BUILDERS` in `providers/factory.py`. Import an optional SDK lazily and report
+   a missing install as a `ConfigError`; add the extra to `pyproject.toml` and a row to
+   `DEPENDENCIES.md`.
+4. Add `tests/providers/test_<name>_api.py` with a fake transport. No test makes a real call.
+
+### Add a judge check
+
+1. In an experiment, add a `judge` list to a turn (that reply), to a case (the whole
+   conversation) or `each_turn_judge` to a simulated case. One rubric states one criterion;
+   `hard: true` only for a criterion a wrong `pass` of which you could not live with, because a
+   `fail` then vetoes the verdict.
+2. Raise `max_calls` to the new worst case (`worst_case_calls`); the run refuses to start
+   otherwise.
+3. To change what the judge sees or how it answers, edit `expectations/judge.py` and bump
+   `JUDGE_PROMPT_VERSION`: reports record it next to `rubric_sha256`, so two reports are only
+   comparable when both match.
+4. Test it with `FakeLlm.judges(...)` in `tests/expectations/`; add the case to
+   `examples/judge/experiment.yaml` only if the example needs it.
+
 ### Add a CLI option
 
 1. Add the argument in `cli/main.py`.
@@ -260,6 +287,36 @@ pytest -m security -q         secrets, hygiene and headers
   value; only when a database value is a float is an absolute difference of `1e-9` accepted.
 - `delta` over `FLOAT` or `REAL` columns allows an absolute tolerance of `1e-9`, so a 32-bit float
   can fail; cast to `NUMERIC` or `ROUND` in the query.
+
+## Judges and simulated users in practice
+
+`examples/judge/` is a worked experiment; `tests/e2e/test_judge_agent.py` runs it against the toy
+agent with fake models. The rules behind it:
+
+- What is sent. A judge request carries the redacted transcript, the rubric and the reference; a
+  simulated user request carries the redacted goal, persona and conversation. Texts are redacted
+  (canaries, secrets, personal data, `${VAR}` values) before they leave, and a sensitive value
+  split across two texts is not sent. See `SECURITY.md` for what the redactor cannot know.
+- The cap is checked before anything runs. `worst_case_calls` multiplies variants, trials and the
+  judge checks or simulated turns of the selected cases (after `--tags`); above `max_calls` the run
+  exits `3` before the agent, a hook or a provider is reached. A cap is also enforced during the
+  run (`BudgetedLlm`): a call over it is not made and counts as not evaluable.
+- Unsure is not a pass. `unsure`, a refusal, a truncated or unparsable answer, a different served
+  model or a provider error make the check not evaluable, never a pass or a fail. If every call of
+  a role failed at the provider, the CLI ends with exit `3` (a leak or forbidden change still
+  gives `1`).
+- No fallbacks. A failed call is retried against the same model up to `max_retries`; Octoqai never
+  switches model, provider or endpoint, and never answers a failed call by itself.
+- Sampling is not deterministic with Anthropic: the API rejects `temperature`, `top_p` and
+  `top_k`, so the same rubric can give different verdicts. Use `trials` of 3 or more, and read
+  `judge calls` and the token lines as the cost of the run.
+- A simulated user adds a second source of variation: each trial plays a different conversation,
+  so a paired A/B comparison is noisier. Use more trials and check `stop_reason` in the report.
+- The rubric is versioned. Each verdict records `rubric_sha256` and `prompt_version`; change
+  neither silently between the runs you compare.
+- Cost. Every judge check is one call per trial and every simulated turn one more, and a simulated
+  case with `each_turn_judge` multiplies them by `max_turns`. Keep `trials`, cases and `max_calls`
+  low until the experiment is stable; Ollama on loopback costs nothing.
 
 ## Conventions
 

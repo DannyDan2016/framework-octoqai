@@ -44,6 +44,22 @@ variable) or in hooks, and are never written to reports.
   are not). Redaction can
   over-mask: a referenced value such as `pass` also erases that word from the rubric and the
   replies the judge reads, so keep short common words out of `${VAR}` values.
+- **What leaves your machine.** With a `judge` or a `simulated_user` configured, the redacted
+  transcript, the rubric, the reference, the goal and the persona go to the provider you chose
+  (Anthropic over its API, or an Ollama server). Octoqai redacts what it knows to be sensitive,
+  but what the agent says is the agent's data: the data policy with the provider (retention,
+  training, region) is yours to check before you point a real experiment at it. Use `ollama` on
+  loopback to keep everything on the machine.
+- **The key** reaches the provider only through a whole `${VAR}` in `api_key` (never a literal,
+  never in a rubric, goal or persona, which reject `${VAR}`). It is not shown in reprs, errors,
+  reports or output. Keep the `.env` file out of git: `examples/judge/.env.example` holds names
+  only.
+- **A judge can be talked into a verdict.** Agent replies sit inside nonce-delimited blocks and the
+  judge is told not to follow orders found in them, but prompt injection is a residual risk that
+  no prompt removes: a reply written to persuade the judge may get a `pass`.
+- **A judge `pass` never overrides a deterministic result.** Leaks, forbidden database changes and
+  failed `expect` or `db` checks keep their effect on the verdict and the exit code whatever the
+  judge says; the judge only adds checks.
 - **Judge rationales** reach the report after redaction and truncation to 1,000 characters, but a
   rationale can repeat agent data the redactor does not recognise.
 - **Simulated user requests** carry the goal, the persona, the simulated messages (the opening
