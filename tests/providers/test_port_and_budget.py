@@ -85,14 +85,18 @@ def test_serves_model_and_usage_apply_to_replies():
 
 def test_scripted_user_says_messages_then_is_done():
     user = ScriptedUser().says("hi", "more", done_after=2)
-    texts = [user.complete(REQUEST).text for _ in range(3)]
-    assert texts == ["hi", "more", ""]
+    turns = [json.loads(user.complete(REQUEST).text) for _ in range(3)]
+    assert turns == [
+        {"message": "hi", "done": False},
+        {"message": "more", "done": False},
+        {"message": "", "done": True},
+    ]
     assert user.complete(REQUEST).error is None
 
 
 def test_scripted_user_without_done_after_exhausts_with_an_error():
     user = ScriptedUser().says("hi")
-    assert user.complete(REQUEST).text == "hi"
+    assert json.loads(user.complete(REQUEST).text) == {"message": "hi", "done": False}
     assert user.complete(REQUEST).error == EXHAUSTED_SCRIPT
 
 

@@ -114,21 +114,6 @@
     cases: [{id: c1, turns: [{user: Hola, judge: [{id: j, rubrik: ok}]}]}]
   fragments: [rubrik, "did you mean 'rubric'"]
 
-- id: each-turn-judge-not-run-yet
-  overrides:
-    judge: {provider: ollama, model: m, max_calls: 3}
-    simulated_user: {provider: ollama, model: m, max_calls: 3}
-    cases: [{id: c1, simulated: {goal: g, max_turns: 3, each_turn_judge: [{id: j, rubric: ok}]}}]
-  fragments: ["case 'c1' uses a simulated user, which this version does not run yet"]
-  absent: [has no expectation]
-
-- id: simulated-user-not-run-yet
-  overrides:
-    simulated_user: {provider: ollama, model: m, max_calls: 3}
-    cases: [{id: c1, simulated: {goal: g, max_turns: 3, each_turn: [{contains: "."}]}}]
-  fragments: ["case 'c1' uses a simulated user, which this version does not run yet"]
-  absent: [has no expectation]
-
 - id: simulated-without-any-check
   overrides:
     simulated_user: {provider: ollama, model: m, max_calls: 3}

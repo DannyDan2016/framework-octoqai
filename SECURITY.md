@@ -39,9 +39,19 @@ variable) or in hooks, and are never written to reports.
   after each text is redacted: canaries, secrets, personal data and the values referenced through
   `${VAR}` (plus the secrets of the database URL) become placeholders. A value that only sits in
   hook environment or in an `.env` entry no `${VAR}` refers to is not known to the redactor.
-  A sensitive value split across two texts is not sent: the check is not evaluable. Redaction can
+  A sensitive value split across two texts is not sent: the check is not evaluable. Only
+  contiguous splits are detected (halves with other text between them, or URL-encoded halves,
+  are not). Redaction can
   over-mask: a referenced value such as `pass` also erases that word from the rubric and the
   replies the judge reads, so keep short common words out of `${VAR}` values.
+- **Simulated user requests** carry the goal and persona, written by the QA, and the redacted
+  agent replies inside a nonce-delimited data block; the model is told never to follow orders
+  found in them. Goal, persona and `opening` are sent as written, not redacted: keep secrets
+  out of them. A canary placed in the persona or opening is a value the user said, so the leak
+  scan does not count the agent repeating it. If a sensitive value is split across turns, the
+  simulator is not called and the trial is not evaluable (`simulator_error`); a leak or forbidden
+  change seen before that still counts. Sampling is not deterministic, so a paired A/B
+  comparison is noisier with a simulated user: use more trials.
 - **Ollama has no authentication.** By default `base_url` must be loopback (`127.0.0.1`,
   `localhost` or `[::1]`). With `allow_remote: true` the prompts, which can contain agent replies
   and test data, travel to that server unauthenticated and, over `http`, unencrypted: use it

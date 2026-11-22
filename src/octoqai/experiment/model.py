@@ -733,14 +733,6 @@ def _llm_declared(exp: Experiment) -> None:
             )
 
 
-def _simulated_user_pending(exp: Experiment) -> None:
-    for case in exp.cases:
-        if case.simulated is not None:
-            raise ValueError(
-                f"case {case.id!r} uses a simulated user, which this version does not run yet"
-            )
-
-
 def _json_serializable(exp: Experiment) -> None:
     labelled: list[tuple[str, Any]] = [("agent.request", exp.agent.request)]
     labelled += [(f"variant {v.name!r} params", v.params) for v in exp.variants]
@@ -779,7 +771,6 @@ _EXPERIMENT_CHECKS: tuple[Callable[[Experiment], None], ...] = (
     _cases_have_expectations,
     _database_declared,
     _unique_check_ids,
-    _simulated_user_pending,
     _json_serializable,
     _variants_cover_template,
 )

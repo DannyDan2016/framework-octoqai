@@ -694,6 +694,26 @@ def test_env_variable_in_llm_text_is_rejected(case, location, field, experiment,
     assert "tenant-b-77" not in message
 
 
+def test_simulated_case_renders_data_placeholders_end_to_end(experiment, tmp_path):
+    write_data_set(tmp_path, "qa", {"cuenta": "ES-0002", "cliente": "Ana"})
+    experiment.environments("qa").simulated_user().case(
+        "c1",
+        simulated=simulated(
+            goal="Reclama el cargo de la cuenta {{ data.cuenta }}",
+            persona="Eres {{ data.cliente }}",
+            opening="Hola, soy {{ data.cliente }}",
+            stop_when="cuenta {{ data.cuenta }}",
+            each_turn=[{"not_contains": "{{ data.cuenta }}9"}],
+        ),
+    )
+    exp = load_experiment(experiment.write(tmp_path), env="qa", process_env={})
+    user = exp.cases[0].simulated
+    assert user.goal == "Reclama el cargo de la cuenta ES-0002"
+    assert (user.persona, user.opening) == ("Eres Ana", "Hola, soy Ana")
+    assert user.stop_when == r"cuenta ES\-0002"
+    assert user.each_turn[0].value == r"ES\-00029"
+
+
 def test_llm_text_check_leaves_data_placeholders_alone():
     data = {"cases": [{"id": "c1", "judge": [judge_check("j", "Cuenta {{ data.cuenta }}")]}]}
     _reject_llm_text_variables(data)

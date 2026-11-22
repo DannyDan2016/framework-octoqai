@@ -3,10 +3,19 @@
 from octoqai.running.runner import (
     Outcome,
     RunResult,
+    StopReason,
     TrialResult,
     TurnResult,
     hook_error,
     run_experiment,
 )
 
-__all__ = ["Outcome", "RunResult", "TrialResult", "TurnResult", "hook_error", "run_experiment"]
+__all__ = [
+    "Outcome",
+    "RunResult",
+    "StopReason",
+    "TrialResult",
+    "TurnResult",
+    "hook_error",
+    "run_experiment",
+]

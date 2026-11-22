@@ -318,6 +318,22 @@ class FakeJsonAgent(FakeAgent):
             payload["usage"] = {"total_tokens": tokens}
         return self.replies(payload)
 
+    def sequence(self, *steps: str | int) -> Self:
+        """Answer each request with the next step; the last one repeats.
+
+        A string is the answer text and an integer is an HTTP error status that is not retried.
+        """
+        queue = list(steps)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            step = queue.pop(0) if len(queue) > 1 else queue[0]
+            if isinstance(step, int):
+                return httpx.Response(step)
+            return httpx.Response(200, json={"answer": step})
+
+        self._handler = handler
+        return self
+
     def replies(self, payload: Any) -> Self:
         """Answer every turn with a raw JSON payload."""
         self._handler = lambda request: httpx.Response(200, json=payload)

@@ -7,7 +7,7 @@ from typing import Any
 
 from octoqai.agents.port import AgentReply
 from octoqai.db.port import DatabasePort, QueryResult
-from octoqai.expectations import CheckResult, evaluate_db, forbidden_check
+from octoqai.expectations import DB_KIND, CheckResult, evaluate_db, forbidden_check
 from octoqai.experiment import Case, DbCheck, Experiment, ForbiddenChange, Turn
 
 
@@ -89,6 +89,20 @@ class DbProbe:
         checks = self._evaluate(turn.db, self._turn_before, reply.error)
         return checks + self._forbidden_results(number)
 
-    def finish(self, agent_error: str | None) -> list[CheckResult]:
-        """Evaluate the checks of the whole case."""
+    def finish(
+        self, agent_error: str | None, *, incomplete: str | None = None
+    ) -> list[CheckResult]:
+        """Evaluate the checks of the whole case.
+
+        Args:
+            agent_error: The first agent error of the trial, if any.
+            incomplete: Why the conversation did not finish; when set no query runs and every
+                case-level check is not evaluable with this reason. Forbidden changes found
+                during the turns are not affected.
+        """
+        if incomplete is not None:
+            return [
+                CheckResult(DB_KIND, None, c.hard, f"db {c.id!r}: {incomplete}")
+                for c in self._case.db
+            ]
         return self._evaluate(self._case.db, self._case_before, agent_error)

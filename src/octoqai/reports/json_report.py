@@ -45,6 +45,8 @@ def _trial(trial: TrialResult) -> dict[str, Any]:
         "ttft_ms": trial.ttft_ms,
         "forbidden_crud": trial.forbidden_count,
         "setup_error": trial.setup_error,
+        "simulator_error": trial.simulator_error,
+        "stop_reason": trial.stop_reason,
         "hooks": [asdict(hook) for hook in trial.hooks],
         "db_checks": [asdict(check) for check in trial.db_checks],
         "turns": [_turn(turn) for turn in trial.turns],

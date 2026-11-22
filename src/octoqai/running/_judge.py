@@ -86,6 +86,17 @@ class JudgeProbe:
                 break
         return built
 
+    def _incomplete(self, check: JudgeCheck, reason: str) -> JudgeResult:
+        digest = _rubric_sha256(self._safe(check))
+        return JudgeResult(
+            JUDGE_KIND,
+            None,
+            check.hard,
+            f"judge '{check.id}': {reason}",
+            check_id=check.id,
+            rubric_sha256=digest,
+        )
+
     def _split(self, safe: JudgeCheck, clean: Sequence[tuple[str, str]]) -> bool:
         context = [safe.rubric, safe.reference or ""]
         users = [user for user, _ in clean]
@@ -133,17 +144,25 @@ class JudgeProbe:
         return [self._evaluate(check, transcript, True) for check in turn.judge]
 
     def finish(
-        self, transcript: Sequence[tuple[str, str]], failure: str | None
+        self,
+        transcript: Sequence[tuple[str, str]],
+        failure: str | None,
+        *,
+        incomplete: str | None = None,
     ) -> list[CheckResult]:
         """Evaluate the judge checks of the whole case, once, over the full conversation.
 
         Args:
             transcript: Every ``(user, answer)`` pair of the trial, unredacted.
             failure: The first agent error of the trial; when set the judge is skipped.
+            incomplete: Why the conversation did not finish; when set the judge is not called
+                and every case-level check is not evaluable with this reason.
 
         Returns:
             One result per case-level judge check.
         """
         if failure is not None:
             return [judge_skipped(check, True) for check in self._case.judge]
+        if incomplete is not None:
+            return [self._incomplete(check, incomplete) for check in self._case.judge]
         return [self._evaluate(check, transcript, False) for check in self._case.judge]

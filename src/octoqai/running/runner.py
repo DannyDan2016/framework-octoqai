@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 import uuid
 from collections.abc import Callable
@@ -12,15 +13,28 @@ from typing import Any, Literal
 from octoqai.agents.port import AgentPort, AgentReply
 from octoqai.db.port import DatabasePort
 from octoqai.expectations import FORBIDDEN_KIND, CheckResult, evaluate
-from octoqai.experiment import Case, Experiment, HookStage, Turn, Variant
+from octoqai.experiment import (
+    Case,
+    Experiment,
+    HookStage,
+    SimulatedUser,
+    Turn,
+    Variant,
+)
 from octoqai.hooks.port import HookResult, LifecyclePort
 from octoqai.providers.budget import BudgetedLlm, LlmStats
 from octoqai.providers.port import LlmPort, LlmRole
 from octoqai.running._database import DbProbe
 from octoqai.running._judge import JudgeProbe
+from octoqai.running.simulated_user import (
+    INCOMPLETE_DETAIL,
+    SimulatedUserDriver,
+    SimulatorTurn,
+)
 from octoqai.security import Detector, Leak, Redactor, scan_reply
 
 Outcome = Literal["pass", "fail", "not_evaluable"]
+StopReason = Literal["done", "max_turns", "stop_when", "agent_error", "simulator_error"]
 
 
 @dataclass
@@ -45,6 +59,8 @@ class TrialResult:
     setup_error: str | None = None
     db_checks: list[CheckResult] = field(default_factory=list)
     judge_checks: list[CheckResult] = field(default_factory=list)
+    simulator_error: str | None = None
+    stop_reason: StopReason | None = None
 
     @property
     def _checks(self) -> list[CheckResult]:
@@ -53,13 +69,17 @@ class TrialResult:
 
     @property
     def outcome(self) -> Outcome:
-        """``fail`` if any check failed, ``not_evaluable`` if any is unknown, else ``pass``."""
+        """``fail`` if any check failed, ``not_evaluable`` if any is unknown, else ``pass``.
+
+        A failed agent or check is a ``fail`` even if the simulated user then broke; a broken
+        simulated user alone is ``not_evaluable``.
+        """
         if self.setup_error is not None:
             return "not_evaluable"
         checks = self._checks
         if any(turn.reply.error for turn in self.turns) or any(c.passed is False for c in checks):
             return "fail"
-        if any(c.passed is None for c in checks):
+        if self.simulator_error is not None or any(c.passed is None for c in checks):
             return "not_evaluable"
         return "pass"
 
@@ -162,6 +182,13 @@ class _Session:
 
 
 @dataclass
+class _Played:
+    turns: list[TurnResult]
+    stop_reason: StopReason | None = None
+    simulator_error: str | None = None
+
+
+@dataclass
 class _Probes:
     db: DbProbe
     judge: JudgeProbe
@@ -192,52 +219,123 @@ def _play_turn(
     return TurnResult(turn.user, reply, checks, leaks)
 
 
-def _play(session: _Session, probes: _Probes, variant: Variant, case: Case) -> list[TurnResult]:
-    exp = session.exp
+def _request(
+    session: _Session,
+    variant: Variant,
+    message: str,
+    conversation_id: str,
+    history: list[dict[str, str]],
+) -> dict[str, Any]:
+    return {
+        "message": message,
+        "conversation_id": conversation_id,
+        "turn_index": len(history) // 2,
+        "history": [dict(item) for item in history],
+        "variant": dict(variant.params),
+        "data": session.exp.data_values,
+        "env": session.exp.environment,
+    }
+
+
+def _play(session: _Session, probes: _Probes, variant: Variant, case: Case) -> _Played:
     said: list[str] = []
     conversation_id = str(uuid.uuid4())
     history: list[dict[str, str]] = []
     turns: list[TurnResult] = []
-    for turn_index, turn in enumerate(case.turns):
-        request = {
-            "message": turn.user,
-            "conversation_id": conversation_id,
-            "turn_index": turn_index,
-            "history": [dict(item) for item in history],
-            "variant": dict(variant.params),
-            "data": exp.data_values,
-            "env": exp.environment,
-        }
+    for turn in case.turns:
+        request = _request(session, variant, turn.user, conversation_id, history)
         result = _play_turn(session, probes, request, turn, said)
         turns.append(result)
         if result.reply.error is not None:
             break
         history.append({"role": "user", "content": turn.user})
         history.append({"role": "assistant", "content": result.reply.answer or ""})
-    return turns
+    return _Played(turns)
+
+
+def _next_message(
+    sim: SimulatedUser, driver: SimulatedUserDriver, probes: _Probes, first: bool
+) -> str | SimulatorTurn:
+    if first and sim.opening is not None:
+        return SimulatorTurn(sim.opening, False)
+    return driver.next_turn(probes.transcript)
+
+
+def _stops(sim: SimulatedUser, result: TurnResult) -> StopReason | None:
+    if result.reply.error is not None:
+        return "agent_error"
+    if sim.stop_when is not None and re.search(sim.stop_when, result.reply.answer or ""):
+        return "stop_when"
+    return None
+
+
+def _play_simulated(
+    session: _Session, probes: _Probes, variant: Variant, sim: SimulatedUser
+) -> _Played:
+    driver = SimulatedUserDriver(session, sim)
+    said: list[str] = []
+    conversation_id = str(uuid.uuid4())
+    history: list[dict[str, str]] = []
+    turns: list[TurnResult] = []
+    for number in range(sim.max_turns):
+        step = _next_message(sim, driver, probes, number == 0)
+        if isinstance(step, str):
+            return _Played(turns, "simulator_error", step)
+        if step.done:
+            return _Played(turns, "done")
+        turn = Turn(user=step.message, expect=sim.each_turn, judge=sim.each_turn_judge)
+        request = _request(session, variant, turn.user, conversation_id, history)
+        result = _play_turn(session, probes, request, turn, said)
+        turns.append(result)
+        stop = _stops(sim, result)
+        if stop is not None:
+            return _Played(turns, stop)
+        history.append({"role": "user", "content": turn.user})
+        history.append({"role": "assistant", "content": result.reply.answer or ""})
+    return _Played(turns, "max_turns")
 
 
 def _first_failure(results: list[HookResult]) -> str | None:
     return next((hook_error(r) for r in results if not r.ok), None)
 
 
+def _finish(probes: _Probes, played: _Played) -> tuple[list[CheckResult], list[CheckResult]]:
+    failure = next((t.reply.error for t in played.turns if t.reply.error), None)
+    incomplete = INCOMPLETE_DETAIL if played.simulator_error is not None else None
+    db_checks = probes.db.finish(failure, incomplete=incomplete)
+    return db_checks, probes.judge.finish(probes.transcript, failure, incomplete=incomplete)
+
+
+def _play_case(session: _Session, probes: _Probes, variant: Variant, case: Case) -> _Played:
+    if case.simulated is not None:
+        return _play_simulated(session, probes, variant, case.simulated)
+    return _play(session, probes, variant, case)
+
+
 def _run_trial(session: _Session, variant: Variant, case: Case, index: int) -> TrialResult:
     before = session.hooks.run("before_trial")
     setup_error = _first_failure(before)
-    turns: list[TurnResult] = []
+    played = _Played([])
     db_checks: list[CheckResult] = []
     judge_checks: list[CheckResult] = []
     try:
         if setup_error is None:
             probes = _Probes(DbProbe(session.db, session.exp, case), JudgeProbe(session, case))
-            turns = _play(session, probes, variant, case)
-            failure = next((t.reply.error for t in turns if t.reply.error), None)
-            db_checks = probes.db.finish(failure)
-            judge_checks = probes.judge.finish(probes.transcript, failure)
+            played = _play_case(session, probes, variant, case)
+            db_checks, judge_checks = _finish(probes, played)
     finally:
         after = session.hooks.run("after_trial")
     return TrialResult(
-        variant.name, case.id, index, turns, before + after, setup_error, db_checks, judge_checks
+        variant.name,
+        case.id,
+        index,
+        played.turns,
+        before + after,
+        setup_error,
+        db_checks,
+        judge_checks,
+        played.simulator_error,
+        played.stop_reason,
     )
 
 

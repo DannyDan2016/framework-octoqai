@@ -174,14 +174,12 @@ def test_case_with_only_judge_counts_as_asserting(experiment):
     assert exp.cases[0].judge[0].id == "j"
 
 
-def test_case_with_only_each_turn_judge_counts_as_asserting_but_simulation_is_not_run_yet(
-    experiment,
-):
+def test_case_with_only_each_turn_judge_counts_as_asserting(experiment):
     experiment.judge().simulated_user().case(
         "c1", simulated=simulated(each_turn_judge=[judge_check("j")])
     )
-    with pytest.raises(ValidationError, match="uses a simulated user, which this version"):
-        Experiment.model_validate(experiment.build())
+    exp = Experiment.model_validate(experiment.build())
+    assert exp.cases[0].simulated.each_turn_judge[0].id == "j"
 
 
 def test_variant_cannot_carry_judge_settings(experiment):
@@ -191,7 +189,7 @@ def test_variant_cannot_carry_judge_settings(experiment):
         Experiment.model_validate(data)
 
 
-def test_simulated_case_without_turns_is_rejected_until_runner_support(experiment):
+def test_simulated_case_without_turns_is_valid(experiment):
     experiment.simulated_user().case("c1", simulated=simulated(each_turn=[{"contains": "."}]))
-    with pytest.raises(ValidationError, match="does not run yet"):
-        Experiment.model_validate(experiment.build())
+    exp = Experiment.model_validate(experiment.build())
+    assert exp.cases[0].turns == [] and exp.cases[0].simulated.max_turns == 3

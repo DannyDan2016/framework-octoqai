@@ -113,18 +113,18 @@ class ScriptedUser(FakeLlm):
         self._said = 0
 
     def says(self, *messages: str, done_after: int | None = None) -> Self:
-        """Queue these messages; after ``done_after`` replies every reply is an empty text."""
+        """Queue these messages as simulator replies; after ``done_after`` replies it is done."""
         for message in messages:
-            self.returns_text(message)
+            self.returns_text(json.dumps({"message": message, "done": False}))
         if done_after is not None:
             self._done_after = done_after
         return self
 
     def complete(self, request: LlmRequest) -> LlmReply:
-        """Return the next message, or an empty text once ``done_after`` replies were given."""
+        """Return the next message, or a ``done`` reply once ``done_after`` replies were given."""
         if self._done_after is not None and self._said >= self._done_after:
             self.requests.append(request)
-            return self._reply(_Planned(text=""))
+            return self._reply(_Planned(text=json.dumps({"message": "", "done": True})))
         self._said += 1
         return super().complete(request)
 
